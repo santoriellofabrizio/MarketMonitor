@@ -13,7 +13,6 @@ Il progetto è organizzato per comporre dinamicamente una strategia di monitorag
   - crea le GUI configurate (Tkinter, Excel, Dummy) e le associa con `set_gui`;
   - restituisce la lista dei thread da avviare e l’istanza della strategia.
 - **Live data hub** (`src/market_monitor/live_data_hub/real_time_data_hub.py`): fornisce `RTData`, un contenitore thread-safe per book di mercato, stato, eventi e blob con utility per mid price, conversione FX in EUR, gestione sottoscrizioni (Bloomberg/Redis) e routing dei dati.
-- **Subscription/StrategyService**: le sottoscrizioni non vanno impostate direttamente su `RTData.subscription_dict_bloomberg`, ma tramite il service centralizzato (`RTData.get_subscription_manager()`), che restituisce un `SubscriptionService` incaricato di normalizzare i ticker e coordinare `LiveSubscriptionManager`.
 - **Input threads** (`src/market_monitor/input_threads/`):
   - `bloomberg.py`, `excel.py`, `redis.py` e `trade.py` alimentano `RTData` o la coda trade con dati di mercato o ordini;
   - `event_handler/BBGEventHandler.py` gestisce l’adattamento dei messaggi Bloomberg.
@@ -23,7 +22,6 @@ Il progetto è organizzato per comporre dinamicamente una strategia di monitorag
 - **Publishers** (`src/market_monitor/publishers/`): output verso Redis o altri canali partendo dai dati di strategia.
 - **Strategie utente** (`user_strategy/`): esempi di strategie Fixed Income/ETF e componenti riusabili (es. `TradeManager`, `BookStorage`, input params). Le classi sono caricate dinamicamente tramite `load_strategy_info` nella configurazione.
 - **Testing** (`testing/`): esempi di configurazioni YAML e strategie dimostrative (es. `TestTradeManagerStrategy`) utili come riferimento di integrazione.
-- **GUI**: oltre alle GUI thread-based (Tkinter/Excel), è disponibile una dashboard PyQt5 (`market_monitor.gui.implementations.PyQt5Dashboard.run_dashboard:main`) avviabile con `python -m market_monitor.gui.implementations.PyQt5Dashboard.run_dashboard <config.yaml>` per visualizzare book e trade in tempo reale.
 
 ## Creare e usare una strategia
 
@@ -83,11 +81,9 @@ class MyStrategy(StrategyUI):
         self.trade_manager = TradeManager(self.book_storage)
 
     def on_market_data_setting(self):
-        # Usa il service centralizzato per gestire le sottoscrizioni
-        strategy_service = self.market_data.get_subscription_manager()
-        strategy_service.set_bloomberg_subscriptions({
+        self.market_data.subscription_dict_bloomberg = {
             "IE0005042670": "IE0005042670 EQUITY",
-        })
+        }
 
     def wait_for_book_initialization(self):
         mid = self.market_data.get_mid_eur()
