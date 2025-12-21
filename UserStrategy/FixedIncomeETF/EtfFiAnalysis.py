@@ -93,9 +93,10 @@ class FIAnalysis(StrategyUI):
 
         all_securities = self.etf_isins + self.drivers + self.credit_futures_contracts
         self.market_data.set_securities(all_securities)
+        subscription_manager = self.market_data.get_subscription_manager()
         for channel in ["th_live_nav_price", "th_live_driver_price", "th_live_cluster_price", "th_live_brother_price",
                         "th_live_credit_futures_cluster_price", "th_live_credit_futures_brother_price", "mid"]:
-            self.market_data.subscribe_redis(channel=channel, store="market")
+            subscription_manager.subscribe_redis(channel=channel, store="market")
 
     def on_trade(self, new_trades: pd.DataFrame) -> None:
         """

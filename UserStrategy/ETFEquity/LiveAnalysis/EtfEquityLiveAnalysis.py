@@ -109,8 +109,9 @@ class EtfEquityLiveAnalysis(StrategyUI):
 
     def on_market_data_setting(self) -> None:
         # Subscribe to original channel names with market: prefix
+        subscription_manager = self.market_data.get_subscription_manager()
         for channel in ["nav", "mid", "theoretical_live_cluster_price"]:
-            self.market_data.subscribe_redis(
+            subscription_manager.subscribe_redis(
                 channel=f"market:{channel}",
                 store="market"
             )

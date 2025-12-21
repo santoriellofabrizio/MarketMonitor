@@ -177,21 +177,22 @@ class EtfFiPriceEngine(StrategyUI):
         self.market_data.set_securities(self._all_securities, "market")
         self.book_mid = pd.Series(index=self._all_securities, dtype=float)
         self.market_data.currency_information = self.subscription_manager.get_currency_informations()
+        subscription_manager = self.market_data.get_subscription_manager()
         for id, subscription_string in self.subscription_manager.get_subscription_dict().items():
             if id in self.irp_contracts_list + self.irs_contracts_list:
                 fields = ["LAST_PRICE"]
             else:
                 fields = ["BID", "ASK"]
 
-            self.market_data.subscribe_bloomberg(
+            subscription_manager.subscribe_bloomberg(
                 id=id,
                 subscription_string=subscription_string,
                 fields=fields,
                 params={"interval": 1}
             )
         for currency in self.fx_list:
-            self.market_data.subscribe_bloomberg(
-                id=id,
+            subscription_manager.subscribe_bloomberg(
+                id=currency,
                 subscription_string=f"{currency} Curncy",
                 fields=["BID", "ASK"],
                 params={"interval": 1}

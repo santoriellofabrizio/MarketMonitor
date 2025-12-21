@@ -203,11 +203,13 @@ class EtfEquityPriceEngine(StrategyUI):
         # Set currency information
         self.market_data.currency_information = currency_info
 
+        subscription_manager = self.market_data.get_subscription_manager()
+
         # Subscribe using new Bloomberg API
         for id, subscription_string in bloomberg_subscriptions.items():
             # Determine if currency
 
-            self.market_data.subscribe_bloomberg(
+            subscription_manager.subscribe_bloomberg(
                 id=id,
                 subscription_string=subscription_string,
                 fields=["BID", "ASK"],

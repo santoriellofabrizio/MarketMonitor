@@ -27,7 +27,8 @@ from market_monitor.live_data_hub.data_store import (
     BlobStore
 )
 from market_monitor.live_data_hub.live_subscription import SubscriptionGroup, LiveSubscription, RedisSubscription, \
-    BloombergSubscription, DataStore, LiveSubscriptionManager
+    BloombergSubscription, DataStore
+from market_monitor.live_data_hub.subscription_service import SubscriptionService
 from market_monitor.utils.enums import CURRENCY
 
 # Constants
@@ -86,7 +87,8 @@ class RTData:
                  max_var_threshold: Optional[float] = None,
                  subscription_dict: Optional[Dict] = None,
                  instruments_status: Optional[Dict] = None,
-                 currency_information: Optional[Dict[str, str]] = None):
+                 currency_information: Optional[Dict[str, str]] = None,
+                 subscription_service: Optional[SubscriptionService] = None):
         """Initialize RTData"""
         self.logger = logging.getLogger(__name__)
         self.locker = locker
@@ -103,8 +105,8 @@ class RTData:
         self._event_store = EventStore(locker, default_maxlen=1000)
         self._blob_store = BlobStore(locker)
         
-        # Subscription manager
-        self._subscriptions = LiveSubscriptionManager()
+        # Subscription service (gestione sottoscrizioni/health)
+        self._subscription_service = subscription_service or SubscriptionService()
 
         # Currency information (kept in RTData for now)
         self._currency_information: Dict[str, str] = {}
@@ -118,11 +120,7 @@ class RTData:
 
         # Initialize subscriptions
         if subscription_dict:
-            for source, subs in subscription_dict.items():
-                if source.lower() == "bloomberg" and isinstance(subs, dict):
-                    self._subscriptions.set_bloomberg_subscriptions(subs)
-                elif source.lower() == "redis":
-                    self._subscriptions.set_redis_subscriptions(subs)
+            self._subscription_service.apply_subscription_dict(subscription_dict)
 
         # Initialize currency info
         if currency_information:
@@ -131,7 +129,7 @@ class RTData:
         # Initialize instrument status
         if instruments_status:
             for isin, status in instruments_status.items():
-                self._subscriptions.update_instrument_status(isin, status)
+                self._subscription_service.update_instrument_status(isin, status)
 
         # Backward compatibility
         from collections import OrderedDict
@@ -152,25 +150,10 @@ class RTData:
     def set_securities(self, securities: Union[str, List[str]],
                        index_data: str = "market") -> None:
         """Set monitored securities and initialize storage"""
-        if isinstance(securities, str):
-            securities = [securities]
-
-        # FIX: Filter out empty/None values
-        securities = [s for s in securities if s]
-
-        # Remove EUR synonyms
-        for synonym in EUR_SYNONYM:
-            while synonym in securities:
-                self.logger.warning(f"Use 'EUR' instead of {synonym}")
-                securities.remove(synonym)
-
-        # Remove ignored securities
-        for ignored in SECURITY_TO_IGNORE:
-            while ignored in securities:
-                securities.remove(ignored)
+        normalized = self._subscription_service.set_allowed_securities(securities)
 
         # Update
-        self._securities = set(securities)
+        self._securities = set(normalized)
         self.subscription_status = {s: {} for s in self._securities}
 
         # Initialize storage
@@ -555,43 +538,37 @@ class RTData:
     @property
     def subscription_dict_bloomberg(self) -> Dict[str, str]:
         """Get Bloomberg subscription dictionary"""
-        return self._subscriptions.get_bloomberg_subscriptions()
+        return self._subscription_service.get_all_subscriptions_dict().get("bloomberg", {})
 
     @subscription_dict_bloomberg.setter
     def subscription_dict_bloomberg(self, value: Union[pd.Series, dict]):
         """Set Bloomberg subscriptions"""
-        self._subscriptions.set_bloomberg_subscriptions(value)
+        self._subscription_service.set_bloomberg_subscriptions(value)
 
     @property
     def subscription_dict_redis(self) -> List[str]:
         """Get RedisPublisher subscriptions"""
-        return self._subscriptions.get_redis_subscriptions()
+        return self._subscription_service.get_all_subscriptions_dict().get("redis", [])
 
     @subscription_dict_redis.setter
     def subscription_dict_redis(self, value: List[str]):
         """Set RedisPublisher subscriptions"""
-        self._subscriptions.set_redis_subscriptions(value)
+        self._subscription_service.set_redis_subscriptions(value)
 
     @property
     def subscription_dict(self) -> Dict[str, Any]:
         """Get all subscriptions"""
-        return self._subscriptions.get_all_subscriptions()
+        return self._subscription_service.get_all_subscriptions_dict()
 
     @subscription_dict.setter
     def subscription_dict(self, value: Dict[str, Any]):
         """Set subscriptions for multiple sources"""
-        for source, subs in value.items():
-            if source.lower() == "bloomberg":
-                self._subscriptions.set_bloomberg_subscriptions(subs)
-            elif source.lower() == "redis":
-                self._subscriptions.set_redis_subscriptions(subs)
-            else:
-                self.logger.warning(f"Unknown subscription source: {source}")
+        self._subscription_service.apply_subscription_dict(value)
 
     @property
     def subscription_source(self) -> Dict[str, Any]:
         """Get subscription sources"""
-        return self._subscriptions.get_all_subscriptions()
+        return self._subscription_service.get_all_subscriptions_dict()
 
     def subscribe_bloomberg(self,
                             id: str,
@@ -623,19 +600,22 @@ class RTData:
             ...     group="us_equities"
             ... )
         """
-        bloomberg_sub = BloombergSubscription(
+        return self._subscription_service.subscribe_bloomberg(
             id=id,
-            subscription_string=subscription_string or id,
+            subscription_string=subscription_string,
             fields=fields or self.fields,
-            params=params or {}
+            params=params,
+            group=group
         )
-        self._subscriptions.add_subscription(bloomberg_sub, group=group)
-        return bloomberg_sub
 
     @property
     def instrument_status(self) -> Dict[str, str]:
         """Get instrument status"""
-        return self._subscriptions.get_instrument_status()
+        return self._subscription_service.instrument_status
+
+    def get_subscription_manager(self) -> SubscriptionService:
+        """Accessor to the centralized SubscriptionService."""
+        return self._subscription_service
 
     # ========================================================================
     # NEW: Advanced Subscription API
@@ -643,7 +623,7 @@ class RTData:
 
     def get_delayed_status(self) -> pd.Series:
         """Get delayed stream status for instruments"""
-        return self._subscriptions.get_delayed_status()
+        return self._subscription_service.get_delayed_status()
 
     def subscribe_redis(self,
                         channel: str,
@@ -713,16 +693,15 @@ class RTData:
             ...     event_type="trades"  # ← ValueError!
             ... )
         """
-        redis_sub = RedisSubscription(
-            id=id or f"{channel.replace(':', '_')}",
+        return self._subscription_service.subscribe_redis(
             channel=channel,
-            subscription=subscription or channel,
+            subscription=subscription,
             store=store,
             event_type=event_type,
-            fields=fields
+            fields=fields,
+            id=id,
+            group=group
         )
-        self._subscriptions.add_subscription(redis_sub, group=group)
-        return redis_sub
 
     def subscribe(self, id: str, source: str, subscription_string: str,
                   fields: Optional[List[str]] = None, group: Optional[str] = None) -> LiveSubscription:
@@ -762,11 +741,11 @@ class RTData:
         Returns:
             True if marked for unsubscribe, False otherwise
         """
-        return self._subscriptions.mark_for_unsubscribe(id, source)
+        return self._subscription_service.unsubscribe(id, source)
 
     def get_subscription(self, ticker: str, source: str) -> Optional[LiveSubscription]:
         """Get subscription details for a ticker"""
-        return self._subscriptions.get_subscription(ticker, source)
+        return self._subscription_service.get_subscription(ticker, source)
 
     def get_bloomberg_subscription(self, ticker: Optional[str] = None) -> Optional[Dict[str, BloombergSubscription]]:
         """
@@ -778,13 +757,7 @@ class RTData:
         Returns:
             BloombergSubscription or None if not found
         """
-        if ticker:
-            sub = self._subscriptions.get_subscription(ticker, "bloomberg")
-            if isinstance(sub, BloombergSubscription):
-                return {ticker: sub}
-        else:
-            return self._subscriptions.get_subscriptions_by_source("bloomberg")
-        return None
+        return self._subscription_service.get_bloomberg_subscription(ticker)
 
     def get_redis_subscription(self, ticker: Optional[str] = None) -> Optional[Dict[str, RedisSubscription]]:
         """
@@ -796,12 +769,7 @@ class RTData:
         Returns:
             RedisSubscription or None if not found
         """
-        if ticker:
-            sub = self._subscriptions.get_subscription(ticker, "redis")
-            if isinstance(sub, RedisSubscription):
-                return {ticker: sub}
-            return None
-        return self._subscriptions.get_subscriptions_by_source("redis")
+        return self._subscription_service.get_redis_subscription(ticker)
 
     def get_all_subscriptions(self, source: Optional[str] = None) -> Dict[str, LiveSubscription]:
         """
@@ -813,11 +781,11 @@ class RTData:
         Returns:
             Dict of ticker → LiveSubscription
         """
-        return self._subscriptions.get_all_live_subscriptions(source)
+        return self._subscription_service.get_all_subscriptions(source)
 
     def get_active_subscriptions(self, source: Optional[str] = None) -> List[LiveSubscription]:
         """Get all active subscriptions"""
-        return self._subscriptions.get_active_subscriptions(source)
+        return self._subscription_service.get_active_subscriptions(source)
 
     def create_subscription_group(self, name: str, metadata: Optional[Dict] = None) -> SubscriptionGroup:
         """
@@ -832,11 +800,11 @@ class RTData:
         Returns:
             SubscriptionGroup instance
         """
-        return self._subscriptions.create_group(name, metadata)
+        return self._subscription_service.create_subscription_group(name, metadata)
 
     def get_subscription_group(self, name: str) -> Optional[SubscriptionGroup]:
         """Get subscription group by name"""
-        return self._subscriptions.get_group(name)
+        return self._subscription_service.get_subscription_group(name)
 
     def get_subscription_health(self) -> Dict[str, Any]:
         """
@@ -850,7 +818,7 @@ class RTData:
             >>> health = rt_data.get_subscription_health()
             >>> print(f"Active: {health['active']}, Failed: {health['failed']}")
         """
-        return self._subscriptions.get_subscription_health()
+        return self._subscription_service.get_subscription_health()
 
     def get_failed_subscriptions(self) -> List[Dict[str, Any]]:
         """
@@ -859,7 +827,7 @@ class RTData:
         Returns:
             List of dicts with failure details
         """
-        return self._subscriptions.get_failed_subscriptions_report()
+        return self._subscription_service.get_failed_subscriptions()
 
     def mark_subscription_received(self, id: str, source: str = "bloomberg"):
         """
@@ -872,11 +840,7 @@ class RTData:
             source: Data source
         """
         # Try to activate if pending
-        activated = self._subscriptions.activate_subscription(id, source)
-
-        if not activated:
-            # Already active, just update
-            self._subscriptions.mark_update_received(id, source)
+        self._subscription_service.mark_subscription_received(id, source)
 
     def mark_subscription_failed(self, id: str, source: str, error: Optional[str] = None):
         """
@@ -889,7 +853,7 @@ class RTData:
             source: Data source
             error: Error message
         """
-        self._subscriptions.fail_subscription(id, source, error or "Unknown error")
+        self._subscription_service.mark_subscription_failed(id, source, error)
 
     def get_pending_subscriptions(self, source: Optional[str] = None) -> Dict[str, LiveSubscription]:
         """
@@ -901,7 +865,7 @@ class RTData:
         Returns:
             Dict of id → LiveSubscription (pending)
         """
-        return self._subscriptions.get_pending_subscriptions(source)
+        return self._subscription_service.get_pending_subscriptions(source)
 
     def get_to_unsubscribe(self, source: Optional[str] = None) -> Dict[str, LiveSubscription]:
         """
@@ -913,7 +877,7 @@ class RTData:
         Returns:
             Dict of id → LiveSubscription (to unsubscribe)
         """
-        return self._subscriptions.get_to_unsubscribe(source)
+        return self._subscription_service.get_to_unsubscribe(source)
 
     def clear_unsubscribed(self, id: str, source: str):
         """
@@ -925,5 +889,4 @@ class RTData:
             id: Subscription identifier
             source: Data source
         """
-        self._subscriptions.clear_unsubscribed(id, source)
-
+        self._subscription_service.clear_unsubscribed(id, source)
