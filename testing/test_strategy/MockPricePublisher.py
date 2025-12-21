@@ -26,7 +26,7 @@ class MockPricePublisher(StrategyUI):
         
         self.gui = RedisMessaging()
 
-        # Mock instruments (from TestStrategy defaults if available)
+        # Mock instruments (from test_strategy defaults if available)
         self.instruments = kwargs.get("instruments", [
             "DE0007667107",  # XESC
             "LU0048584102",  # VEUR

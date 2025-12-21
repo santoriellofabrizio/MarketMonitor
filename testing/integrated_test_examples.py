@@ -11,7 +11,7 @@ Questo file mostra come:
 import logging
 
 from user_strategy.StrategyRegister import register_strategy
-from testing.IntegratedStrategyTestRunner import run_integrated_test
+from testing.integrated_test_strategy_runner import run_integrated_test
 
 # Setup logging
 logging.basicConfig(
@@ -54,7 +54,7 @@ def example_flow_detecting_strategy():
     print("EXAMPLE 2: TradeAccumulator Test (30 seconds)")
     print("="*70 + "\n")
 
-    from testing.TestStrategy.TradeAccumulatorStrategy import TradeAccumulatorStrategy
+    from testing.test_strategy.TradeAccumulatorStrategy import TradeAccumulatorStrategy
     register_strategy("TradeAccumulator", TradeAccumulatorStrategy)
     
     results = run_integrated_test(

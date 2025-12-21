@@ -94,21 +94,21 @@ class MarketStore:
                     return self._market_data.copy()
 
                 elif tickers is None:
-                    # ✅ NUOVO: Filtra solo colonne esistenti
+                    # Filtra solo colonne esistenti
                     existing_fields = [f for f in fields if f in self._market_data.columns]
                     if not existing_fields:
                         return pd.DataFrame()
                     return self._market_data[existing_fields].copy()
 
                 elif fields is None:
-                    # ✅ NUOVO: Filtra solo ticker esistenti
+                    #  Filtra solo ticker esistenti
                     existing_tickers = [t for t in tickers if t in self._market_data.index]
                     if not existing_tickers:
                         return pd.DataFrame()
                     return self._market_data.loc[existing_tickers].copy()
 
                 else:
-                    # ✅ NUOVO: Filtra entrambi
+                    #  Filtra entrambi
                     existing_tickers = [t for t in tickers if t in self._market_data.index]
                     existing_fields = [f for f in fields if f in self._market_data.columns]
                     if not existing_tickers or not existing_fields:
@@ -126,7 +126,7 @@ class MarketStore:
         AGGIORNAMENTO: Ritorna Series vuota se campo/ticker mancante.
         """
         with self._lock:
-            # ✅ NUOVO: Controlli esistenza
+            # Controlli esistenza
             if self._market_data.empty or field not in self._market_data.columns:
                 return pd.Series(dtype=float)
 
@@ -134,7 +134,7 @@ class MarketStore:
                 if tickers is None:
                     return self._market_data[field].copy()
                 else:
-                    # ✅ NUOVO: Filtra ticker esistenti
+                    # Filtra ticker esistenti
                     existing_tickers = [t for t in tickers if t in self._market_data.index]
                     if not existing_tickers:
                         return pd.Series(dtype=float)
@@ -152,11 +152,11 @@ class MarketStore:
         AGGIORNAMENTO: Gestisce campi mancanti.
         """
         with self._lock:
-            # ✅ NUOVO: Controlli esistenza
+            # Controlli esistenza
             if self._market_data.empty:
                 return pd.Series(dtype=float)
 
-            # ✅ NUOVO: Filtra solo campi esistenti
+            # Filtra solo campi esistenti
             existing_fields = [f for f in mid_fields if f in self._market_data.columns]
             if not existing_fields:
                 return pd.Series(dtype=float)
@@ -165,7 +165,7 @@ class MarketStore:
                 if tickers is None:
                     data = self._market_data[existing_fields]
                 else:
-                    # ✅ NUOVO: Filtra ticker esistenti
+                    # Filtra ticker esistenti
                     existing_tickers = [t for t in tickers if t in self._market_data.index]
                     if not existing_tickers:
                         return pd.Series(dtype=float)
@@ -185,11 +185,11 @@ class MarketStore:
         AGGIORNAMENTO: Ritorna dict vuoto se campi mancanti.
         """
         with self._lock:
-            # ✅ NUOVO: Controlli esistenza
+            # Controlli esistenza
             if self._market_data.empty:
                 return {}
 
-            # ✅ NUOVO: Filtra solo campi esistenti
+            # Filtra solo campi esistenti
             existing_fields = [f for f in mid_fields if f in self._market_data.columns]
             if not existing_fields:
                 return {}
@@ -198,7 +198,7 @@ class MarketStore:
                 if tickers is None:
                     data = self._market_data[existing_fields]
                 else:
-                    # ✅ NUOVO: Filtra ticker esistenti
+                    # Filtra ticker esistenti
                     existing_tickers = [t for t in tickers if t in self._market_data.index]
                     if not existing_tickers:
                         return {}

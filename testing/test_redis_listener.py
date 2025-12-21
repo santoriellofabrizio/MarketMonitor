@@ -6,9 +6,9 @@ import time
 import threading
 
 from market_monitor_fi.strategy.UserStrategy.StrategyRegister import register_strategy
-from testing.TestStrategy.MockPricePublisher import MockPricePublisher
-from testing.TestStrategy.MockRedisListener import MockRedisListener
-from testing.IntegratedStrategyTestRunner import IntegratedStrategyTestRunner
+from testing.test_strategy.MockPricePublisher import MockPricePublisher
+from testing.test_strategy.MockRedisListener import MockRedisListener
+from testing.integrated_test_strategy_runner import IntegratedStrategyTestRunner
 
 logging.basicConfig(
     level=logging.INFO,

@@ -5,8 +5,8 @@ Uses IntegratedStrategyTestRunner with trades disabled.
 import logging
 
 from market_monitor_fi.strategy.UserStrategy.StrategyRegister import register_strategy
-from testing.IntegratedStrategyTestRunner import run_integrated_test
-from testing.TestStrategy.MockPricePublisher import MockPricePublisher
+from testing.integrated_test_strategy_runner import run_integrated_test
+from testing.test_strategy.MockPricePublisher import MockPricePublisher
 
 logging.basicConfig(
     level=logging.INFO,

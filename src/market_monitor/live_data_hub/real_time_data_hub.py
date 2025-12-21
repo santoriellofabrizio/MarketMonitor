@@ -551,6 +551,17 @@ class RTData:
         """Get list of instruments with missing/unknown currencies"""
         return list(self.missing_currency_instruments)
 
+
+
+
+
+
+
+
+
+
+
+
     # ========================================================================
     # SUBSCRIPTION MANAGEMENT (Deprecated - use get_subscription_manager())
     # ========================================================================
@@ -559,6 +570,17 @@ class RTData:
     #   rtdata.get_subscription_manager().subscribe_bloomberg(...)
     #   rtdata.get_subscription_manager().get_all_subscriptions()
     # ========================================================================
+
+
+
+
+
+
+
+
+
+
+
 
     @property
     def subscription_dict_bloomberg(self) -> Dict[str, str]:

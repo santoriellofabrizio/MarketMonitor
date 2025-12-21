@@ -57,20 +57,6 @@ class StrategyUI(StrategyUIAsync):
         """
         pass
 
-    def store_data_on_DB(self, *args, **kwargs) -> Optional[dict[str, Union[pd.DataFrame | pd.Series]]]:
-        """
-        Abstract method to store data in the database.
-
-        Args:
-            *args: Positional arguments for data storage.
-            **kwargs: Keyword arguments for data storage.
-
-        Returns:
-            Optional[Dict[str, Any]]: Returns a dictionary or None depending on storage success.
-        """
-
-        pass
-
     def export_data(self, gui_name, *args, **kwargs):
         """ method to export output_NAV to the chosen gui"""
         self.GUIs[gui_name].export_data(*args, **kwargs)

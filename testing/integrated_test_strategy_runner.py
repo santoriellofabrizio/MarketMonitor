@@ -18,9 +18,9 @@ from typing import Dict, Any, Optional
 from market_monitor_fi.Builder import Builder
 from market_monitor_fi.strategy.UserStrategy.StrategyRegister import register_strategy
 
-from testing.MockBloombergStreamingThread import MockBloombergStreamingThread
-from testing.MockMarketTradesViewer import MockMarketTradesViewer
-from testing.TestStrategy.FlowDetectingStrategy import FlowDetectingStrategy
+from testing.mock_bloomberg import MockBloombergStreamingThread
+from testing.mock_market_trades_viewer import MockMarketTradesViewer
+from testing.test_strategy.FlowDetectingStrategy import FlowDetectingStrategy
 
 logging.basicConfig(
     level=logging.INFO,

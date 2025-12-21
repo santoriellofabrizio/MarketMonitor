@@ -9,10 +9,10 @@ Contiene:
 
 Uso:
     from testing.TestRunner import run_test
-    from testing.TestConfig import TestConfig, TestStrategy
+    from testing.TestConfig import TestConfig, test_strategy
     
     config = TestConfig(
-        strategy=TestStrategy.BASIC_DATA_FLOW,
+        strategy=test_strategy.BASIC_DATA_FLOW,
         duration_seconds=30,
         trades_per_second=2.5
     )
@@ -20,8 +20,8 @@ Uso:
     results = run_test(config)
 """
 
-from .MockBloombergStreamingThread import MockBloombergStreamingThread
-from .MockMarketTradesViewer import MockMarketTradesViewer
+from .mock_bloomberg import MockBloombergStreamingThread
+from .mock_market_trades_viewer import MockMarketTradesViewer
 
 __all__ = [
     "MockBloombergStreamingThread",

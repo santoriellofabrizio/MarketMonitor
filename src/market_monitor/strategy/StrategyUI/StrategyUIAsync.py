@@ -11,7 +11,7 @@ from typing import Optional, Dict, Any, Union, Coroutine
 import pandas as pd
 from watchdog.observers import Observer
 
-from market_monitor.data_storage.DataStorageUI import DataStorageUI
+
 from market_monitor.gui.implementations.GUI import GUI
 from market_monitor.input_threads.trade import TradeType
 
@@ -55,7 +55,6 @@ class StrategyUIAsync(ABC):
         self.q_trade: None | Queue | asyncio.Queue = q_trade
         self.synchronous_trade_handling: bool = True
         self.GUIs: dict[str, GUI] = {}
-        self.storage: None | DataStorageUI = storage
         self.market_data: RTData = market_data
         self.running = False
         self.kwargs = kwargs
@@ -82,7 +81,6 @@ class StrategyUIAsync(ABC):
 
         task_dict = {
             "update_LF": self._async_update_LF,
-            "data_storing": self._async_store_data_on_DB,
             "trade": self._async_check_trade_queue,
             "update_HF": self._async_update_HF,
             "dynamic_params": self._async_dynamic_params_observer
@@ -179,34 +177,6 @@ class StrategyUIAsync(ABC):
             new_value: Nuovo valore
         """
         pass
-
-
-    async def _async_store_data_on_DB(self, frequency, *args, **kwargs):
-        """
-        Stores data in the database at specified intervals.
-
-        Args:
-            frequency (int): Frequency at which to store data (in seconds).
-            *args: Additional positional arguments for data storage.
-            **kwargs: Additional keyword arguments for data storage.
-
-        Returns:
-            None: This method does not return a value.
-        """
-        logging.debug("Entering _async_store_data_on_DB method.")
-        while not self.running:
-
-            start = time()
-            tablename_storage_dict = self.store_data_on_DB(*args, **kwargs)
-            for table_name, storage in tablename_storage_dict.items():
-                try:
-                    storage.dropna(how="all", inplace=True, subset=["PRICE", "NAV"])
-                    if storage is not None and not storage.empty:
-                        await self.storage.commit_to_db(storage, table_name)
-                        logging.debug(f"stored data on DB {time() - start:.4f}s")
-                except Exception as e:
-                    logging.error(f"Error storing data on DB: {e}")
-                await asyncio.sleep(frequency)
 
     async def _async_update_HF(self, frequency, *args, **kwargs):
         """
@@ -341,7 +311,6 @@ class StrategyUIAsync(ABC):
 
     def wait_for_book_initialization(self):
         return True
-
 
     async def shutdown(self):
         """
@@ -494,19 +463,6 @@ class StrategyUIAsync(ABC):
         pass
 
     def on_other_thread_start(self):
-        pass
-
-    def store_data_on_DB(self, *args, **kwargs) -> Optional[dict[str, Union[pd.DataFrame | pd.Series]]]:
-        """
-        Abstract method to store data in the database.
-
-        Args:
-            *args: Positional arguments for data storage.
-            **kwargs: Keyword arguments for data storage.
-
-        Returns:
-            Optional[Dict[str, Any]]: Returns a dictionary or None depending on storage success.
-        """
         pass
 
     def on_market_data_setting(self):

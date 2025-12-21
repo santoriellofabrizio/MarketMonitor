@@ -49,13 +49,10 @@ class TradeManager:
 
         # Config
         self.max_time_to_match = kwargs.get('max_time_to_match_side', self.DEFAULT_MAX_TIME_TO_MATCH_SECONDS)
-        self.enable_persistence = kwargs.get("enable_persistence", True)
-        self.auto_save_interval = kwargs.get("auto_save_interval", self.DEFAULT_AUTO_SAVE_INTERVAL)
         self.max_cache_size = kwargs.get("max_cache_size", self.DEFAULT_MAX_CACHE_SIZE)
         self.trade_folder = trade_folder or Path.cwd() / "data" / "trades"
         self.use_timezone_aware = kwargs.get("use_timezone_aware", True)
-        self.compression = kwargs.get("compression", "snappy")
-        self.engine = kwargs.get("engine", "fastparquet")
+
 
         # Cache thread-safe
         self._cache_lock = RLock()
@@ -63,6 +60,10 @@ class TradeManager:
         self._cache_valid = False
 
         # Persistenza
+        self.engine = kwargs.get("engine", "pyarrow")
+        self.compression = kwargs.get("compression", "snappy")
+        self.enable_persistence = kwargs.get("enable_persistence", True)
+        self.auto_save_interval = kwargs.get("auto_save_interval", self.DEFAULT_AUTO_SAVE_INTERVAL)
         self._trades_since_last_save = 0
         self._last_saved_index = 0
 
@@ -289,13 +290,9 @@ class TradeManager:
         return self.trade_folder / f"trades_{today}.parquet"
 
     def _append_new_trades(self):
-        """
-        Append ottimizzato senza rileggere tutto il file.
-        Usa fastparquet con append nativo.
-        """
+        """Append semplificato che funziona sempre."""
         filepath = self._get_today_filename()
 
-        # Get solo nuovi trade
         all_trades = self.trade_storage.get_last_trades()
         new_trades = all_trades[self._last_saved_index:]
 
@@ -305,27 +302,19 @@ class TradeManager:
         new_df = self._convert_trades_obj_to_df(new_trades)
 
         try:
-            # ✅ Append nativo (senza rileggere tutto)
-            if self.engine == "fastparquet" and filepath.exists():
-                new_df.to_parquet(
-                    filepath,
-                    engine="fastparquet",
-                    append=True,
-                    compression=self.compression,
-                )
+            # ✅ Leggi tutto, concatena, riscrivi (sempre funziona)
+            if filepath.exists():
+                existing_df = pd.read_parquet(filepath, engine="pyarrow")
+                combined_df = pd.concat([existing_df, new_df], ignore_index=True)
             else:
-                # Fallback per pyarrow (rilegge tutto)
-                if filepath.exists():
-                    existing_df = pd.read_parquet(filepath, engine="pyarrow")
-                    combined_df = pd.concat([existing_df, new_df], ignore_index=True)
-                else:
-                    combined_df = new_df
+                combined_df = new_df
 
-                combined_df.to_parquet(
-                    filepath,
-                    engine="pyarrow",
-                    compression=self.compression,
-                )
+            combined_df.to_parquet(
+                filepath,
+                engine="pyarrow",  # ✅ USA PYARROW
+                compression=self.compression,
+                index=False
+            )
 
             self._last_saved_index = len(all_trades)
             logger.info(f"Appended {len(new_trades)} trades to {filepath}")
