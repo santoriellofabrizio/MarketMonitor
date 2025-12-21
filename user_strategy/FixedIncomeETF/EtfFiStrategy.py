@@ -10,7 +10,7 @@ from user_strategy.utils.Pricing.DataFetching.PricesProviderFI import PricesProv
 from user_strategy.utils.Pricing.NAVBasisCalculator import NAVBasisCalculator
 from user_strategy.utils.InputParamsFI import InputParamsFI
 from user_strategy.utils.Pricing.PricingModel import ClusterPricingModel, DriverPricingModel
-from user_strategy.utils.TradeManager import TradeManager
+from user_strategy.utils.TradeManager import trade_manager
 from user_strategy.utils.bloomberg_subscription_utils.OracleConnection import OracleConnection
 from user_strategy.utils.bloomberg_subscription_utils.SubscriptionManager import SubscriptionManager
 

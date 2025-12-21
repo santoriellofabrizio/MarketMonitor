@@ -3,7 +3,7 @@ import logging
 import threading
 import time
 import pandas as pd
-from user_strategy.utils.TradeManager.TradeClassTemplate import AbstractTrade, TradeStorage
+from user_strategy.utils.TradeManager.trade_templates import AbstractTrade, TradeStorage
 
 
 class TimeZeroPLManager(threading.Thread):
@@ -12,42 +12,70 @@ class TimeZeroPLManager(threading.Thread):
                  mid_price_storage: pd.Series,
                  model_price: pd.Series | None = None,
                  time_zero_lag: float = 10.):
+        # IMPORTANTE: Cambiato nome per evitare conflitti interni di threading
         super().__init__(name="TimeZeroPLThread", daemon=True)
         self.trade_storage = trade_storage
         self.mid_price_storage = mid_price_storage
         self.model_price = model_price
         self.time_zero_lag = time_zero_lag
+
+        # Flag per la chiusura
+        self._is_running = True
+        self._stop_event = threading.Event()
+
         logging.info(f"Inizializzato con time_zero_lag = {self.time_zero_lag}s")
+
+    def stop(self):
+        """Metodo chiamato esternamente per chiudere il thread."""
+        logging.info("Ricevuto segnale di stop per TimeZeroPLThread")
+        self._is_running = False
+        self._stop_event.set()  # Sveglia il thread se sta dormendo
 
     def run(self) -> None:
         logging.info("Thread avviato.")
-        while True:
-            logging.info("Attesa trade da elaborare...")
+        while self._is_running:
+            # Se get_trade_index_to_elaborate è bloccante, assicurati che abbia un timeout
             trade_index = self.trade_storage.get_trade_index_to_elaborate()
-            logging.info(f"Trade da elaborare: indice {trade_index}")
+
+            # Se il manager dello storage restituisce None o un segnale di stop
+            if trade_index is None:
+                if not self._is_running: break
+                self._stop_event.wait(1.0)  # Aspetta un secondo prima di riprovare
+                continue
+
             trade = self.trade_storage.get_trades_by_index(trade_index)
             if trade:
-                self.process_trade(trade)
+                # Se process_trade restituisce False, significa che dobbiamo chiudere
+                if not self.process_trade(trade):
+                    break
             else:
-                logging.info("Trade non trovato. Pulisco evento e aspetto nuovi trade.")
+                self._stop_event.wait(0.5)
 
-    def process_trade(self, trade: AbstractTrade):
+    def process_trade(self, trade: AbstractTrade) -> bool:
+        """Restituisce True se completato, False se interrotto dallo stop."""
         trade_timestamp = trade.timestamp
         logging.info(f"Elaborazione trade {trade.trade_index}...")
 
-        while True:
-            diff_seconds = (datetime.datetime.now() - trade_timestamp).seconds
+        while self._is_running:
+            diff_seconds = (datetime.datetime.now() - trade_timestamp).total_seconds()
+
             if diff_seconds > self.time_zero_lag * 4:
                 self.trade_storage.set_trade_as_elaborated(trade)
+                return True
             elif diff_seconds > self.time_zero_lag:
-
                 self._calculate_time_zero_pl(trade)
                 self.trade_storage.set_trade_as_elaborated(trade)
-                break
+                return True
             else:
                 wait_time = self.time_zero_lag - diff_seconds
-                logging.info(f"Attendo {wait_time}s per trade {trade.trade_index}...")
-                time.sleep(max(wait_time, 1))
+                logging.info(f"Attendo {wait_time:.1f}s per trade {trade.trade_index}...")
+
+                # Invece di time.sleep(max(wait_time, 1))
+                # Aspetta wait_time, ma se stop() viene chiamato, si sveglia subito
+                interrupted = self._stop_event.wait(timeout=max(wait_time, 0.1))
+                if interrupted or not self._is_running:
+                    return False
+        return False
 
     def _calculate_time_zero_pl(self, trade: AbstractTrade):
 
@@ -64,7 +92,8 @@ class TimeZeroPLManager(threading.Thread):
     def get_mid(self, isin: str):
         """Recupera il prezzo di riferimento (mid price) per l'ISIN specificato."""
         try:
-            if not len(self.mid_price_storage): return None, None
+            if not len(self.mid_price_storage):
+                return None, None
             time_snip, storage = self.mid_price_storage[-1]
             mid_price = storage[isin]
             logging.info(f"Mid price per {isin}: {mid_price}. snipped at: {time_snip}")

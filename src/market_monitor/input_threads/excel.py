@@ -34,7 +34,7 @@ class ExcelStreamingThread(Thread):
         super().__init__()
         self.sheets: Optional[xw.Book.sheets] = None
         self.wb: None | xw.Book = None
-        self._stop: bool = False
+        self.running: bool = False
         self.pass_on_crash: bool = False
         self._real_time_data: RTData | None = None
         self.path: str = kwargs["path"]
@@ -164,7 +164,7 @@ class ExcelStreamingThread(Thread):
         """
         self.wb = self.open_excel_book(self.path)
         if not self.instance_visible: self.wb.app.visible = False
-        while not self._stop:
+        while not self.running:
             books = self.read_sheets()
             for name, book in books.items():
                 if book is None or book.empty: continue
@@ -173,4 +173,4 @@ class ExcelStreamingThread(Thread):
         self.close()
 
     def stop(self):
-        self._stop = True
+        self.running = True

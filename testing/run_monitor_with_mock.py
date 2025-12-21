@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 from ruamel.yaml import YAML
 
-from market_monitor.builder import Builder
+
 from testing import MockBloombergStreamingThread, MockMarketTradesViewer
 
 os.environ.setdefault('BBG_ROOT', 'xbbg')
@@ -15,77 +15,95 @@ warnings.simplefilter(action='ignore', category=FutureWarning)
 
 
 def run_monitor_with_mock(config=None, use_mock_bloomberg=True, use_mock_trades=True, mock_trades_config=None):
-    """
-    Esegue il monitor con possibilità di usare i mock per Bloomberg e Trades.
-
-    Args:
-        config: Configurazione YAML (se None, legge da sys.argv[1])
-        use_mock_bloomberg: Se True, usa MockBloombergStreamingThread
-        use_mock_trades: Se True, lancia anche MockMarketTradesViewer
-        mock_trades_config: Dizionario con configurazione per MockMarketTradesViewer
-                           (db_path, trades_per_second, etf_instruments, etc.)
-    """
     if config is None:
         with open(sys.argv[1], 'r') as stream:
             config = reader.load(stream)
 
-    # Default config per mock trades
     if mock_trades_config is None:
         mock_trades_config = {
             "db_path": config.get("trade_distributor", {}).get("path", "mock_trades.db"),
-            "trades_per_second": 2.5,
+            "trades_per_second": 0.5,
             "market": "ETFP",
         }
 
-    # Thread aggiuntivi per i mock
     mock_threads = []
 
-    # Setup mock trades viewer se richiesto
     if use_mock_trades:
         mock_trade_viewer = MockMarketTradesViewer(**mock_trades_config)
         mock_threads.append(mock_trade_viewer)
 
-    # Patch Bloomberg se richiesto
     if use_mock_bloomberg:
-        with patch('market_monitor.input_threads.bloomberg.BloombergStreamingThread', MockBloombergStreamingThread):
+        from market_monitor.builder import Builder
+        with patch('market_monitor.builder.BloombergStreamingThread', MockBloombergStreamingThread):
             builder = Builder(config)
             threads, monitor = builder.build()
     else:
+        from market_monitor.builder import Builder
         builder = Builder(config)
         threads, monitor = builder.build()
 
-    # Aggiungi i mock threads
     all_threads = threads + mock_threads
 
     try:
-        # Avvia prima i mock threads
+        # Avvia threads
         for thread in mock_threads:
             thread.start()
             print(f"Started mock thread: {thread.name}")
 
-        # Poi i thread normali
         for thread in threads:
             thread.start()
             print(f"Started thread: {thread.name}")
 
-        # Infine il monitor
         monitor.start()
 
+        # ✅ CRITICO: Aspetta che il monitor finisca (altrimenti il main esce subito)
+        print("\n[MONITOR] In esecuzione. Premi Ctrl+C per terminare.\n")
+        monitor.join()  # Blocca qui fino a Ctrl+C o fino a quando monitor.stop() viene chiamato
+
     except KeyboardInterrupt:
-        print("\nInterrupted by user")
+        print("\n" + "=" * 60)
+        print("🛑 [SHUTDOWN] Ctrl+C rilevato")
+        print("=" * 60)
 
-        # Stop in ordine inverso
-        if hasattr(monitor, 'stop'):
-            monitor.stop()
+    finally:
+        print("\n[SHUTDOWN] Chiusura in corso...")
 
+        # 1. Stop tutti i thread
         for thread in all_threads:
             if hasattr(thread, 'stop'):
-                thread.stop()
+                print(f"  Stopping: {thread.name}")
+                try:
+                    thread.stop()
+                except Exception as e:
+                    print(f"  ⚠️ Errore: {e}")
 
-        # Aspetta che tutti i thread finiscano
-        for thread in all_threads:
-            if thread.is_alive():
-                thread.join(timeout=2)
+        # 2. Stop monitor (chiama on_stop -> trade_manager.close)
+        if hasattr(monitor, 'stop'):
+            print(f"  Stopping monitor (questo chiama trade_manager.close)...")
+            try:
+                monitor.stop()  # Qui dentro c'è on_stop() -> trade_manager.close()
+            except Exception as e:
+                print(f"  ⚠️ Errore stop monitor: {e}")
+                import traceback
+                traceback.print_exc()
+
+        # 3. Join threads con timeout
+        print("\n[SHUTDOWN] Aspettando terminazione thread...")
+
+        for thread in all_threads + [monitor]:
+            if hasattr(thread, 'is_alive') and thread.is_alive():
+                thread_name = getattr(thread, 'name', str(thread))
+                print(f"  Joining {thread_name} (max 10s)...")
+                thread.join(timeout=10.0)
+
+                if thread.is_alive():
+                    print(f"  ⚠️ {thread_name} ancora attivo!")
+                else:
+                    print(f"  ✓ {thread_name} terminato")
+
+        print("\n" + "=" * 60)
+        print("✅ [SHUTDOWN] Completato")
+        print("=" * 60)
 
 
 def run_monitor(config=None):
@@ -106,12 +124,6 @@ if __name__ == "__main__":
     # Configurazione custom per mock trades (opzionale)
     mock_trades_config = None
 
-    # Esempio: leggi config da environment variable o usa default
-    if os.getenv('MOCK_TRADES_PER_SEC'):
-        mock_trades_config = {
-            "trades_per_second": float(os.getenv('MOCK_TRADES_PER_SEC', 2.5)),
-            "db_path": os.getenv('MOCK_TRADES_DB', "mock_trades.db"),
-        }
 
     print("=" * 60)
     print("MARKET MONITOR - MOCK MODE")

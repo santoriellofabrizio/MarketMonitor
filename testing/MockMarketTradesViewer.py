@@ -63,7 +63,7 @@ class MockMarketTradesViewer(threading.Thread):
     ]
 
     def __init__(self,
-                 db_path: str = "mock_trades.db",
+                 db_path: str = r"C:\AFMachineLearning\Projects\Trading\MarketMonitorFI\testing\mock_trades.db",
                  trades_per_second: float = 2.5,
                  etf_instruments: Optional[List[Dict]] = None,
                  quantity_range: Tuple[int, int] = (100, 10000),
@@ -84,7 +84,7 @@ class MockMarketTradesViewer(threading.Thread):
         """
         super().__init__(daemon=True)
         self.name = "MockMarketTradesViewer"
-        self._stop = False
+        self.running = False
 
         # Connessione DB
         self.db_path = db_path
@@ -121,7 +121,7 @@ class MockMarketTradesViewer(threading.Thread):
         logging.info("MockMarketTradesViewer started")
 
         try:
-            while not self._stop:
+            while not self.running:
                 # 1. Calcola quanti trade generare
                 trades_to_generate = self._calculate_trades_to_generate()
 
@@ -211,7 +211,7 @@ class MockMarketTradesViewer(threading.Thread):
 
     def stop(self):
         """Segnala la terminazione del thread."""
-        self._stop = True
+        self.running = True
         logging.info("MockMarketTradesViewer stop signal received")
 
     def get_stats(self) -> Dict:

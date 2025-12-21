@@ -8,7 +8,6 @@ from market_monitor.builder import Builder
 
 os.environ.setdefault('BBG_ROOT', 'xbbg')
 
-# Ignora gli avvisi FutureWarning
 reader = YAML(typ='safe')
 warnings.simplefilter(action='ignore', category=FutureWarning)
 
@@ -25,11 +24,17 @@ def run_monitor(config=None):
         for thread in threads:
             thread.start()
         monitor.start()
+        monitor.join()
+
     except KeyboardInterrupt:
-        print("Interrupted by user")
+        print("\nMarket monitor interrupted by user")
+    finally:
+        monitor.stop()
         for thread in threads:
             thread.stop()
-        monitor.stop()
+        for thread in threads:
+            if thread.is_alive():
+                thread.join(timeout=10.0)
 
 
 if __name__ == "__main__":

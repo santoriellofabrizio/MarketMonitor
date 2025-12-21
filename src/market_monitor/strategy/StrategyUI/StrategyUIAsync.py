@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from abc import ABC, abstractmethod
+from pathlib import Path
 from queue import Queue
 from time import time
 from typing import Optional, Dict, Any, Union, Coroutine
@@ -12,10 +13,10 @@ from watchdog.observers import Observer
 
 from market_monitor.data_storage.DataStorageUI import DataStorageUI
 from market_monitor.gui.implementations.GUI import GUI
+from market_monitor.input_threads.trade import TradeType
 
 from market_monitor.live_data_hub.real_time_data_hub import RTData
 from market_monitor.utils.config_observer import ConfigChangeHandler
-from user_strategy.utils.enums import TradeType
 
 
 class StrategyUIAsync(ABC):
@@ -56,7 +57,7 @@ class StrategyUIAsync(ABC):
         self.GUIs: dict[str, GUI] = {}
         self.storage: None | DataStorageUI = storage
         self.market_data: RTData = market_data
-        self._stop = False
+        self.running = False
         self.kwargs = kwargs
 
     def start(self):
@@ -113,6 +114,73 @@ class StrategyUIAsync(ABC):
         else:
             logging.error("Book initialization failed.")
 
+    async def _async_dynamic_params_observer(self, dynamic_config_path: str, frequency: float):
+        """
+        Osserva e aggiorna parametri dinamici tramite callback.
+
+        Args:
+            dynamic_config_path: Path al file di configurazione
+            frequency: Frequenza di controllo (in secondi)
+        """
+        logging.debug("Starting config observer")
+
+        event_handler = ConfigChangeHandler(
+            dynamic_config_path=dynamic_config_path,
+            on_config_change=self._handle_config_change
+        )
+
+        observer = Observer()
+        observer.name = "DynamicParamsObserver"
+        observer.schedule(event_handler, path=str(Path(dynamic_config_path).parent), recursive=False)
+        observer.start()
+
+        self._config_observer = observer
+
+        try:
+            while not self.running:
+                await asyncio.sleep(frequency)
+        except Exception as e:
+            logging.error(f"Error in config observer: {e}")
+        finally:
+            observer.stop()
+            observer.join()
+
+    def _handle_config_change(self, key: str, old_value: Any, new_value: Any):
+        """
+        Callback invocato quando un parametro di configurazione cambia.
+
+        Args:
+            key: Nome del parametro
+            old_value: Valore precedente
+            new_value: Nuovo valore
+        """
+        logging.info(f"Handling config change: {key} = {new_value} (was {old_value})")
+
+        try:
+            self.on_config_change(key, old_value, new_value)
+        except Exception as e:
+            logging.error(f"Error handling config change for {key}: {e}", exc_info=True)
+
+    def on_config_change(self, key: str, old_value: Any, new_value: Any):
+        """
+        Override questo metodo nella tua strategia per gestire i cambi di configurazione.
+
+        Example:
+            def on_config_change(self, key, old_value, new_value):
+                if key == "max_position_size":
+                    self.max_position = new_value
+                elif key == "risk_threshold":
+                    self.risk_threshold = new_value
+                    self._recalculate_limits()
+
+        Args:
+            key: Nome del parametro modificato
+            old_value: Valore precedente
+            new_value: Nuovo valore
+        """
+        pass
+
+
     async def _async_store_data_on_DB(self, frequency, *args, **kwargs):
         """
         Stores data in the database at specified intervals.
@@ -126,7 +194,7 @@ class StrategyUIAsync(ABC):
             None: This method does not return a value.
         """
         logging.debug("Entering _async_store_data_on_DB method.")
-        while not self._stop:
+        while not self.running:
 
             start = time()
             tablename_storage_dict = self.store_data_on_DB(*args, **kwargs)
@@ -153,7 +221,7 @@ class StrategyUIAsync(ABC):
             None: This method does not return a value.
         """
         logging.debug("Entering _async_update_HF method.")
-        while not self._stop:
+        while not self.running:
             start = time()
             try:
                 self.update_HF()
@@ -189,7 +257,7 @@ class StrategyUIAsync(ABC):
            Returns:
                None: This method does not return a value.
            """
-        while not self._stop:
+        while not self.running:
             logging.debug("Entering _check_trade_queue_on_event method.")
             trade_type, item = await self.q_trade.get()
             start = time()
@@ -209,7 +277,7 @@ class StrategyUIAsync(ABC):
             None: This method does not return a value.
         """
         logging.debug("Entering _sync_check_queue_update method.")
-        while not self._stop:
+        while not self.running:
             logging.debug("Entering _check_trade_queue_on_time method.")
             market_trades, own_trades = [], []
             batch_size = 0
@@ -248,7 +316,7 @@ class StrategyUIAsync(ABC):
             None: This method does not return a value.
         """
         logging.debug("Entering _async_update_LF method.")
-        while not self._stop:
+        while not self.running:
             try:
                 start = time()
                 logging.debug("entering _async_update_LF")
@@ -274,37 +342,13 @@ class StrategyUIAsync(ABC):
     def wait_for_book_initialization(self):
         return True
 
-    async def _async_dynamic_params_observer(self, dynamic_config_path, frequency: float):
-        """
-        Observes and updates dynamic parameters at specified intervals.
-
-        Args:
-            frequency (int): Frequency of dynamic parameter updates (in seconds).
-
-        Returns:
-            None: This method does not return a value.
-        """
-        logging.debug("Entering _async_watchdog method.")
-        event_handler = ConfigChangeHandler(dynamic_config_path, self.input_params)
-        observer = Observer()
-        observer.schedule(event_handler, path="", recursive=False)
-        observer.start()
-
-        try:
-            while not self._stop:
-                await asyncio.sleep(frequency)
-        except Exception as e:
-            logging.error(f"Error in config observer: {e}")
-        finally:
-            observer.stop()
-            observer.join()
 
     async def shutdown(self):
         """
         Arresta la strategia e chiude la gui.
         """
         logging.debug("Entering shutdown method.")
-        self._stop = True  # Segnala la chiusura agli altri cicli
+        self.running = True  # Segnala la chiusura agli altri cicli
 
         try:
             # Chiude la gui in modo sicuro
@@ -407,9 +451,20 @@ class StrategyUIAsync(ABC):
         pass
 
     def stop(self):
+        """Stop non bloccante."""
         self.on_stop()
         logging.debug("Entering stop method.")
-        asyncio.run(self.shutdown())
+
+        # Se hai un event loop attivo
+        if hasattr(self, '_loop') and self._loop and self._loop.is_running():
+            # Schedule shutdown nell'event loop esistente
+            asyncio.run_coroutine_threadsafe(self.shutdown(), self._loop)
+        else:
+            # Altrimenti crea nuovo loop
+            try:
+                asyncio.run(self.shutdown())
+            except RuntimeError as e:
+                logging.warning(f"Impossibile eseguire shutdown async: {e}")
 
     def on_start_strategy(self):
         """Callback invoked when a strategy is started"""

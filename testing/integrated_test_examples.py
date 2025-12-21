@@ -10,7 +10,7 @@ Questo file mostra come:
 
 import logging
 
-from market_monitor_fi.strategy.UserStrategy.StrategyRegister import register_strategy
+from user_strategy.StrategyRegister import register_strategy
 from testing.IntegratedStrategyTestRunner import run_integrated_test
 
 # Setup logging

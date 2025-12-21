@@ -63,7 +63,8 @@ class IRPManager:
                     relevant_contracts.loc[instr].append(irs_mapping.loc[instr])
                     index_start.loc[instr] = 0
                 else:
-                    relevant_contracts.loc[instr].append(self._irp_date_contract_mapping[(irp_mapping.loc[instr], first_meeting_date)])
+                    relevant_contracts.loc[instr].append(
+                        self._irp_date_contract_mapping[(irp_mapping.loc[instr], first_meeting_date)])
                     index_start.loc[instr] = next(i for i in range(len(meeting_dates.loc[instr])) if meeting_dates.loc[instr][i] > start.loc[instr])
             else:
                 n_of_meeting_dates = 0

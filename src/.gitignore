@@ -15,3 +15,9 @@ PubblicaSuRedis.py
 *.csv
 *.log
 
+# .gitignore
+__pycache__/
+*.pyc
+testing/mock_trades.db
+testing/data/
+

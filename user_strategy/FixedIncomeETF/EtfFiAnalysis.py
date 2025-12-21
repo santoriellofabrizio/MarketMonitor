@@ -8,7 +8,7 @@ from market_monitor.publishers.redis_publisher import RedisMessaging
 from market_monitor.strategy.StrategyUI.StrategyUI import StrategyUI
 from user_strategy.utils import CustomBDay
 from user_strategy.utils.InputParamsFIAnalysis import InputParamsFIAnalysis
-from user_strategy.utils.TradeManager.TradeManager import TradeManager
+from user_strategy.utils.TradeManager.trade_manager import TradeManager
 
 
 class FIAnalysis(StrategyUI):

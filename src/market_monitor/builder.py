@@ -46,8 +46,8 @@ class Builder:
 
         if self.config.get("trade_distributor", {}).get("activate", False):
             self._setup_trade_distributor(threads, user_strategy, lock, logger)
-        if self.config.get("market_data_distributor", {}).get("activate", False):
-            self._setup_market_distributor(threads, user_strategy)
+        if self.config.get("bloomberg_data_distributor", {}).get("activate", False):
+            self._setup_bloomberg_distributor(threads, user_strategy)
         if self.config.get("excel_data_distributor", {}).get("activate", False):
             self._setup_excel_distributor(threads, user_strategy)
         if self.config.get("redis_data_distributor", {}).get("activate", False):
@@ -108,23 +108,22 @@ class Builder:
             raise
 
     def _set_real_time_data(self, monitor, lock):
-        market_data = RTData(lock, **self.config.get("market_data_distributor",{}).get("book_params",{}))
+        market_data = RTData(lock, **self.config.get("market_data_distributor", {}).get("book_params",{}))
         monitor.set_market_data(market_data)
 
     def _setup_trade_distributor(self, threads, monitor, lock, logger):
         q_trade = Queue() if self.config["market_monitor"]["tasks"]["trade"]["synchronous"] else asyncio.Queue()
         monitor.set_q_trade(q_trade)
         path = self.config["trade_distributor"]["path"]
-        db_name = self.config["trade_distributor"]["db_name"]
-        trade_thread = TradeThread(lock, q_trade, path=path, db_name=db_name)
+        trade_thread = TradeThread(lock, q_trade, path=path)
         threads.append(trade_thread)
 
-    def _setup_market_distributor(self, threads, monitor):
+    def _setup_bloomberg_distributor(self, threads, monitor):
         market_data = monitor.market_data
         event_handler = BBGEventHandler(market_data)
-        price_distributor_thread = BloombergStreamingThread(event_handler, **self.config["market_data_distributor"]
-                                                                                        ["bloomberg_params"])
-        threads.append(price_distributor_thread)
+        bloomberg_distributor_thread = BloombergStreamingThread(event_handler, **self.config["bloomberg_data_distributor"].get(
+                                                                                        "bloomberg_params", {}))
+        threads.append(bloomberg_distributor_thread)
 
     def _setup_excel_distributor(self, threads, monitor):
         excel_distributor_thread = ExcelStreamingThread(**self.config["excel_data_distributor"]["excel_params"])

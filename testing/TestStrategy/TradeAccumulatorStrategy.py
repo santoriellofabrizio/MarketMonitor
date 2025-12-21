@@ -4,7 +4,6 @@ from typing import Optional
 import pandas as pd
 
 from market_monitor.strategy.StrategyUI.StrategyUI import StrategyUI
-from user_strategy.StrategyRegister import register_strategy
 
 
 class TradeAccumulatorStrategy(StrategyUI):
@@ -45,7 +44,6 @@ class TradeAccumulatorStrategy(StrategyUI):
             for isin in self.isins
         }
         self.market_data.subscription_dict_bloomberg = subscription_dict
-        self.market_data.securities = self.isins
         self.logger.info(f"Market data configured")
 
     def wait_for_book_initialization(self) -> bool:
@@ -130,4 +128,3 @@ class TradeAccumulatorStrategy(StrategyUI):
             )
 
 
-register_strategy("TradeAccumulatorStrategy", TradeAccumulatorStrategy)

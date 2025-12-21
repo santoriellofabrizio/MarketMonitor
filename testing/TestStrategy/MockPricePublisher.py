@@ -8,7 +8,8 @@ from datetime import datetime
 
 import pandas as pd
 
-from market_monitor.publishers.GUIRedis import GUIRedisMessaging
+from market_monitor.publishers.base import MessageType
+from market_monitor.publishers.redis_publisher import RedisMessaging
 from market_monitor.strategy.StrategyUI.StrategyUI import StrategyUI
 
 logger = logging.getLogger(__name__)
@@ -23,8 +24,8 @@ class MockPricePublisher(StrategyUI):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         
-        self.gui = GUIRedisMessaging()
-        
+        self.gui = RedisMessaging()
+
         # Mock instruments (from TestStrategy defaults if available)
         self.instruments = kwargs.get("instruments", [
             "DE0007667107",  # XESC
@@ -79,11 +80,11 @@ class MockPricePublisher(StrategyUI):
     def on_book_initialized(self):
         """Called once book is initialized."""
         # Publish initial portfolio state
-        self.gui.publish_state("portfolio:positions", self.positions)
+        self.gui.export_message("portfolio:positions", self.positions)
         
         # Initial PnL
         pnl = self._calculate_pnl()
-        self.gui.publish_state("portfolio:pnl", pnl)
+        self.gui.export_message("portfolio:pnl", pnl)
         
         logger.info("Initial state published to RedisPublisher")
 
@@ -92,8 +93,8 @@ class MockPricePublisher(StrategyUI):
         mid_eur = self.market_data.get_mid_eur()
         
         # Publish NAV-like data using export_data_message
-        self.gui.export_data_message("market:nav", mid_eur)
-        self.gui.export_data_message("market:book", mid_eur)
+        self.gui.export_message("market:nav", mid_eur, skip_if_unchanged=True)
+        self.gui.export_message("market:book", mid_eur,skip_if_unchanged=True)
 
     def _calculate_pnl(self):
         """Calculate PnL from positions."""
@@ -116,9 +117,9 @@ class MockPricePublisher(StrategyUI):
 
     def on_stop(self):
         """Cleanup."""
-        self.gui.publish_state("metadata:strategy_status", {
+        self.gui.export_message("metadata:strategy_status", {
             "name": "MockPricePublisher",
             "status": "stopped",
             "last_update": datetime.now().isoformat()
-        })
+        }, MessageType.STATUS)
         logger.info("MockPricePublisher stopped")
