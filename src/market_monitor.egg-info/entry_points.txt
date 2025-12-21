@@ -1,2 +1,3 @@
 [console_scripts]
-MarketMonitorFI = run_monitor:main
+run_dashboard = market_monitor.gui.implementations.PyQt5Dashboard.run_dashboard:main
+run_strategy = run_monitor:run_monitor

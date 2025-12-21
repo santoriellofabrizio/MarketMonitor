@@ -1,5 +1,5 @@
 [project]
-name = "market_monitor_fi"
+name = "market_monitor"
 version = "1.0"
 description = "Market monitor project developed by Sella Financial Markets"
 readme = "README.md"
@@ -26,8 +26,9 @@ dependencies = [
 ]
 
 [project.scripts]
-MarketMonitorFI = "run_monitor:main"
-run_dashboard = "market_monitor_fi.GUI.ConcreteGUI.PyQt5Dashboard.run_dashboard:main"
+run_strategy = "run_monitor:run_monitor"
+run_dashboard = "market_monitor.gui.implementations.PyQt5Dashboard.run_dashboard:main"
+
 
 [build-system]
 requires = ["setuptools"]

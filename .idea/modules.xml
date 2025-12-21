@@ -2,7 +2,7 @@
 <project version="4">
   <component name="ProjectModuleManager">
     <modules>
-      <module fileurl="file://$PROJECT_DIR$/.idea/MarketMonitorFI.iml" filepath="$PROJECT_DIR$/.idea/MarketMonitorFI.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/MarketMonitor.iml" filepath="$PROJECT_DIR$/.idea/MarketMonitor.iml" />
     </modules>
   </component>
 </project>

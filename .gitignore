@@ -2,3 +2,8 @@
 *.pyc
 testing/mock_trades.db
 testing/data/git status
+*.log
+*.parquet
+*.db
+*.yaml
+
