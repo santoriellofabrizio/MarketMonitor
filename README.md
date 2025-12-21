@@ -1,1 +1,105 @@
 # MarketMonitorFI
+
+## Struttura del codice
+
+Il progetto è organizzato per comporre dinamicamente una strategia di monitoraggio e trading a partire da una configurazione YAML.
+
+- **Entrypoint**: `src/run_monitor.py` legge il file di configurazione, istanzia `Builder` e avvia strategia e thread di I/O asincroni.
+- **Builder** (`src/market_monitor/builder.py`):
+  - inizializza logging e (opzionalmente) connessioni Oracle/Timescale;
+  - carica dinamicamente la classe strategica indicata da `load_strategy_info` (percorso, modulo e nome classe);
+  - costruisce il libro `RTData` e lo inietta nella strategia tramite `set_market_data`;
+  - configura code di trade (sincrone o asincrone) e thread di distribuzione dati (Bloomberg, Excel, Redis, file di trade);
+  - crea le GUI configurate (Tkinter, Excel, Dummy) e le associa con `set_gui`;
+  - restituisce la lista dei thread da avviare e l’istanza della strategia.
+- **Live data hub** (`src/market_monitor/live_data_hub/real_time_data_hub.py`): fornisce `RTData`, un contenitore thread-safe per book di mercato, stato, eventi e blob con utility per mid price, conversione FX in EUR, gestione sottoscrizioni (Bloomberg/Redis) e routing dei dati.
+- **Input threads** (`src/market_monitor/input_threads/`):
+  - `bloomberg.py`, `excel.py`, `redis.py` e `trade.py` alimentano `RTData` o la coda trade con dati di mercato o ordini;
+  - `event_handler/BBGEventHandler.py` gestisce l’adattamento dei messaggi Bloomberg.
+- **Strategy framework** (`src/market_monitor/strategy/StrategyUI`):
+  - `StrategyUIAsync` orchestra task asincroni (HF/LF update, osservazione parametri dinamici, gestione trade) e definisce le callback da implementare;
+  - `StrategyUI` fornisce lo scheletro concreto per le strategie utente.
+- **Publishers** (`src/market_monitor/publishers/`): output verso Redis o altri canali partendo dai dati di strategia.
+- **Strategie utente** (`user_strategy/`): esempi di strategie Fixed Income/ETF e componenti riusabili (es. `TradeManager`, `BookStorage`, input params). Le classi sono caricate dinamicamente tramite `load_strategy_info` nella configurazione.
+- **Testing** (`testing/`): esempi di configurazioni YAML e strategie dimostrative (es. `TestTradeManagerStrategy`) utili come riferimento di integrazione.
+
+## Creare e usare una strategia
+
+1. **Definisci la classe** in una cartella raggiungibile dal percorso `package_path` della configurazione. Estendi `StrategyUI` e implementa le callback necessarie.
+2. **Aggiorna la configurazione YAML** (es. `testing/real_strategy_with_mock.yaml`):
+   - blocco `load_strategy_info` con `package_path`, `module_name` e `class_name` della strategia;
+   - sezione `market_monitor.tasks` per attivare i task (`update_HF`, `update_LF`, `trade`, `dynamic_params`) e specificare frequenze o modalità sincrona/asincrona della coda trade;
+   - sezioni `*_data_distributor` e `trade_distributor` per attivare le sorgenti dati e indicare i parametri richiesti (es. file DB di trade, parametri Bloomberg/Excel/Redis);
+   - blocco `logging` per livelli console/file e nome del log;
+   - (opzionale) blocchi `oracle_connection` e `timescale_connection` per le credenziali DB.
+3. **Avvia il monitor** con `python -m market_monitor.run_monitor <config.yaml>` oppure importando `run_monitor` in uno script.
+4. **Gestisci la chiusura**: la strategia dovrebbe implementare `on_stop` per rilasciare risorse (es. chiudere `TradeManager`, publisher, GUI).
+
+### Callback disponibili nelle strategie
+
+Le callback più comuni da implementare in una sottoclasse di `StrategyUI` sono:
+
+- `on_market_data_setting()`: chiamata quando `RTData` viene assegnato; utile per impostare le sottoscrizioni (es. `subscription_dict_bloomberg`).
+- `wait_for_book_initialization() -> bool`: ritorna `True` quando il book è pronto (es. mid non NaN); controllata in loop prima di avviare i task asincroni.
+- `on_book_initialized()`: hook di notifica quando il book è pronto.
+- `update_HF()`: logica ad alta frequenza (es. calcolo NAV, aggiornamento indicatori). Se necessario, può restituire un DataFrame e metadata per l’esportazione GUI.
+- `update_LF()`: logica a bassa frequenza (es. controlli periodici, salvataggi lenti).
+- `on_trade(trades: pd.DataFrame)`: gestione dei trade di mercato; i dati arrivano dalla coda `q_trade` popolata dai thread input.
+- `on_my_trade(trades: pd.DataFrame)`: gestione dei trade proprietari (trade type `OWN`).
+- `on_config_change(key, old_value, new_value)`: invocata dal watcher di file dinamici se `dynamic_params` è attivo.
+- `on_other_thread_start()`: hook quando i thread ausiliari (input/gui) sono avviati.
+- `on_start_strategy()` e `on_stop()`: avvio e teardown della strategia.
+
+Ogni callback è chiamata dal runtime asincrono di `StrategyUIAsync`, che raccoglie i task attivi in base al blocco `tasks` della configurazione.
+
+### Uso del Trade Manager
+
+`user_strategy/utils/TradeManager/trade_manager.py` fornisce un gestore di trade thread-safe con persistenza append-only.
+
+- **Costruzione**: `TradeManager(book_storage, model_prices=None, time_zero_lag=10.0, trade_folder=Path("data/trades"), max_time_to_match_side=10.0, auto_save_interval=500, engine="pyarrow", compression="snappy", enable_persistence=True, use_timezone_aware=True)`
+  - richiede un `book_storage` con metodo `get_last_before` (es. `BookStorage` del medesimo package);
+  - può opzionalmente avviare un thread `TimeZeroPLManager` per calcolare PL istantaneo.
+- **Elaborazione trade**: chiama `on_trade(df_trades)` passando un DataFrame con colonne `last_update`, `price`, `quantity`, `own_trade`, `isin`, `market`, `currency`, `price_multiplier`, `ticker`.
+  - assegna il side usando il mid del book (`match_side`), calcola spread PL e PL di modello quando disponibili;
+  - gestisce trade proprietari separatamente (indicizzati in `_my_trades_index`).
+- **Query**: metodi come `get_trades(n_of_trades=None)`, `get_my_trades`, `get_trades_from_isin`, `get_trades_from_ticker` e `get_filtered_trades` restituiscono DataFrame ordinati per timestamp decrescente, con cache interna invalidata automaticamente all’arrivo di nuovi trade.
+- **Persistenza**: salva su Parquet nel percorso giornaliero (`trades_YYYYMMDD.parquet`) tramite `_append_new_trades` o `save_trades(filepath)`; `_load_today_trades` ricostruisce gli oggetti a startup quando `enable_persistence` è attivo.
+- **Chiusura**: `close()` salva i trade e arresta il thread di PL iniziale; va richiamato dentro `on_stop` della strategia.
+
+### Esempio minimo di strategia
+
+```python
+from market_monitor.strategy.StrategyUI.StrategyUI import StrategyUI
+from user_strategy.utils.TradeManager.book_memory import BookStorage
+from user_strategy.utils.TradeManager.trade_manager import TradeManager
+
+
+class MyStrategy(StrategyUI):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.book_storage = BookStorage(maxlen=100)
+        self.trade_manager = TradeManager(self.book_storage)
+
+    def on_market_data_setting(self):
+        self.market_data.subscription_dict_bloomberg = {
+            "IE0005042670": "IE0005042670 EQUITY",
+        }
+
+    def wait_for_book_initialization(self):
+        mid = self.market_data.get_mid_eur()
+        return mid.notna().any()
+
+    def update_HF(self):
+        mid = self.market_data.get_mid_eur()
+        self.book_storage.append(mid)
+
+    def on_trade(self, trades):
+        processed = self.trade_manager.on_trade(trades)
+        latest = self.trade_manager.get_trades(5)
+        # esporta latest verso GUI/publisher qui
+
+    def on_stop(self):
+        self.trade_manager.close()
+```
+
+Con una configurazione YAML che punta a `MyStrategy`, `run_monitor` inizializzerà il book, avvierà i thread di input dati, raccoglierà i trade e manterrà la persistenza tramite `TradeManager`.
