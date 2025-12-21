@@ -16,12 +16,12 @@ from market_monitor.gui.threaded_GUI.GUIQueue import GUIQueue
 from market_monitor.gui.threaded_GUI.QueueDataSource import QueueDataSource
 from market_monitor.gui.threaded_GUI.ThreadGUIExcel import ThreadGUIExcel
 from market_monitor.gui.threaded_GUI.TradeThreadGUITkinter import TradeThreadGUITkinter
-from market_monitor.input_threads.EventHandler.BBGEventHandler import BBGEventHandler
+from market_monitor.input_threads.event_handler.BBGEventHandler import BBGEventHandler
 from market_monitor.input_threads.trade import TradeThread
 from market_monitor.input_threads.bloomberg import BloombergStreamingThread
 from market_monitor.input_threads.excel import ExcelStreamingThread
 from market_monitor.input_threads.redis import RedisStreamingThread
-from market_monitor.live_data_hub.RTData import RTData
+from market_monitor.live_data_hub.real_time_data_hub import RTData
 
 
 class Builder:

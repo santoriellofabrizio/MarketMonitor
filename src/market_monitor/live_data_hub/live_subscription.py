@@ -1,16 +1,10 @@
-import asyncio
 import logging
-from datetime import datetime, timedelta
-from threading import Lock
-from typing import Any, Union, List, Dict, Optional, Tuple
-from collections import OrderedDict
+from datetime import datetime
+from typing import Any, Union, List, Dict, Optional
 from dataclasses import dataclass, field as dataclass_field
 from enum import Enum
 
-import numpy as np
 import pandas as pd
-
-from market_monitor.utils.enums import CURRENCY
 
 
 class DataStore(str, Enum):

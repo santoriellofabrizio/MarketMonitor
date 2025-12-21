@@ -4,7 +4,7 @@ import warnings
 
 from ruamel.yaml import YAML
 
-from market_monitor.Builder import Builder
+from market_monitor.builder import Builder
 
 os.environ.setdefault('BBG_ROOT', 'xbbg')
 

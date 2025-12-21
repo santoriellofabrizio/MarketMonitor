@@ -5,9 +5,10 @@ ESEMPIO COMPLETO DI TEST DEL NUOVO SISTEMA
 import time
 import threading
 import logging
-from market_monitor_fi.live_data_hub.RTData import RTData
-from market_monitor_fi.input_threads.EventHandler.BBGEventHandler import BBGEventHandler
-from market_monitor_fi.input_threads.bloomberg.BloombergStreamingThread import BloombergStreamingThread
+
+from market_monitor.input_threads.bloomberg import BloombergStreamingThread
+from market_monitor.input_threads.event_handler.BBGEventHandler import BBGEventHandler
+from market_monitor.live_data_hub.real_time_data_hub import RTData
 
 logging.basicConfig(level=logging.INFO)
 

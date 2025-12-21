@@ -1,5 +1,5 @@
 load_strategy_info:
-#  package_path: C:\AFMachineLearning\Projects\Trading\MarketMonitorFI\UserStrategy\ETFEquity\LiveQuoting
+#  package_path: C:\AFMachineLearning\Projects\Trading\MarketMonitorFI\user_strategy\ETFEquity\LiveQuoting
 #  module_name: EtfEquityPriceEngine
 #  class_name: EtfEquityPriceEngine
 

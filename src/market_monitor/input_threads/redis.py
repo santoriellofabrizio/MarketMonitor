@@ -30,7 +30,7 @@ import redis
 import threading
 from typing import Optional, Any, Dict, List
 
-from market_monitor.live_data_hub.RTData import RTData, RedisSubscription
+from market_monitor.live_data_hub.real_time_data_hub import RTData, RedisSubscription
 
 logger = logging.getLogger(__name__)
 
@@ -457,7 +457,7 @@ class RedisStreamingThread(threading.Thread):
 # ============================================================================
 
 if __name__ == '__main__':
-    from market_monitor.live_data_hub.RTData import RTData
+    from market_monitor.live_data_hub.real_time_data_hub import RTData
     from threading import Lock
 
     # Setup RTData

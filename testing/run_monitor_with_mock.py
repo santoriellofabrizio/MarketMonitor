@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 from ruamel.yaml import YAML
 
-from market_monitor.Builder import Builder
+from market_monitor.builder import Builder
 from testing import MockBloombergStreamingThread, MockMarketTradesViewer
 
 os.environ.setdefault('BBG_ROOT', 'xbbg')

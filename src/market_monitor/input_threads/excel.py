@@ -8,7 +8,7 @@ from typing import Optional, Union, List, Dict
 import pandas as pd
 import xlwings as xw
 
-from market_monitor.live_data_hub.RTData import RTData
+from market_monitor.live_data_hub.real_time_data_hub import RTData
 
 
 class ExcelStreamingThread(Thread):

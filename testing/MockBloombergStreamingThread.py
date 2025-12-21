@@ -4,7 +4,7 @@ import time
 from typing import Dict
 import random
 
-from market_monitor.live_data_hub.RTData import RTData
+from market_monitor.live_data_hub.real_time_data_hub import RTData
 
 logging.getLogger()
 
@@ -92,7 +92,7 @@ class MockBloombergStreamingThread(threading.Thread):
 
     def _subscribe_pending(self):
         """Subscribe to all pending subscriptions"""
-        from market_monitor.live_data_hub.RTData import BloombergSubscription
+        from market_monitor.live_data_hub.real_time_data_hub import BloombergSubscription
 
         pending = self.real_time_data.get_pending_subscriptions(source="bloomberg")
 
@@ -115,7 +115,7 @@ class MockBloombergStreamingThread(threading.Thread):
 
     def _process_unsubscribe(self):
         """Process subscriptions marked for removal"""
-        from market_monitor.live_data_hub.RTData import BloombergSubscription
+        from market_monitor.live_data_hub.real_time_data_hub import BloombergSubscription
 
         to_unsub = self.real_time_data.get_to_unsubscribe(source="bloomberg")
 

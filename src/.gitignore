@@ -1,10 +1,17 @@
+__pycache__/
+*.pyc
+.idea/
+.claude/
+*.egg-info/
+.venv/
 cache_dir/
-cache/
 configFolder/
 etc/
-.venv/
-.bat/
+.cache/
+*.yaml
+*.bat
+PubblicaSuRedis.py
+*.parquet
+*.csv
+*.log
 
-*.pkl
-.env
-__pycache__/

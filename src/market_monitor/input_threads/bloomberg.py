@@ -4,8 +4,8 @@ import time
 from typing import Union
 
 from blpapi import SessionOptions, Session, SubscriptionList, CorrelationId
-from market_monitor.input_threads.EventHandler.BBGEventHandler import BBGEventHandler
-from market_monitor.live_data_hub.RTData import RTData
+from market_monitor.input_threads.event_handler.BBGEventHandler import BBGEventHandler
+from market_monitor.live_data_hub.real_time_data_hub import RTData
 
 logging.getLogger()
 
@@ -108,7 +108,7 @@ class BloombergStreamingThread(threading.Thread):
 
     def _subscribe_pending(self):
         """Subscribe to all pending subscriptions"""
-        from market_monitor.live_data_hub.RTData import BloombergSubscription
+        from market_monitor.live_data_hub.real_time_data_hub import BloombergSubscription
 
         pending = self.subscription_service.get_pending_subscriptions(source="bloomberg")
 
@@ -141,7 +141,7 @@ class BloombergStreamingThread(threading.Thread):
 
     def _process_unsubscribe(self):
         """Process subscriptions marked for removal"""
-        from market_monitor.live_data_hub.RTData import BloombergSubscription
+        from market_monitor.live_data_hub.real_time_data_hub import BloombergSubscription
 
         to_unsub = self.subscription_service.get_to_unsubscribe(source="bloomberg")
 

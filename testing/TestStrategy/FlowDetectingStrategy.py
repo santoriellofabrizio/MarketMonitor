@@ -6,8 +6,8 @@ from typing import Optional
 import pandas as pd
 
 from market_monitor.strategy.StrategyUI.StrategyUI import StrategyUI
-from UserStrategy.utils.TradeManager.FlowDetector import FlowDetector
-from UserStrategy.utils.TradeManager.TradeManager import TradeManager
+from user_strategy.utils.TradeManager.FlowDetector import FlowDetector
+from user_strategy.utils.TradeManager.TradeManager import TradeManager
 
 
 class FlowDetectingStrategy(StrategyUI):

@@ -1,6 +1,6 @@
 # test_rtdata_behavior.py
 import threading
-from market_monitor_fi.live_data_hub.RTData import RTData
+from market_monitor.live_data_hub.real_time_data_hub import RTData
 
 
 class TestRTDataThreadSafety:
@@ -10,7 +10,7 @@ class TestRTDataThreadSafety:
         """Verifica letture/scritture concorrenti"""
         lock = threading.Lock()
         rtdata = RTData(lock, fields=["BID", "ASK"])
-        rtdata.securities = ["ISIN1", "ISIN2"]
+        rtdata.set_securities(["ISIN1", "ISIN2"])
 
         errors = []
 
@@ -48,7 +48,7 @@ class TestRTDataThreadSafety:
         """Verifica che get_mid restituisca risultati consistenti"""
         lock = threading.Lock()
         rtdata = RTData(lock, fields=["BID", "ASK"], mid_key=["BID", "ASK"])
-        rtdata.securities = ["ISIN1"]
+        rtdata.set_securities(["ISIN1"])
 
         rtdata.update("ISIN1", {"BID": 100.0, "ASK": 102.0})
         mid = rtdata.get_mid(["ISIN1"])
@@ -58,7 +58,7 @@ class TestRTDataThreadSafety:
     def test_get_mid_thread_safe(self):
         lock = threading.Lock()
         rtdata = RTData(lock, fields=["BID", "ASK"])
-        rtdata.securities = ["ISIN1"]
+        rtdata.set_securities(["ISIN1"])
         rtdata.update("ISIN1", {"BID": 100.0, "ASK": 102.0})
 
         results = []
@@ -76,3 +76,6 @@ class TestRTDataThreadSafety:
 
         # Tutti i risultati devono essere 101.0
         assert all(r == 101.0 for r in results)
+
+TestRTDataThreadSafety().test_concurrent_reads_writes()
+TestRTDataThreadSafety().test_get_mid_thread_safe()

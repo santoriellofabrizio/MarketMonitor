@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 
 from market_monitor.strategy.StrategyUI.StrategyUI import StrategyUI
-from UserStrategy.StrategyRegister import register_strategy
+from user_strategy.StrategyRegister import register_strategy
 
 
 class PriceSpreadAnalyzerStrategy(StrategyUI):

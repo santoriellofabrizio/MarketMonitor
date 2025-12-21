@@ -5,7 +5,7 @@ import logging
 from abc import ABC, abstractmethod
 from queue import Queue
 from time import time
-from typing import Optional, Dict, Any, Union, TypeVar, Coroutine
+from typing import Optional, Dict, Any, Union, Coroutine
 
 import pandas as pd
 from watchdog.observers import Observer
@@ -13,10 +13,9 @@ from watchdog.observers import Observer
 from market_monitor.data_storage.DataStorageUI import DataStorageUI
 from market_monitor.gui.implementations.GUI import GUI
 
-from market_monitor.live_data_hub.RTData import RTData
-from market_monitor.publishers.redis_publisher import RedisMessaging
-from market_monitor.utils.configObserver import ConfigChangeHandler
-from market_monitor.utils.enums import TradeType
+from market_monitor.live_data_hub.real_time_data_hub import RTData
+from market_monitor.utils.config_observer import ConfigChangeHandler
+from user_strategy.utils.enums import TradeType
 
 
 class StrategyUIAsync(ABC):
