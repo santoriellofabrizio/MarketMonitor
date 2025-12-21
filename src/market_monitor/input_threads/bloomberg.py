@@ -64,12 +64,13 @@ class BloombergStreamingThread(threading.Thread):
         self.name = "bloomberg"
         self.event_handler = event_processor
         self.real_time_data: RTData = event_processor.real_time_data
+        self.subscription_service = self.real_time_data.get_subscription_manager()
         self.options = kwargs.get("options", None)
 
     def run(self):
 
-        pending = self.real_time_data.get_pending_subscriptions("bloomberg")
-        active = self.real_time_data.get_bloomberg_subscription() or {}
+        pending = self.subscription_service.get_pending_subscriptions("bloomberg")
+        active = self.subscription_service.get_bloomberg_subscription() or {}
 
         if not pending and not active:
             logging.error("No subscriptions required in Bloomberg, shutting thread down")
@@ -109,7 +110,7 @@ class BloombergStreamingThread(threading.Thread):
         """Subscribe to all pending subscriptions"""
         from market_monitor.live_data_hub.RTData import BloombergSubscription
 
-        pending = self.real_time_data.get_pending_subscriptions(source="bloomberg")
+        pending = self.subscription_service.get_pending_subscriptions(source="bloomberg")
 
         if not pending:
             return
@@ -142,7 +143,7 @@ class BloombergStreamingThread(threading.Thread):
         """Process subscriptions marked for removal"""
         from market_monitor.live_data_hub.RTData import BloombergSubscription
 
-        to_unsub = self.real_time_data.get_to_unsubscribe(source="bloomberg")
+        to_unsub = self.subscription_service.get_to_unsubscribe(source="bloomberg")
 
         if not to_unsub:
             return
@@ -167,7 +168,7 @@ class BloombergStreamingThread(threading.Thread):
 
                 # Clear from unsubscribe queue
                 for id in to_unsub.keys():
-                    self.real_time_data.clear_unsubscribed(id, "bloomberg")
+                    self.subscription_service.clear_unsubscribed(id, "bloomberg")
 
                 logging.info(f"Unsubscribed from {subscription_list.size()} subscriptions")
             except Exception as e:

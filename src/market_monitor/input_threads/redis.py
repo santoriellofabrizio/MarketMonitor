@@ -130,6 +130,7 @@ class RedisStreamingThread(threading.Thread):
         self.channels: set = set(channels) if channels else set()
         self.stop_event = threading.Event()
         self.real_time_data: Optional[RTData] = None
+        self.subscription_service = None
         self.subscriptions: Dict[str, RedisSubscription] = {}  # pattern -> subscription
 
         # Store keywords
@@ -142,10 +143,11 @@ class RedisStreamingThread(threading.Thread):
         VALIDAZIONE: Ogni subscription pattern deve mappare a UN SOLO store.
         """
         self.real_time_data = real_time_data
+        self.subscription_service = real_time_data.get_subscription_manager()
 
         # Ottieni pending + active subscriptions
-        pending = real_time_data.get_pending_subscriptions("redis") or {}
-        active = real_time_data.get_redis_subscription() or {}
+        pending = self.subscription_service.get_pending_subscriptions("redis") or {}
+        active = self.subscription_service.get_redis_subscription() or {}
         all_subs = {**pending, **active}
 
         # Crea mapping pattern -> store con validazione
@@ -226,8 +228,8 @@ class RedisStreamingThread(threading.Thread):
             self._route_data(subscription, store, path, channel, data, metadata)
 
             # Mark received
-            if self.real_time_data:
-                self.real_time_data.mark_subscription_received(subscription.id, "redis")
+            if self.subscription_service:
+                self.subscription_service.mark_subscription_received(subscription.id, "redis")
 
         except Exception as e:
             logger.error(f"Errore handling RedisPublisher message: {e}", exc_info=True)
