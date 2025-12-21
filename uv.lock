@@ -1,0 +1,910 @@
+version = 1
+revision = 3
+requires-python = ">=3.11"
+resolution-markers = [
+    "python_full_version >= '3.12' and sys_platform == 'win32'",
+    "python_full_version < '3.12' and sys_platform == 'win32'",
+    "python_full_version >= '3.12' and sys_platform == 'linux'",
+    "python_full_version < '3.12' and sys_platform == 'linux'",
+]
+supported-markers = [
+    "sys_platform == 'win32'",
+    "sys_platform == 'linux'",
+]
+
+[[package]]
+name = "aes-pkcs5"
+version = "1.0.3"
+source = { registry = '\\nas1bes\AreaFinanza/SHARE/PROGETTI ML/Python/python3_11/python packages' }
+dependencies = [
+    { name = "cryptography", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+wheels = [
+    { path = "aes_pkcs5-1.0.3-py3-none-any.whl" },
+]
+
+[[package]]
+name = "aiosqlite"
+version = "0.20.0"
+source = { registry = '\\nas1bes\AreaFinanza/SHARE/PROGETTI ML/Python/python3_11/python packages' }
+dependencies = [
+    { name = "typing-extensions", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+wheels = [
+    { path = "aiosqlite-0.20.0-py3-none-any.whl" },
+]
+
+[[package]]
+name = "altgraph"
+version = "0.17.4"
+source = { registry = '\\nas1bes\AreaFinanza/SHARE/PROGETTI ML/Python/python3_11/python packages' }
+wheels = [
+    { path = "altgraph-0.17.4-py2.py3-none-any.whl" },
+]
+
+[[package]]
+name = "asgiref"
+version = "3.8.1"
+source = { registry = '\\nas1bes\AreaFinanza/SHARE/PROGETTI ML/Python/python3_11/python packages' }
+wheels = [
+    { path = "asgiref-3.8.1-py3-none-any.whl" },
+]
+
+[[package]]
+name = "asteval"
+version = "1.0.5"
+source = { registry = '\\nas1bes\AreaFinanza/SHARE/PROGETTI ML/Python/python3_11/python packages' }
+wheels = [
+    { path = "asteval-1.0.5-py3-none-any.whl" },
+]
+
+[[package]]
+name = "async-timeout"
+version = "5.0.1"
+source = { registry = '\\nas1bes\AreaFinanza/SHARE/PROGETTI ML/Python/python3_11/python packages' }
+wheels = [
+    { path = "async_timeout-5.0.1-py3-none-any.whl" },
+]
+
+[[package]]
+name = "blpapi"
+version = "3.24.6"
+source = { registry = '\\nas1bes\AreaFinanza/SHARE/PROGETTI ML/Python/python3_11/python packages' }
+wheels = [
+    { path = "blpapi-3.24.6-cp311-cp311-win_amd64.whl" },
+]
+
+[[package]]
+name = "cffi"
+version = "2.0.0"
+source = { registry = '\\nas1bes\AreaFinanza/SHARE/PROGETTI ML/Python/python3_11/python packages' }
+dependencies = [
+    { name = "pycparser", marker = "(implementation_name != 'PyPy' and sys_platform == 'linux') or (implementation_name != 'PyPy' and sys_platform == 'win32')" },
+]
+wheels = [
+    { path = "cffi-2.0.0-cp311-cp311-win_amd64.whl" },
+]
+
+[[package]]
+name = "clarabel"
+version = "0.9.0"
+source = { registry = '\\nas1bes\AreaFinanza/SHARE/PROGETTI ML/Python/python3_11/python packages' }
+dependencies = [
+    { name = "numpy", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "scipy", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+wheels = [
+    { path = "clarabel-0.9.0-cp37-abi3-win_amd64.whl" },
+]
+
+[[package]]
+name = "colorama"
+version = "0.4.6"
+source = { registry = '\\nas1bes\AreaFinanza/SHARE/PROGETTI ML/Python/python3_11/python packages' }
+wheels = [
+    { path = "colorama-0.4.6-py2.py3-none-any.whl" },
+]
+
+[[package]]
+name = "contourpy"
+version = "1.2.1"
+source = { registry = '\\nas1bes\AreaFinanza/SHARE/PROGETTI ML/Python/python3_11/python packages' }
+dependencies = [
+    { name = "numpy", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+wheels = [
+    { path = "contourpy-1.2.1-cp311-cp311-win_amd64.whl" },
+]
+
+[[package]]
+name = "cryptography"
+version = "46.0.3"
+source = { registry = '\\nas1bes\AreaFinanza/SHARE/PROGETTI ML/Python/python3_11/python packages' }
+dependencies = [
+    { name = "cffi", marker = "(platform_python_implementation != 'PyPy' and sys_platform == 'linux') or (platform_python_implementation != 'PyPy' and sys_platform == 'win32')" },
+]
+wheels = [
+    { path = "cryptography-46.0.3-cp311-abi3-win_amd64.whl" },
+]
+
+[[package]]
+name = "cvxpy"
+version = "1.5.3"
+source = { registry = '\\nas1bes\AreaFinanza/SHARE/PROGETTI ML/Python/python3_11/python packages' }
+dependencies = [
+    { name = "clarabel", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "ecos", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "numpy", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "osqp", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "scipy", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "scs", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+wheels = [
+    { path = "cvxpy-1.5.3-cp311-cp311-win_amd64.whl" },
+]
+
+[[package]]
+name = "cycler"
+version = "0.12.1"
+source = { registry = '\\nas1bes\AreaFinanza/SHARE/PROGETTI ML/Python/python3_11/python packages' }
+wheels = [
+    { path = "cycler-0.12.1-py3-none-any.whl" },
+]
+
+[[package]]
+name = "dill"
+version = "0.3.9"
+source = { registry = '\\nas1bes\AreaFinanza/SHARE/PROGETTI ML/Python/python3_11/python packages' }
+wheels = [
+    { path = "dill-0.3.9-py3-none-any.whl" },
+]
+
+[[package]]
+name = "django"
+version = "5.1.5"
+source = { registry = '\\nas1bes\AreaFinanza/SHARE/PROGETTI ML/Python/python3_11/python packages' }
+dependencies = [
+    { name = "asgiref", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "sqlparse", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "tzdata", marker = "sys_platform == 'win32'" },
+]
+sdist = { path = "Django-5.1.5.tar.gz" }
+wheels = [
+    { path = "Django-5.1.5-py3-none-any.whl" },
+]
+
+[[package]]
+name = "ecos"
+version = "2.0.14"
+source = { registry = '\\nas1bes\AreaFinanza/SHARE/PROGETTI ML/Python/python3_11/python packages' }
+dependencies = [
+    { name = "numpy", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "scipy", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+wheels = [
+    { path = "ecos-2.0.14-cp311-cp311-win_amd64.whl" },
+]
+
+[[package]]
+name = "et-xmlfile"
+version = "1.1.0"
+source = { registry = '\\nas1bes\AreaFinanza/SHARE/PROGETTI ML/Python/python3_11/python packages' }
+wheels = [
+    { path = "et_xmlfile-1.1.0-py3-none-any.whl" },
+]
+
+[[package]]
+name = "fonttools"
+version = "4.53.0"
+source = { registry = '\\nas1bes\AreaFinanza/SHARE/PROGETTI ML/Python/python3_11/python packages' }
+wheels = [
+    { path = "fonttools-4.53.0-cp311-cp311-win_amd64.whl" },
+]
+
+[[package]]
+name = "iniconfig"
+version = "2.0.0"
+source = { registry = '\\nas1bes\AreaFinanza/SHARE/PROGETTI ML/Python/python3_11/python packages' }
+wheels = [
+    { path = "iniconfig-2.0.0-py3-none-any.whl" },
+]
+
+[[package]]
+name = "joblib"
+version = "1.4.2"
+source = { registry = '\\nas1bes\AreaFinanza/SHARE/PROGETTI ML/Python/python3_11/python packages' }
+wheels = [
+    { path = "joblib-1.4.2-py3-none-any.whl" },
+]
+
+[[package]]
+name = "kiwisolver"
+version = "1.4.5"
+source = { registry = '\\nas1bes\AreaFinanza/SHARE/PROGETTI ML/Python/python3_11/python packages' }
+wheels = [
+    { path = "kiwisolver-1.4.5-cp311-cp311-win_amd64.whl" },
+]
+
+[[package]]
+name = "lmfit"
+version = "1.3.2"
+source = { registry = '\\nas1bes\AreaFinanza/SHARE/PROGETTI ML/Python/python3_11/python packages' }
+dependencies = [
+    { name = "asteval", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "dill", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "numpy", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "scipy", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "uncertainties", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+wheels = [
+    { path = "lmfit-1.3.2-py3-none-any.whl" },
+]
+
+[[package]]
+name = "market-monitor-fi"
+version = "1.0"
+source = { editable = "." }
+dependencies = [
+    { name = "aiosqlite", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "cvxpy", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "django", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "joblib", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "matplotlib", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "openpyxl", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "pyqt5", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "redis", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "ruamel-yaml", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "scipy", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "sfm-pcf-db-library", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "sfm-quantlib", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "sfm-return-adjustment-lib", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "sfm-timescaledb-queries", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "tqdm", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "watchdog", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "xbbg", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "xlwings", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pyinstaller", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "aiosqlite", specifier = ">=0.20.0" },
+    { name = "cvxpy", specifier = ">=1.5.3" },
+    { name = "django", specifier = ">=5.1.5" },
+    { name = "joblib", specifier = ">=1.4.2" },
+    { name = "matplotlib", specifier = ">=3.9.0" },
+    { name = "openpyxl", specifier = ">=3.1.2" },
+    { name = "pyqt5", specifier = ">=5.15.11" },
+    { name = "redis", specifier = ">=6.2.0" },
+    { name = "ruamel-yaml", specifier = ">=0.18.6" },
+    { name = "scipy", specifier = ">=1.16.0" },
+    { name = "sfm-pcf-db-library", specifier = ">=1.0.72038" },
+    { name = "sfm-quantlib", specifier = ">=1.0.72184" },
+    { name = "sfm-return-adjustment-lib", specifier = ">=1.0.72051" },
+    { name = "sfm-timescaledb-queries", specifier = ">=1.0.72117" },
+    { name = "tqdm", specifier = ">=4.64.0" },
+    { name = "watchdog", specifier = ">=2.2.1" },
+    { name = "xbbg", specifier = ">=0.7.7" },
+    { name = "xlwings", specifier = ">=0.31.4" },
+]
+
+[package.metadata.requires-dev]
+dev = [{ name = "pyinstaller", specifier = ">=6.10.0" }]
+
+[[package]]
+name = "matplotlib"
+version = "3.9.0"
+source = { registry = '\\nas1bes\AreaFinanza/SHARE/PROGETTI ML/Python/python3_11/python packages' }
+dependencies = [
+    { name = "contourpy", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "cycler", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "fonttools", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "kiwisolver", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "numpy", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "packaging", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "pillow", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "pyparsing", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "python-dateutil", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+wheels = [
+    { path = "matplotlib-3.9.0-cp311-cp311-win_amd64.whl" },
+]
+
+[[package]]
+name = "mysql"
+version = "0.0.3"
+source = { registry = '\\nas1bes\AreaFinanza/SHARE/PROGETTI ML/Python/python3_11/python packages' }
+dependencies = [
+    { name = "mysqlclient", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+wheels = [
+    { path = "mysql-0.0.3-py3-none-any.whl" },
+]
+
+[[package]]
+name = "mysql-connector-python"
+version = "9.0.0"
+source = { registry = '\\nas1bes\AreaFinanza/SHARE/PROGETTI ML/Python/python3_11/python packages' }
+wheels = [
+    { path = "mysql_connector_python-9.0.0-cp311-cp311-win_amd64.whl" },
+]
+
+[[package]]
+name = "mysqlclient"
+version = "2.2.4"
+source = { registry = '\\nas1bes\AreaFinanza/SHARE/PROGETTI ML/Python/python3_11/python packages' }
+wheels = [
+    { path = "mysqlclient-2.2.4-cp311-cp311-win_amd64.whl" },
+]
+
+[[package]]
+name = "narwhals"
+version = "1.44.0"
+source = { registry = '\\nas1bes\AreaFinanza/SHARE/PROGETTI ML/Python/python3_11/python packages' }
+wheels = [
+    { path = "narwhals-1.44.0-py3-none-any.whl" },
+]
+
+[[package]]
+name = "networkx"
+version = "3.1"
+source = { registry = '\\nas1bes\AreaFinanza/SHARE/PROGETTI ML/Python/python3_11/python packages' }
+wheels = [
+    { path = "networkx-3.1-py3-none-any.whl" },
+]
+
+[[package]]
+name = "numpy"
+version = "2.3.1"
+source = { registry = '\\nas1bes\AreaFinanza/SHARE/PROGETTI ML/Python/python3_11/python packages' }
+wheels = [
+    { path = "numpy-2.3.1-cp311-cp311-win_amd64.whl" },
+]
+
+[[package]]
+name = "openpyxl"
+version = "3.1.2"
+source = { registry = '\\nas1bes\AreaFinanza/SHARE/PROGETTI ML/Python/python3_11/python packages' }
+dependencies = [
+    { name = "et-xmlfile", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+wheels = [
+    { path = "openpyxl-3.1.2-py2.py3-none-any.whl" },
+]
+
+[[package]]
+name = "oracledb"
+version = "2.3.0"
+source = { registry = '\\nas1bes\AreaFinanza/SHARE/PROGETTI ML/Python/python3_11/python packages' }
+dependencies = [
+    { name = "cryptography", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+wheels = [
+    { path = "oracledb-2.3.0-cp311-cp311-win_amd64.whl" },
+]
+
+[[package]]
+name = "osqp"
+version = "0.6.7.post3"
+source = { registry = '\\nas1bes\AreaFinanza/SHARE/PROGETTI ML/Python/python3_11/python packages' }
+dependencies = [
+    { name = "numpy", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "qdldl", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "scipy", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+wheels = [
+    { path = "osqp-0.6.7.post3-cp311-cp311-win_amd64.whl" },
+]
+
+[[package]]
+name = "packaging"
+version = "25.0"
+source = { registry = '\\nas1bes\AreaFinanza/SHARE/PROGETTI ML/Python/python3_11/python packages' }
+wheels = [
+    { path = "packaging-25.0-py3-none-any.whl" },
+]
+
+[[package]]
+name = "pandas"
+version = "2.3.1"
+source = { registry = '\\nas1bes\AreaFinanza/SHARE/PROGETTI ML/Python/python3_11/python packages' }
+dependencies = [
+    { name = "numpy", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "python-dateutil", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "pytz", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "tzdata", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+wheels = [
+    { path = "pandas-2.3.1-cp311-cp311-win_amd64.whl" },
+]
+
+[[package]]
+name = "pefile"
+version = "2024.8.26"
+source = { registry = '\\nas1bes\AreaFinanza/SHARE/PROGETTI ML/Python/python3_11/python packages' }
+wheels = [
+    { path = "pefile-2024.8.26-py3-none-any.whl" },
+]
+
+[[package]]
+name = "pillow"
+version = "10.3.0"
+source = { registry = '\\nas1bes\AreaFinanza/SHARE/PROGETTI ML/Python/python3_11/python packages' }
+wheels = [
+    { path = "pillow-10.3.0-cp311-cp311-win_amd64.whl" },
+]
+
+[[package]]
+name = "plotly"
+version = "6.5.0"
+source = { registry = '\\nas1bes\AreaFinanza/SHARE/PROGETTI ML/Python/python3_11/python packages' }
+dependencies = [
+    { name = "narwhals", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "packaging", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+wheels = [
+    { path = "plotly-6.5.0-py3-none-any.whl" },
+]
+
+[[package]]
+name = "pluggy"
+version = "1.5.0"
+source = { registry = '\\nas1bes\AreaFinanza/SHARE/PROGETTI ML/Python/python3_11/python packages' }
+wheels = [
+    { path = "pluggy-1.5.0-py3-none-any.whl" },
+]
+
+[[package]]
+name = "psycopg2"
+version = "2.9.9"
+source = { registry = '\\nas1bes\AreaFinanza/SHARE/PROGETTI ML/Python/python3_11/python packages' }
+wheels = [
+    { path = "psycopg2-2.9.9-cp311-cp311-win_amd64.whl" },
+]
+
+[[package]]
+name = "pyarrow"
+version = "17.0.0"
+source = { registry = '\\nas1bes\AreaFinanza/SHARE/PROGETTI ML/Python/python3_11/python packages' }
+dependencies = [
+    { name = "numpy", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+wheels = [
+    { path = "pyarrow-17.0.0-cp311-cp311-win_amd64.whl" },
+]
+
+[[package]]
+name = "pycparser"
+version = "2.23"
+source = { registry = '\\nas1bes\AreaFinanza/SHARE/PROGETTI ML/Python/python3_11/python packages' }
+wheels = [
+    { path = "pycparser-2.23-py3-none-any.whl" },
+]
+
+[[package]]
+name = "pydot"
+version = "3.0.4"
+source = { registry = '\\nas1bes\AreaFinanza/SHARE/PROGETTI ML/Python/python3_11/python packages' }
+dependencies = [
+    { name = "pyparsing", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+wheels = [
+    { path = "pydot-3.0.4-py3-none-any.whl" },
+]
+
+[[package]]
+name = "pyinstaller"
+version = "6.10.0"
+source = { registry = '\\nas1bes\AreaFinanza/SHARE/PROGETTI ML/Python/python3_11/python packages' }
+dependencies = [
+    { name = "altgraph", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "packaging", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "pefile", marker = "sys_platform == 'win32'" },
+    { name = "pyinstaller-hooks-contrib", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "pywin32-ctypes", marker = "sys_platform == 'win32'" },
+    { name = "setuptools", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+wheels = [
+    { path = "pyinstaller-6.10.0-py3-none-win_amd64.whl" },
+]
+
+[[package]]
+name = "pyinstaller-hooks-contrib"
+version = "2024.8"
+source = { registry = '\\nas1bes\AreaFinanza/SHARE/PROGETTI ML/Python/python3_11/python packages' }
+dependencies = [
+    { name = "packaging", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "setuptools", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+wheels = [
+    { path = "pyinstaller_hooks_contrib-2024.8-py3-none-any.whl" },
+]
+
+[[package]]
+name = "pymssql"
+version = "2.3.1"
+source = { registry = '\\nas1bes\AreaFinanza/SHARE/PROGETTI ML/Python/python3_11/python packages' }
+wheels = [
+    { path = "pymssql-2.3.1-cp311-cp311-win_amd64.whl" },
+]
+
+[[package]]
+name = "pyparsing"
+version = "3.1.2"
+source = { registry = '\\nas1bes\AreaFinanza/SHARE/PROGETTI ML/Python/python3_11/python packages' }
+wheels = [
+    { path = "pyparsing-3.1.2-py3-none-any.whl" },
+]
+
+[[package]]
+name = "pyqt5"
+version = "5.15.11"
+source = { registry = '\\nas1bes\AreaFinanza/SHARE/PROGETTI ML/Python/python3_11/python packages' }
+dependencies = [
+    { name = "pyqt5-qt5", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "pyqt5-sip", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+wheels = [
+    { path = "PyQt5-5.15.11-cp38-abi3-win_amd64.whl" },
+]
+
+[[package]]
+name = "pyqt5-qt5"
+version = "5.15.2"
+source = { registry = '\\nas1bes\AreaFinanza/SHARE/PROGETTI ML/Python/python3_11/python packages' }
+wheels = [
+    { path = "PyQt5_Qt5-5.15.2-py3-none-win_amd64.whl" },
+]
+
+[[package]]
+name = "pyqt5-sip"
+version = "12.16.1"
+source = { registry = '\\nas1bes\AreaFinanza/SHARE/PROGETTI ML/Python/python3_11/python packages' }
+wheels = [
+    { path = "PyQt5_sip-12.16.1-cp311-cp311-win_amd64.whl" },
+]
+
+[[package]]
+name = "pytest"
+version = "8.3.1"
+source = { registry = '\\nas1bes\AreaFinanza/SHARE/PROGETTI ML/Python/python3_11/python packages' }
+dependencies = [
+    { name = "colorama", marker = "sys_platform == 'win32'" },
+    { name = "iniconfig", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "packaging", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "pluggy", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+wheels = [
+    { path = "pytest-8.3.1-py3-none-any.whl" },
+]
+
+[[package]]
+name = "python-dateutil"
+version = "2.9.0.post0"
+source = { registry = '\\nas1bes\AreaFinanza/SHARE/PROGETTI ML/Python/python3_11/python packages' }
+dependencies = [
+    { name = "six", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+wheels = [
+    { path = "python_dateutil-2.9.0.post0-py2.py3-none-any.whl" },
+]
+
+[[package]]
+name = "python-dotenv"
+version = "1.0.1"
+source = { registry = '\\nas1bes\AreaFinanza/SHARE/PROGETTI ML/Python/python3_11/python packages' }
+wheels = [
+    { path = "python_dotenv-1.0.1-py3-none-any.whl" },
+]
+
+[[package]]
+name = "pytz"
+version = "2025.2"
+source = { registry = '\\nas1bes\AreaFinanza/SHARE/PROGETTI ML/Python/python3_11/python packages' }
+wheels = [
+    { path = "pytz-2025.2-py2.py3-none-any.whl" },
+]
+
+[[package]]
+name = "pyvinecopulib"
+version = "0.7.1"
+source = { registry = '\\nas1bes\AreaFinanza/SHARE/PROGETTI ML/Python/python3_11/python packages' }
+dependencies = [
+    { name = "matplotlib", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "networkx", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "numpy", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "pydot", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+wheels = [
+    { path = "pyvinecopulib-0.7.1-cp311-cp311-win_amd64.whl" },
+]
+
+[[package]]
+name = "pywin32"
+version = "311"
+source = { registry = '\\nas1bes\AreaFinanza/SHARE/PROGETTI ML/Python/python3_11/python packages' }
+wheels = [
+    { path = "pywin32-311-cp311-cp311-win_amd64.whl" },
+]
+
+[[package]]
+name = "pywin32-ctypes"
+version = "0.2.3"
+source = { registry = '\\nas1bes\AreaFinanza/SHARE/PROGETTI ML/Python/python3_11/python packages' }
+wheels = [
+    { path = "pywin32_ctypes-0.2.3-py3-none-any.whl" },
+]
+
+[[package]]
+name = "qdldl"
+version = "0.1.7.post4"
+source = { registry = '\\nas1bes\AreaFinanza/SHARE/PROGETTI ML/Python/python3_11/python packages' }
+dependencies = [
+    { name = "numpy", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "scipy", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+wheels = [
+    { path = "qdldl-0.1.7.post4-cp311-cp311-win_amd64.whl" },
+]
+
+[[package]]
+name = "quantlib"
+version = "1.36"
+source = { registry = '\\nas1bes\AreaFinanza/SHARE/PROGETTI ML/Python/python3_11/python packages' }
+wheels = [
+    { path = "QuantLib-1.36-cp38-abi3-win_amd64.whl" },
+]
+
+[[package]]
+name = "redis"
+version = "6.2.0"
+source = { registry = '\\nas1bes\AreaFinanza/SHARE/PROGETTI ML/Python/python3_11/python packages' }
+dependencies = [
+    { name = "async-timeout", marker = "(python_full_version < '3.11.3' and sys_platform == 'linux') or (python_full_version < '3.11.3' and sys_platform == 'win32')" },
+]
+wheels = [
+    { path = "redis-6.2.0-py3-none-any.whl" },
+]
+
+[[package]]
+name = "ruamel-yaml"
+version = "0.18.6"
+source = { registry = '\\nas1bes\AreaFinanza/SHARE/PROGETTI ML/Python/python3_11/python packages' }
+dependencies = [
+    { name = "ruamel-yaml-clib", marker = "(python_full_version < '3.13' and platform_python_implementation == 'CPython' and sys_platform == 'linux') or (python_full_version < '3.13' and platform_python_implementation == 'CPython' and sys_platform == 'win32')" },
+]
+wheels = [
+    { path = "ruamel.yaml-0.18.6-py3-none-any.whl" },
+]
+
+[[package]]
+name = "ruamel-yaml-clib"
+version = "0.2.8"
+source = { registry = '\\nas1bes\AreaFinanza/SHARE/PROGETTI ML/Python/python3_11/python packages' }
+wheels = [
+    { path = "ruamel.yaml.clib-0.2.8-cp311-cp311-win_amd64.whl" },
+]
+
+[[package]]
+name = "scipy"
+version = "1.16.0"
+source = { registry = '\\nas1bes\AreaFinanza/SHARE/PROGETTI ML/Python/python3_11/python packages' }
+dependencies = [
+    { name = "numpy", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+wheels = [
+    { path = "scipy-1.16.0-cp311-cp311-win_amd64.whl" },
+]
+
+[[package]]
+name = "scs"
+version = "3.2.7"
+source = { registry = '\\nas1bes\AreaFinanza/SHARE/PROGETTI ML/Python/python3_11/python packages' }
+dependencies = [
+    { name = "numpy", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "scipy", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+wheels = [
+    { path = "scs-3.2.7-cp311-cp311-win_amd64.whl" },
+]
+
+[[package]]
+name = "setuptools"
+version = "75.6.0"
+source = { registry = '\\nas1bes\AreaFinanza/SHARE/PROGETTI ML/Python/python3_11/python packages' }
+wheels = [
+    { path = "setuptools-75.6.0-py3-none-any.whl" },
+]
+
+[[package]]
+name = "sfm-bbgpyqueries"
+version = "1.0.72046"
+source = { registry = '\\nas1bes\AreaFinanza/SHARE/PROGETTI ML/Python/python3_11/python packages' }
+dependencies = [
+    { name = "blpapi", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "pandas", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+wheels = [
+    { path = "sfm_bbgpyqueries-1.0.72046-py3-none-any.whl" },
+]
+
+[[package]]
+name = "sfm-cryptography"
+version = "1.0.71170"
+source = { registry = '\\nas1bes\AreaFinanza/SHARE/PROGETTI ML/Python/python3_11/python packages' }
+dependencies = [
+    { name = "aes-pkcs5", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+wheels = [
+    { path = "sfm_cryptography-1.0.71170-py3-none-any.whl" },
+]
+
+[[package]]
+name = "sfm-dbconnections"
+version = "1.1.75128"
+source = { registry = '\\nas1bes\AreaFinanza/SHARE/PROGETTI ML/Python/python3_11/python packages' }
+dependencies = [
+    { name = "mysql", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "mysql-connector-python", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "numpy", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "oracledb", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "psycopg2", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "pymssql", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "python-dotenv", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "sfm-cryptography", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+wheels = [
+    { path = "sfm_dbconnections-1.1.75128-py3-none-any.whl" },
+]
+
+[[package]]
+name = "sfm-pcf-db-library"
+version = "1.0.72038"
+source = { registry = '\\nas1bes\AreaFinanza/SHARE/PROGETTI ML/Python/python3_11/python packages' }
+dependencies = [
+    { name = "pandas", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "sfm-dbconnections", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+wheels = [
+    { path = "sfm_pcf_db_library-1.0.72038-py3-none-any.whl" },
+]
+
+[[package]]
+name = "sfm-quantlib"
+version = "1.1.75336"
+source = { registry = '\\nas1bes\AreaFinanza/SHARE/PROGETTI ML/Python/python3_11/python packages' }
+dependencies = [
+    { name = "lmfit", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "pandas", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "plotly", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "pyvinecopulib", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "quantlib", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "scipy", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "sfm-dbconnections", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "threadpoolctl", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+wheels = [
+    { path = "sfm_quantlib-1.1.75336-py3-none-any.whl" },
+]
+
+[[package]]
+name = "sfm-return-adjustment-lib"
+version = "1.0.75136"
+source = { registry = '\\nas1bes\AreaFinanza/SHARE/PROGETTI ML/Python/python3_11/python packages' }
+dependencies = [
+    { name = "sfm-bbgpyqueries", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "sfm-dbconnections", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+wheels = [
+    { path = "sfm_return_adjustment_lib-1.0.75136-py3-none-any.whl" },
+]
+
+[[package]]
+name = "sfm-timescaledb-queries"
+version = "1.1.75138"
+source = { registry = '\\nas1bes\AreaFinanza/SHARE/PROGETTI ML/Python/python3_11/python packages' }
+dependencies = [
+    { name = "pandas", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "sfm-dbconnections", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+wheels = [
+    { path = "sfm_timescaledb_queries-1.1.75138-py3-none-any.whl" },
+]
+
+[[package]]
+name = "six"
+version = "1.17.0"
+source = { registry = '\\nas1bes\AreaFinanza/SHARE/PROGETTI ML/Python/python3_11/python packages' }
+wheels = [
+    { path = "six-1.17.0-py2.py3-none-any.whl" },
+]
+
+[[package]]
+name = "sqlparse"
+version = "0.5.3"
+source = { registry = '\\nas1bes\AreaFinanza/SHARE/PROGETTI ML/Python/python3_11/python packages' }
+wheels = [
+    { path = "sqlparse-0.5.3-py3-none-any.whl" },
+]
+
+[[package]]
+name = "threadpoolctl"
+version = "3.5.0"
+source = { registry = '\\nas1bes\AreaFinanza/SHARE/PROGETTI ML/Python/python3_11/python packages' }
+wheels = [
+    { path = "threadpoolctl-3.5.0-py3-none-any.whl" },
+]
+
+[[package]]
+name = "tqdm"
+version = "4.64.0"
+source = { registry = '\\nas1bes\AreaFinanza/SHARE/PROGETTI ML/Python/python3_11/python packages' }
+dependencies = [
+    { name = "colorama", marker = "sys_platform == 'win32'" },
+]
+wheels = [
+    { path = "tqdm-4.64.0-py2.py3-none-any.whl" },
+]
+
+[[package]]
+name = "typing-extensions"
+version = "4.12.2"
+source = { registry = '\\nas1bes\AreaFinanza/SHARE/PROGETTI ML/Python/python3_11/python packages' }
+wheels = [
+    { path = "typing_extensions-4.12.2-py3-none-any.whl" },
+]
+
+[[package]]
+name = "tzdata"
+version = "2025.2"
+source = { registry = '\\nas1bes\AreaFinanza/SHARE/PROGETTI ML/Python/python3_11/python packages' }
+wheels = [
+    { path = "tzdata-2025.2-py2.py3-none-any.whl" },
+]
+
+[[package]]
+name = "uncertainties"
+version = "3.2.2"
+source = { registry = '\\nas1bes\AreaFinanza/SHARE/PROGETTI ML/Python/python3_11/python packages' }
+wheels = [
+    { path = "uncertainties-3.2.2-py3-none-any.whl" },
+]
+
+[[package]]
+name = "watchdog"
+version = "2.2.1"
+source = { registry = '\\nas1bes\AreaFinanza/SHARE/PROGETTI ML/Python/python3_11/python packages' }
+wheels = [
+    { path = "watchdog-2.2.1-py3-none-win_amd64.whl" },
+]
+
+[[package]]
+name = "xbbg"
+version = "0.7.7"
+source = { registry = '\\nas1bes\AreaFinanza/SHARE/PROGETTI ML/Python/python3_11/python packages' }
+dependencies = [
+    { name = "numpy", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "pandas", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "pyarrow", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "pytest", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "pytz", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "ruamel-yaml", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+wheels = [
+    { path = "xbbg-0.7.7-py3-none-any.whl" },
+]
+
+[[package]]
+name = "xlwings"
+version = "0.33.16"
+source = { registry = '\\nas1bes\AreaFinanza/SHARE/PROGETTI ML/Python/python3_11/python packages' }
+dependencies = [
+    { name = "pywin32", marker = "sys_platform == 'win32'" },
+]
+wheels = [
+    { path = "xlwings-0.33.16-cp311-cp311-win_amd64.whl" },
+]

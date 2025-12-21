@@ -1,0 +1,112 @@
+load_strategy_info:
+#  package_path: C:\AFMachineLearning\Projects\Trading\MarketMonitorFI\UserStrategy\ETFEquity\LiveQuoting
+#  module_name: EtfEquityPriceEngine
+#  class_name: EtfEquityPriceEngine
+
+  package_path: C:\AFMachineLearning\Projects\Trading\MarketMonitorFI\UserStrategy\DeskBond
+  module_name: BTPTradesAnalysis
+  class_name: BTPTradesAnalysis
+
+C:\AFMachineLearning\Projects\Trading\MarketMonitorFI\UserStrategy\DeskBond\BTPTradesAnalysis:
+  py:
+market_monitor:
+
+  number_of_days: 10
+  activate_driver_price_calculator: True
+  file_path: etc/input/InputETFEquityQuoting.xlsx
+  path_db: etc/input/EtfEquityDB.db
+  bloomberg_subscription_config_path: "etc\\configFolder\\bbg_subscription\\config_bloomberg_subscription.yaml"
+  pricing:
+    driver:
+      forecast_aggregation: ewma_outlier
+      trimmed_mean:
+        perc_outlier: 0.3
+      ewma_outlier:
+        halflife: 10
+        outlier_std: 3
+
+  tasks:
+    update_HF:
+      activate: true
+      frequency: 0.2
+    update_LF:
+      activate: true
+      frequency: 60
+    data_storing:
+      activate: false
+      frequency: 600
+    trade:
+      activate: false
+      synchronous: false
+      frequency: 1
+    dynamic_params:
+      activate: false
+      dynamic_config_path: "configFolder/dynamicEquityQuoting.yaml"
+      frequency: 1
+
+  DB connection:
+    Database Type : Oracle
+    Username : AF_PCF
+    Password : AAAbbb2022!!!
+    Host : dcdwboh-cli.sg.gbs.pro
+    Port : 1521
+    Service Name : OTH_ORABOH.bsella.it
+
+
+market_data_distributor:
+  activate: true
+  book_params:
+    fields: ["BID","ASK"]
+    mid_key: ["BID","ASK"]
+    max_var_threshold:   #max_perc_ret
+
+  bloomberg_params:
+    options:
+      interval: 0
+      delayed: False
+
+
+logging:
+  log_level: DEBUG
+  log_level_console: WARNING
+  log_name: PriceEngineEquity.log
+
+#gui:
+#  Excel:
+#    gui_type: ThreadGUIExcel
+#    heartbeat:
+#      heartbeat_name: "HeartBeatDuma"
+#      heartbeat_interval: 180
+#      macro_name_heartbeat: "SendPublishingSignal"
+#      macro_name_stop: "sendOffSignal"
+#
+#    new_instance: false
+#    visible: true
+#    add_book: false
+#    thread_queue_size: 5
+#    path: PriceEngine.xlsm
+
+
+
+oracle_connection:
+  environment: PROD
+  user: AF_QUANTLIB
+  tns_name: ORABOH
+  password: b18289f251b94f0e1a819df7c7a0fb2e9fabf457ba67b5bbf584478db8c8c17e
+  schema: AF_DATAMART_DBA
+
+#timescale_connection:F
+#  database: aidb
+#  port: 5432
+#  user: aivwr
+#  password: Aivwr-00
+
+
+timescale_connection:
+  host: timescaledb.af.pro
+  database: aidb
+  port: 5432
+  user: aivwr
+  password: Aivwr-00
+
+

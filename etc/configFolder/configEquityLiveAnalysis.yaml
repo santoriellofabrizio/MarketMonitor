@@ -1,0 +1,103 @@
+strategy_name: EquityLiveAnalysis
+
+market_monitor:
+
+
+  activate_stock_risk_calculator: false
+  activate_stock_exposure: false
+  file_path: etc/input/InputETFEquityQuoting.xlsx
+  path_db: etc/input/EtfEquityDB.db
+  trade_manager:
+    show_my_trades: True
+    output_trade_columns: ["ticker","last_update","price","quantity","ctv","side","own_trade","spread_pl"]
+    min_ctv_to_show_trades: 5000
+    number_of_trades_to_show: 200
+  pricing:
+    driver:
+      forecast_aggregation: ewma_outlier
+      trimmed_mean:
+        perc_outlier: 0.3
+      ewma_outlier:
+        halflife: 10
+        outlier_std: 3
+
+  tasks:
+    update_HF:
+      activate: true
+      frequency: 2
+    update_LF:
+      activate: true
+      frequency: 60
+    data_storing:
+      activate: true
+      frequency: 600
+    trade:
+      activate: true
+      synchronous: false
+      frequency: 1
+    dynamic_params:
+      activate: false
+      dynamic_config_path: "configFolder/dynamicEquityQuoting.yaml"
+      frequency: 1
+
+  db_name:  C:\AFMachineLearning\Projects\Trading\MarketMonitorFI\etc\db\data_storage.db
+
+  DB connection:
+    Database Type : Oracle
+    Username : AF_PCF
+    Password : AAAbbb2022!!!
+    Host : dcdwboh-cli.sg.gbs.pro
+    Port : 1521
+    Service Name : OTH_ORABOH.bsella.it
+
+
+market_data_distributor:
+  activate: true
+  book_params:
+    fields: ["MID"]
+    mid_key: ["MID"]
+    max_var_threshold: 0.15  #max_perc_ret
+
+  bloomberg_params:
+    options:
+      interval: 0
+      delayed: False
+
+trade_distributor:
+  activate: true
+  path: "C:\\Users\\gbs09316\\Documents\\marketTradeFolder"
+  db_name: markettrades.db
+
+excel_data_distributor:
+  activate: false
+  excel_params:
+    path: V:\EquityETF\EtfEquityLiveAnalysis.xlsm
+    sheet_names: ["PositionInputSheet"]
+    book_reading_frequency: 1
+
+redis_data_distributor:
+  activate: true
+  redis_params:
+    redis_host: 'localhost'
+    redis_port: 6379
+    redis_db: 0
+
+
+gui:
+  Excel:
+    gui_type: ThreadGUIExcel
+    new_instance: false
+    visible: true
+    add_book: false
+    thread_queue_size: 5
+    path: V:\EquityETF\EtfEquityLiveAnalysis.xlsm
+
+  TradeGUI:
+    gui_type: TradeThreadGUITkinter
+
+logging:
+  log_level: INFO
+  log_level_console: WARNING
+  log_name: LiveAnalysis.log
+
+

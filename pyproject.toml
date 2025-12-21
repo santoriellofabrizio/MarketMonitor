@@ -1,0 +1,49 @@
+[project]
+name = "market_monitor_fi"
+version = "1.0"
+description = "Market monitor project developed by Sella Financial Markets"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "aiosqlite>=0.20.0",
+    "cvxpy>=1.5.3",
+    "django>=5.1.5",
+    "joblib>=1.4.2",
+    "openpyxl>=3.1.2",
+    "redis>=6.2.0",
+    "ruamel-yaml>=0.18.6",
+    "scipy>=1.16.0",
+    "sfm-pcf-db-library>=1.0.72038",
+    "sfm-quantlib>=1.0.72184",
+    "sfm-return-adjustment-lib>=1.0.72051",
+    "sfm-timescaledb-queries>=1.0.72117",
+    "tqdm>=4.64.0",
+    "watchdog>=2.2.1",
+    "xbbg>=0.7.7",
+    "xlwings>=0.31.4",
+    "pyqt5>=5.15.11",
+    "matplotlib>=3.9.0",
+]
+
+[project.scripts]
+MarketMonitorFI = "run_monitor:main"
+run_dashboard = "market_monitor_fi.GUI.ConcreteGUI.PyQt5Dashboard.run_dashboard:main"
+
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[tool.uv]
+environments = [
+    "sys_platform == 'win32'",
+    "sys_platform == 'linux'",
+]
+
+[dependency-groups]
+dev = [
+    "pyinstaller>=6.10.0",
+]
+
+[[tool.uv.index]]
+name = "sfm-local"
+url = "file://nas1bes/AreaFinanza/SHARE/PROGETTI%20ML/Python/python3_11/python%20packages"

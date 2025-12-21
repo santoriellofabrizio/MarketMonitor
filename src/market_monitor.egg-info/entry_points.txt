@@ -1,0 +1,2 @@
+[console_scripts]
+MarketMonitorFI = run_monitor:main

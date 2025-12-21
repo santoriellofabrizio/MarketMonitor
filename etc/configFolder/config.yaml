@@ -1,0 +1,138 @@
+strategy_name: EtfFiPriceEngine
+
+market_monitor:
+
+  #strategy_name: MarketMonitorDummy
+
+  number_of_days: 15
+  price_snipping_time_string: "17:15:00"  # Ricorda di mettere l'ora come stringa in YAML
+  use_cache_TS: true
+  bloomberg_subscription_config_path: "etc\\configFolder\\bbg_subscription\\config_bloomberg_subscription.yaml"
+
+####trade params###########################
+
+  trade_export_sheet: Trades
+  trade_export_cell: A3            # Cella in cui esportare i trades
+  number_of_trades_to_show: 200     # Numero di trades da mostrare
+  min_ctv_to_show_trades: 2         # Controvalore minimo per mostrare i trades
+  trade_min_export_interval: 0.1      # Secondi per l'intervallo minimo di esportazione trades
+  output_trade_columns: ["last_update", "price", "quantity", "ctv", "side", "own_trade"]
+  book_storage_size: 3  #by doing book storage time_lag_in_seconds = size * (tasks-> update_HF -> frequency)
+
+#####price output_NAV###########################
+  output_prices_cell: "A1"
+  output_prices_sheet: PriceContainer
+
+####pricing params###########################
+
+  pricing:
+    driver:
+      forecast_aggregation: ewma_outlier
+      trimmed_mean:
+        perc_outlier: 0.3
+      ewma_outlier:
+        halflife: 10
+        outlier_std: 3
+
+    cluster:
+      forecast_aggregation: ewma_outlier
+      trimmed_mean:
+        perc_outlier: 0.3
+      ewma_outlier:
+        halflife: 4
+        outlier_std: 3
+
+    nav:
+      forecast_aggregation: ewma_outlier
+      trimmed_mean:
+        perc_outlier: 0.3
+      ewma_outlier:
+        halflife: 2
+        outlier_std: 3
+
+    brother:
+      forecast_aggregation: ewma_outlier
+      trimmed_mean:
+        perc_outlier: 0.3
+      ewma_outlier:
+        halflife: 5
+        outlier_std: 3
+
+  tasks:
+    update_HF:
+      activate: true
+      frequency: 1
+    update_LF:
+      activate: false
+      frequency: 60
+    data_storing:
+      activate: false
+      frequency: 300
+    trade:
+      activate: false
+      synchronous: false
+      frequency: 1
+    dynamic_params:
+      activate: false
+      dynamic_config_path: C:\AFMachineLearning\Projects\Trading\MarketMonitorFI\etc\configFolder\dynamic_config.yaml
+      frequency: 1
+
+  sql_db_fi_file: 'C:\AFMachineLearning\Projects\Trading\FxdIncomeEtfAnalysis\FxdIncomeEtfDB.db'
+
+
+market_data_distributor:
+  activate: true
+  book_params:
+    fields: ["BID", "ASK"]
+    mid_key: ["BID", "ASK"]
+#    max_var_threshold: 0.05 #max_perc_ret
+
+  bloomberg_params:
+    options:
+      interval: 0
+
+
+gui:
+  Excel:
+      gui_type: ThreadGUIExcel
+      new_instance: false
+      heartbeat:
+        heartbeat_name: "HeartBeatDuma"
+        heartbeat_interval: 20
+        heartbeat_margin: 20
+        macro_name_heartbeat: "sendPublishingSignal"
+        macro_name_stop: "sendOffSignal"
+      visible: true
+      add_book: false
+      thread_queue_size: 5
+      # path: "V:\\ETF\\Risk Management\\Price_Engine_SuperLight.xlsm"
+      path: "V:\\Temp\\PaoloS\\Price_Engine_SuperLight.xlsm"
+
+
+
+logging:
+  log_level: INFO
+  log_level_console: WARNING
+  log_name: FIPriceEngine.log
+
+oracle_connection:
+  environment: PROD
+  user: AF_QUANTLIB
+  tns_name: ORABOH
+  password: b18289f251b94f0e1a819df7c7a0fb2e9fabf457ba67b5bbf584478db8c8c17e
+  schema: AF_DATAMART_DBA
+
+timescale_connection:
+  host: timescaledb.af.pro
+  database: aidb
+  port: 5432
+  user: aivwr
+  password: Aivwr-00
+
+ # connection to ts test db
+#timescale_connection:
+#  host: aftstserveria11.af.tst
+#  database: aidb_test
+#  port: 5433
+#  user: aivwr
+#  password: Aivwr-00

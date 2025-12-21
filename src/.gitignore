@@ -1,0 +1,10 @@
+cache_dir/
+cache/
+configFolder/
+etc/
+.venv/
+.bat/
+
+*.pkl
+.env
+__pycache__/

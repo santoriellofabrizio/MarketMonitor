@@ -1,0 +1,30 @@
+# Configurazione completa con tutte le metriche
+
+dashboard:
+  mode: redis
+  redis:
+    host: localhost
+    port: 6379
+    db: 0
+    channel: trades
+
+  
+  metrics:
+    enabled: true
+    items:
+      - total_trades        # Totale trade
+      - own_trades          # Trade nostri
+      - market_trades       # Trade di mercato
+      - spread_pl_sum       # P&L totale (colorato verde/rosso)
+      - spread_pl_mean      # P&L medio
+      - ctv_sum            # CTV totale
+
+logging:
+  path: "logs/dashboard.log"
+  level: DEBUG
+
+app:
+  style: Fusion
+
+queue:
+  maxsize: 5000

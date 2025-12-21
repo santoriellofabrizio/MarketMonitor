@@ -1,0 +1,545 @@
+strategy_name: EtfEquityPriceEngine
+
+market_monitor:
+
+  stock_to_ignore: ["ES06445809T5"]
+
+  bloomberg_subscription_config_path: "etc\\configFolder\\bbg_subscription\\config_bloomberg_subscription.yaml"
+
+  instruments_NAV: [
+        "IE0007ULOZS8",
+        "LU0274210672",
+        "IE00BM9TV208",
+        "LU1598689153",
+        "IE00BMDPBZ72",
+        "FR0013041530",
+        "IE00BJXT3C94",
+        "IE00BQZJBX31",
+        "IE0004MFRED4",
+        "IE000R85HL30",
+        "IE00BHZPJ015",
+        "IE00BQN1KC32",
+        "FR0010261198",
+        "IE00BKWQ0Q14",
+        "LU1861137484",
+        "IE00BK5BQY34",
+        "LU1646360971",
+        "IE00B14X4N27",
+        "LU1291099718",
+        "IE00BDGN9Z19",
+        "LU1291101555",
+        "IE00B910VR50",
+        "LU1291098827",
+        "LU1931974262",
+        "LU0322253906",
+        "IE00B945VV12",
+        "LU1598688189",
+        "IE00BKWQ0M75",
+        "IE00BQZJC527",
+        "IE00B53QG562",
+        "IE00BYSX4176",
+        "LU1804202403",
+        "IE00BYTH5487",
+        "IE00B53L3W79",
+        "IE00BYSX4283",
+        "IE00BNC0M913",
+        "IE00B5M1WJ87",
+        "IE00B3VWMM18",
+        "IE00BDF16007",
+        "LU0274211217",
+        "IE0001GSQ2O9",
+        "IE0000U24AJ9",
+        "IE000CL68Z69",
+        "IE000O5FBC47",
+        "IE000BI8OT95",
+        "IE00058MW3M8",
+        "IE000Y77LGG9",
+        "IE000KXCEXR3",
+        "IE0008TKP6O7",
+        "IE000IEGVMH6",
+        "IE000K1P4V37",
+        "IE000QQ8Z0D8",
+        "IE000PB4LRO2",
+        "IE000MYCJA42",
+        "IE00BJ0KDR00",
+        "IE00B3ZW0K18",
+        "LU1931974429",
+        "IE0008471009",
+        "LU1681038599",
+        "IE00B5BMR087",
+        "IE000QDFFK00",
+        "LU0328475792",
+        "IE00B52SFT06",
+        "IE00BHZPJ908",
+        "IE00B802KR88",
+        "IE00BFMXXD54",
+        "IE000G2LIHG9",
+        "IE00B53SZB19",
+        "LU0490618542",
+        "IE00BYM11K57",
+        "IE00BYVJRR92",
+        "LU1681038672",
+        "IE0031442068",
+        "LU1681042609",
+        "LU0496786574",
+        "IE00BK5BQV03",
+        "IE00BX7RR706",
+        "IE00BLNMYC90",
+        "IE00B6YX5C33",
+        "LU0959211326",
+        "IE00BX7RRJ27",
+        "LU1829221024",
+        "IE00B78JSG98",
+        "LU0629460089",
+        "IE00B3VWM098",
+        "IE00B3CNHJ55",
+        "LU1681043599",
+        "LU1681038243",
+        "LU0908500753",
+        "IE0001VXZTV7",
+        "IE00BJZ2DD79",
+        "IE00BYML9W36",
+        "IE00B6YX5D40",
+        "IE00B1YZSC51",
+        "LU1377381980",
+        "IE00BD4TYG73",
+        "LU1681042864",
+        "IE00BQQP9H09",
+        "IE00B02KXL92",
+        "LU0136234654",
+        "IE00B4YBJ215",
+        "LU1954152853",
+        "IE000RN58M26",
+        "IE00B979GK47",
+        "IE00BYM11H29",
+        "IE00BKX55T58",
+        "IE000KPJJWM6",
+        "IE00B77D4428",
+        "IE00BM67HW99",
+        "FR0011550185",
+        "IE00B3YCGJ38",
+        "IE00B60SWX25",
+        "IE00B6SPMN59",
+        "LU0959211243",
+        "IE00BJ38QD84",
+        "LU1681049109",
+        "LU1681048804",
+        "IE00BD6RZT93",
+        "IE00BHXMHQ65",
+        "IE0002EI5AG0",
+        "IE00BZ0PKS76",
+        "IE00B3XXRP09",
+        "FR0007056841",
+        "IE00BG04M077",
+        "IE00BH4GPZ28",
+        "IE00BHXMHL11",
+        "IE00BZ173V67",
+        "IE000L2SA8K5",
+        "LU0908501132",
+        "IE00B86MWN23",
+        "IE00BLSN7W87",
+        "IE000RLUE8E9",
+        "LU1953137681",
+        "IE000QF66PE6",
+        "IE00BK5LYT47",
+        "IE00BD6RZW23",
+        "IE0000MMQ5M5",
+        "IE0002ZM3JI1",
+        "IE000VTOHNZ0",
+        "LU1659681669",
+        "LU2009147757",
+        "IE00BMD8KP97",
+        "IE000ST40PX8",
+        "IE00BWTN6Y99",
+        "IE00BKLWY790",
+        "IE00BLSN7P11",
+        "IE00BWT3KJ20",
+        "LU1781540957",
+        "IE000UZCJS58",
+        "LU0950674761",
+        "IE000QNJAOX1",
+        "IE000S6476U8",
+        "IE00BJZ2DC62",
+        "IE0004U3TX15",
+        "IE00BFXR5Q31",
+        "LU1280303014",
+        "IE00B7K93397",
+        "IE00BDGV0308",
+        "IE00BJ5CNR11",
+        "LU1681048127",
+        "IE00BYTH5R14",
+        "LU1377382285",
+        "IE000P3D0W60",
+        "FR0010756114",
+        "IE00BYV1Y969",
+        "IE000COQKPO9",
+        "IE0007HKA9K1",
+        "IE0006VDD4K1",
+        "IE00BWT3KN65",
+        "IE00BMYDM919",
+        "LU1215451524",
+        "IE00BNC1G699",
+        "IE000JQ2IJD3",
+        "IE00B60SX402",
+        "IE00B60SX170",
+        "IE000TSML5I8",
+        "IE00BN4Q0602",
+        "IE00BZ56RG20",
+        "LU1931974692",
+        "IE000Z9SJA06",
+        "IE00BFWXDW46",
+        "LU2196472984",
+        "IE00BYXVGY31",
+        "IE00BM67HJ62",
+        "LU2056738490",
+        "IE00BRKWGL70",
+        "LU1602145119",
+        "IE00BKSBGS44",
+        "IE00BF2B0P08",
+        "IE00BQZJBQ63",
+        "IE00BKW9SX35",
+        "IE00BYXVGX24",
+        "IE0004J37T45",
+        "IE00BNC0M681",
+        "IE00BDZCKK11",
+        "IE00BJXT3G33",
+        "IE00BX7RQY03",
+        "IE00BKS7L097",
+        "IE00BD4TXS21",
+        "FR0010655761",
+        "IE00BJQRDM08",
+        "IE00BNC0M350",
+        "IE00B23D8S39",
+        "IE000CXVOXQ1",
+        "IE00BMP3HG27",
+        "IE000IDLWOL4",
+        "IE000716YHJ7",
+        "LU1681042518",
+        "IE00BYTH5719",
+        "LU1215452928",
+        "LU0380865021",
+        "IE00BKLTRN76",
+        "LU2206597804",
+        "FR0007054358",
+        "IE00BYQCZX56",
+        "IE00BYYW2V44",
+        "IE00B0M62S72",
+        "LU1681041890",
+        "IE00B60SWY32",
+        "IE00BFTWP510",
+        "LU1681047236",
+        "LU1377382103",
+        "LU1602144575",
+        "IE00B60SWW18",
+        "IE00BFXR5V83",
+        "IE0001JH5CB4",
+        "LU0147308422",
+        "LU0629460675",
+        "LU2059756598",
+        "LU0446734104",
+        "IE00BFMNPS42",
+        "IE00B52VJ196",
+        "IE000Y6L6LE6",
+        "IE00BG0NY640",
+        "IE00BCLWRF22",
+        "IE00BNGJJT35",
+        "IE00BVXBH163",
+        "IE00B5B5TG76",
+        "LU1377382012",
+        "NL0010731816",
+        "IE0008470928",
+        "LU1940199711",
+        "LU1753045415",
+        "LU2446381555",
+        "LU2195226068",
+        "LU1940199984",
+        "LU2244387887",
+        "IE00BN4Q0L55",
+        "IE00BN4Q0933",
+        "LU2206598109",
+        "IE00BQN1K562",
+        "LU1812092168",
+        "IE000QUOSE01",
+        "IE000NRGX9M3",
+        "IE000TI21P14",
+        "IE00BZ0PKV06",
+        "LU1681044647",
+        "IE00BK5H8015",
+        "LU1600334798",
+        "IE00BKSBGT50",
+        "IE00BF2B0L69",
+        "IE00BDGV0746",
+        "IE00BZ56TQ67",
+        "LU1215454460",
+        "LU1377381717",
+        "LU1681037518",
+        "LU0136234068",
+        "LU1598690169",
+        "LU0292095535",
+        "IE00BZ4BMM98",
+        "LU0446734369",
+        "IE00BK5BQX27",
+        "IE00BHZPJ783",
+        "IE00BYXZ2585",
+        "IE00BMDPBY65",
+        "IE00BQN1K901",
+        "IE00BDF16114",
+        "IE00BQN1K786",
+        "LU1971906802",
+        "LU0322253732",
+        "LU1437015735",
+        "LU0846194776",
+        "IE00B23D8X81",
+        "IE00BFMNHK08",
+        "LU0274209237",
+        "IE00BJQRDL90",
+        "IE00B02KXM00",
+        "IE00B4K48X80",
+        "LU0950668870",
+
+  ]
+
+  instruments_quoting: [
+          "LU0514695690",
+          "LU1900067940",
+          "LU1841731745",
+          "LU1900068914",
+          "LU2456436083",
+          "IE00B02KXK85",
+          "LU2314312849",
+          "LU0292109856",
+          "LU1953188833",
+          "IE00BHZRR147",
+          "IE00B44T3H88",
+          "IE00BDGN9Z19",
+          "IE00B910VR50",
+          "LU1291098827",
+          "IE00B53QG562",
+          "IE00B53L3W79",
+          "LU0274211217",
+          "LU1931974429",
+          "LU0380865021",
+          "FR0007054358",
+          "LU1681047236",
+          "LU0147308422",
+          "IE00BCLWRF22",
+          "LU0136234068",
+          "IE00BYXZ2585",
+          "LU0846194776",
+          "LU0950668870",
+          "IE0008471009",
+          "LU0950674175",
+          "LU1291097779",
+          "IE00BTJRMP35",
+          "LU0480132876",
+          "LU1781541849",
+          "IE00BLRPN388",
+          "LU2573967036",
+          "IE00B5L8K969",
+          "LU2573966905",
+          "IE00B469F816",
+          "IE00B4L5YC18",
+          "IE00BKM4GZ66",
+          "IE00BHZPJ239",
+          "FR0010429068",
+          "LU2109787049",
+          "IE00B466KX20",
+          "LU1681044480",
+          "IE00B0M63177",
+          "LU1900068161",
+          "LU1681045370",
+          "FR0010261198",
+          "IE00BKWQ0Q14",
+          "LU1931974262",
+          "IE00B945VV12",
+          "LU0328475792",
+          "LU1681042609",
+          "LU0908500753",
+          "IE00BKLTRN76",
+          "IE0001JH5CB4",
+          "LU0446734104",
+          "LU1600334798",
+          "IE00BKSBGT50",
+          "IE00BK5BQX27",
+          "IE00BHZPJ783",
+          "LU0322253732",
+          "LU1437015735",
+          "LU0274209237",
+          "IE00BJQRDL90",
+          "IE00B4K48X80",
+          "LU1291099718",
+          "IE00BPVLQD13",
+          "IE00B95PGT31",
+          "IE00B4L5YX21",
+          "IE00B02KXH56",
+          "IE00B53QDK08",
+          "IE00BFXR5T61",
+          "LU0136240974",
+          "LU1781541252",
+          "FR0010245514",
+          "LU0950671825",
+          "LU0274209740",
+          "LU1931974775",
+          "IE00BFMXYX26",
+          "IE000QDFFK00",
+          "IE00B53SZB19",
+          "LU1681038243",
+          "IE00BFZXGZ54",
+          "IE0032077012",
+          "IE00BMFKG444",
+          "LU1829221024",
+          "LU1681038672",
+          "IE00B3CNHJ55",
+          "IE00BJ38QD84",
+          "IE00BJZ2DD79",
+          "IE00BK5BQW10",
+          "IE00BJ0KDR00",
+          "IE00B5BMR087",
+          "IE00B52SFT06",
+          "IE00BHZPJ908",
+          "IE00BFMXXD54",
+          "IE0031442068",
+          "LU0496786574",
+          "LU0136234654",
+          "IE00B77D4428",
+          "FR0011550185",
+          "LU1681048804",
+          "IE00B3XXRP09",
+          "LU1781540957",
+          "IE00BJZ2DC62",
+          "IE00BFXR5Q31",
+          "IE00B7K93397",
+          "IE000Z9SJA06",
+          "IE00BD4TXS21",
+          "IE00B6YX5C33",
+          "IE00B3ZW0K18",
+          "IE000G2LIHG9",
+          "LU0959211326",
+          "IE00BD4TYG73",
+          "IE00BM67HW99",
+          "LU0959211243",
+          "LU1681049109",
+          "IE000TSML5I8",
+          "IE00BYYW2V44",
+          "IE00BG04M077",
+          "FR0010315770",
+          "IE00BFNM3J75",
+          "LU1781541179",
+          "IE00BJ0KDQ92",
+          "IE00B4L5Y983",
+          "FR0014003IY1",
+          "IE00BK5BQV03",
+          "LU1681043599",
+          "IE00B60SX394",
+          "IE00BHZPJ569",
+          "IE00BKX55T58",
+          "IE00BFY0GT14",
+          "LU0340285161",
+          "IE00BCHWNQ94",
+          "IE00B0M62Q58"]
+
+  drivers : [
+      "VJPA",
+      "AEEM",
+      "HMCH",
+      "EEUE",
+      "EUE",
+      "IWRD",
+      "SPY5",
+      "XD9E",
+      "UST",
+      "XRS2",
+      "JPN"
+      ]
+
+  number_of_days: 10
+  activate_driver_price_calculator: True
+  file_path: etc/input/InputETFEquityQuoting.xlsx
+  path_db: etc/input/EtfEquityDB.db
+  pricing:
+    driver:
+      forecast_aggregation: ewma_outlier
+      trimmed_mean:
+        perc_outlier: 0.3
+      ewma_outlier:
+        halflife: 10
+        outlier_std: 3
+
+  tasks:
+    update_HF:
+      activate: true
+      frequency: 0.5
+    update_LF:
+      activate: true
+      frequency: 60
+    data_storing:
+      activate: false
+      frequency: 600
+    trade:
+      activate: false
+      synchronous: false
+      frequency: 1
+    dynamic_params:
+      activate: false
+      dynamic_config_path: "configFolder/dynamicEquityQuoting.yaml"
+      frequency: 1
+
+  DB connection:
+    Database Type : Oracle
+    Username : AF_PCF
+    Password : AAAbbb2022!!!
+    Host : dcdwboh-cli.sg.gbs.pro
+    Port : 1521
+    Service Name : OTH_ORABOH.bsella.it
+
+
+market_data_distributor:
+  activate: true
+  book_params:
+    fields: ["BID","ASK"]
+    mid_key: ["BID","ASK"]
+    max_var_threshold:   #max_perc_ret
+
+  bloomberg_params:
+    options:
+      interval: 0
+      delayed: False
+
+
+logging:
+  log_level: DEBUG
+  log_level_console: WARNING
+  log_name: PriceEngineEquity.log
+
+#gui:
+#  Excel:
+#    gui_type: ThreadGUIExcel
+#    heartbeat:
+#      heartbeat_name: "HeartBeatDuma"
+#      heartbeat_interval: 20
+#      macro_name_heartbeat: "SendPublishingSignal"
+#      macro_name_stop: "sendOffSignal"
+#
+#    new_instance: false
+#    visible: true
+#    add_book: false
+#    thread_queue_size: 5
+#    path: PriceEngine.xlsm
+
+
+
+oracle_connection:
+  environment: PROD
+  user: AF_QUANTLIB
+  tns_name: ORABOH
+  password: b18289f251b94f0e1a819df7c7a0fb2e9fabf457ba67b5bbf584478db8c8c17e
+  schema: AF_DATAMART_DBA
+
+timescale_connection:
+  database: aidb
+  port: 5432
+  user: aivwr
+  password: Aivwr-00
+
+
+
