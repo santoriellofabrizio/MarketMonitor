@@ -5,7 +5,7 @@ from typing import List, Optional
 import pandas as pd
 
 from sfm_pcf_db_library.PCFDBManager import PCFDBManager
-from user_strategy.utils.Pricing.AggregationFunctions import forecast_aggregation
+from user_strategy.utils.pricing_models.AggregationFunctions import forecast_aggregation
 from user_strategy.utils.InputParams import InputParams
 from market_monitor.live_data_hub.real_time_data_hub import EUR_SYNONYM
 from user_strategy.utils.enums import ISIN_TO_TICKER, TICKER_TO_ISIN

@@ -10,7 +10,7 @@ from user_strategy.FixedIncomeETF.InstrumentDbManager.InstrumentDbManager import
     InstrumentDbManager
 from user_strategy.utils import CustomBDay
 
-from user_strategy.utils.Pricing.AggregationFunctions import ForecastAggregator, forecast_aggregation
+from user_strategy.utils.pricing_models.AggregationFunctions import ForecastAggregator, forecast_aggregation
 from user_strategy.utils.SvnDownloader import download_fxdincomedb_from_svn
 
 from user_strategy.utils.InputParams import InputParams

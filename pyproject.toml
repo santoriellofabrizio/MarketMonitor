@@ -22,7 +22,8 @@ dependencies = [
     "xbbg>=0.7.7",
     "xlwings>=0.31.4",
     "pyqt5>=5.15.11",
-    "matplotlib>=3.9.0",
+    "matplotlib>=3.9.0"
+
 ]
 
 [project.scripts]
@@ -40,11 +41,15 @@ environments = [
     "sys_platform == 'linux'",
 ]
 
+find-links = ["file:///X:/Python/python3_11/python%20packages"]
+# IMPORTANTE: disabilita l'index di default (PyPI)
+no-index = true
+
+
 [dependency-groups]
 dev = [
     "pyinstaller>=6.10.0",
+    "bsh-data-provider @ file:///C:/AFMachineLearning/Libraries/BshDataProviderDeveloper",
+]
 ]
 
-[[tool.uv.index]]
-name = "sfm-local"
-url = "file://nas1bes/AreaFinanza/SHARE/PROGETTI%20ML/Python/python3_11/python%20packages"

@@ -2,10 +2,10 @@ import logging
 
 import pandas as pd
 
-from user_strategy.utils.Pricing.DataFetching.PricesProvider import PricesProvider
-from user_strategy.utils.Pricing.DataFetching.download_functions import process_downloaded_prices, \
+from user_strategy.utils.pricing_models.DataFetching.PricesProvider import PricesProvider
+from user_strategy.utils.pricing_models.DataFetching.download_functions import process_downloaded_prices, \
     download_daily_prices
-from user_strategy.utils.Pricing.ExcelStoringDecorator import save_to_excel
+from user_strategy.utils.pricing_models.ExcelStoringDecorator import save_to_excel
 from user_strategy.utils.enums import CURRENCY
 from sfm_return_adjustments_lib.ReturnAdjuster import ReturnAdjuster
 

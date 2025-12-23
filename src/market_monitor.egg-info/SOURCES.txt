@@ -58,5 +58,6 @@ src/market_monitor/strategy/StrategyUI/StrategyUI.py
 src/market_monitor/strategy/StrategyUI/StrategyUIAsync.py
 src/market_monitor/strategy/StrategyUI/__init__.py
 src/market_monitor/utils/__init__.py
+src/market_monitor/utils/config_helpers.py
 src/market_monitor/utils/config_observer.py
 src/market_monitor/utils/decorators.py

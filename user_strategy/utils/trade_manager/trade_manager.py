@@ -1,5 +1,5 @@
 """
-TradeManager ottimizzato con miglioramenti chiave.
+trade_manager ottimizzato con miglioramenti chiave.
 """
 
 import datetime
@@ -10,8 +10,8 @@ from threading import RLock
 
 import pandas as pd
 
-from user_strategy.utils.TradeManager.time_zero_pl import TimeZeroPLManager
-from user_strategy.utils.TradeManager.trade_templates import TradeStorage, TradeFactory, Trade, MyTrade
+from user_strategy.utils.trade_manager.time_zero_pl import TimeZeroPLManager
+from user_strategy.utils.trade_manager.trade_templates import TradeStorage, TradeFactory, Trade, MyTrade
 
 logger = logging.getLogger(__name__)
 
@@ -454,7 +454,7 @@ class TradeManager:
         try:
             if self.enable_persistence:
                 self.save_trades()
-                logger.info("TradeManager closed, trades saved")
+                logger.info("trade_manager closed, trades saved")
         except Exception as e:
             logger.error(f"Error during final save: {e}")
         finally:

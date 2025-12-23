@@ -9,6 +9,11 @@ import pandas as pd
 from dateutil.utils import today
 from sfm_return_adjustments_lib.ReturnAdjuster import ReturnAdjuster
 
+from analytics.adjustments import Adjuster
+from analytics.adjustments.dividend import DividendComponent
+from analytics.adjustments.fx_forward_carry import FxForwardCarryComponent
+from analytics.adjustments.fx_spot import FxSpotComponent
+from analytics.adjustments.ter import TerComponent
 from market_monitor.gui.implementations.GUI import GUI
 from market_monitor.publishers.redis_publisher import RedisMessaging
 from market_monitor.strategy.StrategyUI.StrategyUI import StrategyUI
@@ -22,7 +27,7 @@ from user_strategy.ETFEquity.utils.DataProcessors.PCFProcessor import PCFProcess
 from user_strategy.ETFEquity.utils.DataProcessors.StockSelector import StockSelector
 from user_strategy.utils import CustomBDay
 
-from user_strategy.utils.Pricing.PricingModel import ClusterPricingModel
+from user_strategy.utils.pricing_models.PricingModel import ClusterPricingModel
 from user_strategy.utils.bloomberg_subscription_utils.SubscriptionManager import SubscriptionManager
 from user_strategy.utils.enums import ISIN_TO_TICKER, CURRENCY, ISINS_ETF_EQUITY, TICK_SIZE
 
@@ -116,38 +121,43 @@ class EtfEquityPriceEngine(StrategyUI):
         #
         # self.etf_prices = self.prices_provider.get_hist_prices()
         # self.fx_prices = self.prices_provider.get_hist_fx_prices()
+        start, end = today() - self.number_of_days * CustomBDay, today() - CustomBDay
 
         self.API = BshData(config_path=r"C:\AFMachineLearning\Libraries\BshDataProvider\config\bshdata_config.yaml")
         self.fx_prices = self.API.market.get_daily_currency(id=[f"EUR{ccy}" for ccy in CURRENCY],
-                                                            start=today() - self.number_of_days * CustomBDay,
-                                                            end=today() - CustomBDay,
+                                                            start=start,
+                                                            end=end,
                                                             snapshot_time=time(17),
                                                             fallbacks=[{"source": "bloomberg"}])
 
         self.etf_prices = self.API.market.get_daily_etf(id=self.instruments,
-                                                        start=today() - self.number_of_days * CustomBDay,
-                                                        end=today() - CustomBDay,
+                                                        start=start,
+                                                        end=end,
                                                         snapshot_time=time(17))
 
-        _, self.currency_weights = self.input_params.get_currency_data(self.instruments)
+        _, fx_full = self.input_params.get_currency_data(self.instruments)
+        fx_full = fx_full.reset_index()
 
-        dates = HolidayManager().get_last_n_business_days_index(end_date=self.yesterday, n=self.number_of_days)
+        fx_composition = fx_full.pivot(index="index", columns="CURRENCY", values="WEIGHT").fillna(0)
+        fx_forward = fx_full.pivot(index="index", columns="CURRENCY", values="WEIGHT_FX_FORWARD").fillna(0)
 
-        self.return_adjuster = ReturnAdjuster(instruments=self.instruments,
-                                              relevant_dates=dates,
-                                              fairvalue_time=time(17),
-                                              default_instrument_type="ETP")
+        fx_forward_needed = fx_forward.columns.tolist()
 
-        self.return_adjuster.set_data_downloader(self.API.client)
+        fx_forward_prices = self.API.market.get_daily_fx_forward(quoted_currency=fx_forward_needed,
+                                                                 start=start,
+                                                                 end=end)
 
-        self.ter_manual = self.input_params.ter_manual.reindex(self.instruments).dropna(axis=1)
+        dividends = self.API.info.get_dividends(id=self.instruments)
+        ter = self.API.info.get_ter(id=self.instruments)
+        ter.update(self.input_params.ter_manual)
 
-        if not self.ter_manual.empty:
-            self.return_adjuster.set_ter_hard_coding(self.ter_manual)
-
-        self.return_adjuster.set_instrument_fx_weights(self.currency_weights)
-
-        self.return_adjuster.download_data()
+        self.adjuster = (
+            Adjuster(self.etf_prices)
+            .add(TerComponent(ter))
+            .add(FxSpotComponent(fx_composition, self.fx_prices))
+            .add(FxForwardCarryComponent(fx_forward, fx_forward_prices, "1M", self.fx_prices))
+            .add(DividendComponent(dividends))
+        )
 
         self.corrected_return: Optional[pd.DataFrame] = pd.DataFrame(index=self.etf_prices.index,
                                                                      columns=self.etf_prices.columns,
@@ -158,7 +168,7 @@ class EtfEquityPriceEngine(StrategyUI):
         self.subscription_manager = SubscriptionManager(self.all_etf_plus_securities,
                                                         self.bloomberg_subscription_config_path)
 
-        self.return_adjustments = self.return_adjuster.get_adjustments(cumulative=self._cumulative_returns)
+        self.return_adjustments = self.adjuster.get_adjustments_cumulative()
 
         # ----------------------------------------- PRICING ------------------------------------------------------------
 

@@ -1,4 +1,4 @@
-from user_strategy.utils.Pricing.DataFetching.PricesProvider import PricesProvider
+from user_strategy.utils.pricing_models.DataFetching.PricesProvider import PricesProvider
 from sfm_return_adjustments_lib.ReturnAdjuster import ReturnAdjuster
 
 

@@ -7,7 +7,7 @@ from dateutil.utils import today
 from pandas import DataFrame, Series
 
 from user_strategy.utils import CustomBDay
-from user_strategy.utils.Pricing.ExcelStoringDecorator import save_to_excel
+from user_strategy.utils.pricing_models.ExcelStoringDecorator import save_to_excel
 from user_strategy.utils.InputParams import InputParams
 
 

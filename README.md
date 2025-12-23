@@ -1,4 +1,4 @@
-# MarketMonitorFI
+# MarketMonitor
 
 ## Struttura del codice
 
@@ -8,14 +8,14 @@ Il progetto è organizzato per comporre dinamicamente una strategia di monitorag
 - **Builder** (`src/market_monitor/builder.py`):
   - inizializza logging e (opzionalmente) connessioni Oracle/Timescale;
   - carica dinamicamente la classe strategica indicata da `load_strategy_info` (percorso, modulo e nome classe);
-  - costruisce il libro `RTData` e lo inietta nella strategia tramite `set_market_data`;
+  - costruisce l'hub di dati live `RTData` e lo inietta nella strategia tramite `set_market_data`;
   - configura code di trade (sincrone o asincrone) e thread di distribuzione dati (Bloomberg, Excel, Redis, file di trade);
-  - crea le GUI configurate (Tkinter, Excel, Dummy) e le associa con `set_gui`;
+  - crea le GUI configurate (Tkinter, Excel, Dummy) e le associa con `set_gui se configurate del config;
   - restituisce la lista dei thread da avviare e l’istanza della strategia.
-- **Live data hub** (`src/market_monitor/live_data_hub/real_time_data_hub.py`): fornisce `RTData`, un contenitore thread-safe per book di mercato, stato, eventi e blob con utility per mid price, conversione FX in EUR, gestione sottoscrizioni (Bloomberg/Redis) e routing dei dati.
-- **Subscription/StrategyService**: le sottoscrizioni non vanno impostate direttamente su `RTData.subscription_dict_bloomberg`, ma tramite il service centralizzato (`RTData.get_subscription_manager()`), che restituisce un `SubscriptionService` incaricato di normalizzare i ticker e coordinare `LiveSubscriptionManager`.
+- **Live data hub** (`src/market_monitor/live_data_hub/real_time_data_hub.py`): fornisce `RTData`, un contenitore thread-safe per dati di mercato (o elaborazioni), stato (es: posizione), eventi e blob. sono presenti utility per mid price, conversione FX in EUR, gestione sottoscrizioni (Bloomberg/Redis) e routing dei dati.
+- **Subscription/StrategyService**: le sottoscrizioni non vanno impostate tramite il service centralizzato (`RTData.get_subscription_manager()`), che restituisce un `SubscriptionService` incaricato di normalizzare i ticker e coordinare `LiveSubscriptionManager`.
 - **Input threads** (`src/market_monitor/input_threads/`):
-  - `bloomberg.py`, `excel.py`, `redis.py` e `trade.py` alimentano `RTData` o la coda trade con dati di mercato o ordini;
+  - `bloomberg.py`, `excel.py`, `redis.py` e `trade.py` alimentano `RTData` o la coda trade con dati di mercato o elaborazioni di prezzi;
   - `event_handler/BBGEventHandler.py` gestisce l’adattamento dei messaggi Bloomberg.
 - **Strategy framework** (`src/market_monitor/strategy/StrategyUI`):
   - `StrategyUIAsync` orchestra task asincroni (HF/LF update, osservazione parametri dinamici, gestione trade) e definisce le callback da implementare;
@@ -60,7 +60,7 @@ Ogni callback è chiamata dal runtime asincrono di `StrategyUIAsync`, che raccog
 
 - **Costruzione**: `TradeManager(book_storage, model_prices=None, time_zero_lag=10.0, trade_folder=Path("data/trades"), max_time_to_match_side=10.0, auto_save_interval=500, engine="pyarrow", compression="snappy", enable_persistence=True, use_timezone_aware=True)`
   - richiede un `book_storage` con metodo `get_last_before` (es. `BookStorage` del medesimo package);
-  - può opzionalmente avviare un thread `TimeZeroPLManager` per calcolare PL istantaneo.
+  - può opzionalmente avviare un thread `TimeZeroPLManager` per calcolare PL laggato di x secondi.
 - **Elaborazione trade**: chiama `on_trade(df_trades)` passando un DataFrame con colonne `last_update`, `price`, `quantity`, `own_trade`, `isin`, `market`, `currency`, `price_multiplier`, `ticker`.
   - assegna il side usando il mid del book (`match_side`), calcola spread PL e PL di modello quando disponibili;
   - gestisce trade proprietari separatamente (indicizzati in `_my_trades_index`).
@@ -72,8 +72,8 @@ Ogni callback è chiamata dal runtime asincrono di `StrategyUIAsync`, che raccog
 
 ```python
 from market_monitor.strategy.StrategyUI.StrategyUI import StrategyUI
-from user_strategy.utils.TradeManager.book_memory import BookStorage
-from user_strategy.utils.TradeManager.trade_manager import TradeManager
+from user_strategy.utils.trade_manager.book_memory import BookStorage
+from user_strategy.utils.trade_manager.trade_manager import TradeManager
 
 
 class MyStrategy(StrategyUI):

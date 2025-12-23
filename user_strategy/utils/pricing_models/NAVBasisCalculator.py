@@ -13,7 +13,7 @@ from user_strategy.FixedIncomeETF import memoryFixedIncome
 from user_strategy.utils import CustomBDay
 from user_strategy.utils.InputParamsFI import InputParamsFI
 from user_strategy.utils.bloomberg_subscription_utils.OracleConnection import OracleConnection
-from user_strategy.utils.Pricing.ExcelStoringDecorator import save_to_excel
+from user_strategy.utils.pricing_models.ExcelStoringDecorator import save_to_excel
 
 
 class NAVBasisCalculator:

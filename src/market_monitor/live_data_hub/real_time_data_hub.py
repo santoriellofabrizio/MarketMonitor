@@ -35,7 +35,7 @@ from market_monitor.live_data_hub.live_subscription import (
 )
 from market_monitor.live_data_hub.subscription_service import SubscriptionService
 from market_monitor.utils.decorators import deprecated
-from user_strategy.utils.enums import CURRENCY
+
 
 # Constants
 SECURITY_TO_IGNORE = ["GBp", "OTHEREQUIEUR", "ILs"]
@@ -359,7 +359,7 @@ class RTData:
 
         return pd.Series()
 
-    def get_mid_eur(self, store: str = "market") -> pd.Series:
+    def get_mid_eur(self, currencies: List[str],  store: str = "market") -> pd.Series:
         """
         Get mid prices converted to EUR (optimized with dict operations).
 
@@ -379,7 +379,7 @@ class RTData:
         fx_rates = {}
 
         for ticker, price in mid_dict.items():
-            if ticker in CURRENCY | {'GBp', 'ILs'}:
+            if ticker in currencies:
                 fx_rates[ticker] = price
             else:
                 instruments[ticker] = price
@@ -412,7 +412,7 @@ class RTData:
         return pd.Series(converted)
 
     @handle_currency_conversion
-    def get_book_eur(self, store: str = "market") -> pd.DataFrame:
+    def get_book_eur(self, currencies: List[str],  store: str = "market") -> pd.DataFrame:
         """
         Get book converted to EUR (optimized).
 
@@ -425,7 +425,7 @@ class RTData:
             return book
 
         # Identify instruments vs currencies
-        is_currency = book.index.isin(CURRENCY | {'GBp', 'ILs'})
+        is_currency = book.index.isin(currencies)
 
         # Split book
         book_instr = book[~is_currency]
@@ -515,13 +515,8 @@ class RTData:
             if isin not in self._securities:
                 self.logger.debug(f"Setting currency for unknown instrument {isin}")
 
-            # Validate currency
-            if ccy not in CURRENCY | {'GBp', 'ILs', 'EUR'}:
-                self.logger.warning(f"Unknown currency {ccy} for {isin}, defaulting to EUR")
-                self.missing_currency_instruments.add(isin)
-                self._currency_information[isin] = "EUR"
-            else:
-                self._currency_information[isin] = ccy
+
+            self._currency_information[isin] = ccy
 
         # Ensure EUR maps to EUR
         self._currency_information["EUR"] = "EUR"
@@ -552,16 +547,6 @@ class RTData:
         return list(self.missing_currency_instruments)
 
 
-
-
-
-
-
-
-
-
-
-
     # ========================================================================
     # SUBSCRIPTION MANAGEMENT (Deprecated - use get_subscription_manager())
     # ========================================================================
@@ -570,15 +555,6 @@ class RTData:
     #   rtdata.get_subscription_manager().subscribe_bloomberg(...)
     #   rtdata.get_subscription_manager().get_all_subscriptions()
     # ========================================================================
-
-
-
-
-
-
-
-
-
 
 
 

@@ -15,8 +15,8 @@ from user_strategy.ETFEquity.utils.DataProcessors.PCFControls import PCFControls
 from user_strategy.ETFEquity.utils.DataProcessors.PCFProcessor import PCFProcessor
 from user_strategy.ETFEquity.utils.DataProcessors.StockSelector import StockSelector
 from user_strategy.utils import CustomBDay
-from user_strategy.utils.TradeManager.flow_detector import FlowDetector
-from user_strategy.utils.TradeManager.trade_manager import TradeManager
+from user_strategy.utils.trade_manager.flow_detector import FlowDetector
+from user_strategy.utils.trade_manager.trade_manager import TradeManager
 from user_strategy.utils.bloomberg_subscription_utils.SubscriptionManager import SubscriptionManager
 from user_strategy.utils.enums import ISIN_TO_TICKER, CURRENCY
 

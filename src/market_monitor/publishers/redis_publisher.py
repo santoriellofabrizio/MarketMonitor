@@ -8,7 +8,7 @@ import pandas as pd
 import redis
 
 from market_monitor.publishers.base import MessageType
-from user_strategy.utils.TradeManager.flow_detector import Flow
+from user_strategy.utils.trade_manager.flow_detector import Flow
 
 logger = logging.getLogger(__name__)
 

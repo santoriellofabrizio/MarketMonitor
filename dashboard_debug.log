@@ -1,5 +1,0 @@
-2025-12-21 22:00:32,416 - market_monitor.gui.implementations.PyQt5Dashboard.run_dashboard - INFO - ================================================================================
-2025-12-21 22:00:32,417 - market_monitor.gui.implementations.PyQt5Dashboard.run_dashboard - INFO - Starting Trade Dashboard with DEBUG logging
-2025-12-21 22:00:32,417 - market_monitor.gui.implementations.PyQt5Dashboard.run_dashboard - INFO - ================================================================================
-2025-12-21 22:00:33,141 - market_monitor.gui.implementations.PyQt5Dashboard.widgets.dashboard_state - INFO - DashboardState initialized. Config dir: C:\Users\GBS08935\.tradedashboard\dashboards
-2025-12-21 22:00:34,279 - market_monitor.gui.implementations.PyQt5Dashboard.widgets.dashboard_state - INFO - Loading dashboard: _default

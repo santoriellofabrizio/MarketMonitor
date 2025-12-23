@@ -10,13 +10,13 @@ import datetime as dt
 from market_monitor.publishers.redis_publisher import RedisMessaging
 from market_monitor.strategy.StrategyUI.StrategyUI import StrategyUI
 from user_strategy.utils import CustomBDay
-from user_strategy.utils.Pricing.DataFetching.PricesProviderFI import PricesProviderFI
+from user_strategy.utils.pricing_models.DataFetching.PricesProviderFI import PricesProviderFI
 from user_strategy.utils.InputParamsFIQuoting import InputParamsFIQuoting
-from user_strategy.utils.Pricing.NAVBasisCalculator import NAVBasisCalculator
-from user_strategy.utils.Pricing.PricingModel import ClusterPricingModel, DriverPricingModel, \
+from user_strategy.utils.pricing_models.NAVBasisCalculator import NAVBasisCalculator
+from user_strategy.utils.pricing_models.PricingModel import ClusterPricingModel, DriverPricingModel, \
     CreditFuturesCalendarSpreadPricingModel, CreditFuturesInterestRatePricingModel
-from user_strategy.utils.Pricing.TheoreticalPriceManager import TheoreticalPriceManager
-from user_strategy.utils.Pricing.IRPManager import IRPManager
+from user_strategy.utils.pricing_models.TheoreticalPriceManager import TheoreticalPriceManager
+from user_strategy.utils.pricing_models.IRPManager import IRPManager
 from user_strategy.utils.bloomberg_subscription_utils.SubscriptionManager import SubscriptionManager
 from user_strategy.utils.enums import TICK_SIZE
 

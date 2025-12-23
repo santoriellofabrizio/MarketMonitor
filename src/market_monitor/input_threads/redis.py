@@ -196,6 +196,7 @@ class RedisStreamingThread(threading.Thread):
             logger.info(f"Sottoscritto ai pattern RedisPublisher: {self.channels}")
 
             for message in self.pubsub.listen():
+
                 if self.stop_event.is_set():
                     break
 
@@ -388,7 +389,7 @@ class RedisStreamingThread(threading.Thread):
 
         Usa channel o state_namespace come event_type.
         """
-        event_type = sub.state_namespace or channel
+        event_type = sub.store or channel
 
         self.real_time_data._event_store.append(event_type, data)
         logger.debug(f"EventStore appended: {event_type}")
@@ -401,7 +402,7 @@ class RedisStreamingThread(threading.Thread):
         """
         key = ":".join(path) if path else "default"
 
-        self.real_time_data._blob_store.store(key, data)
+        self.real_time_data.update(key, data, "blob")
         logger.debug(f"BlobStore stored: {key}")
 
     def _find_subscription_for_channel(self, channel: str) -> Optional[RedisSubscription]:

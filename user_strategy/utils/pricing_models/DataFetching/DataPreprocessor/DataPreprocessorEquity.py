@@ -1,4 +1,4 @@
-from user_strategy.utils.Pricing.DataFetching.DataPreprocessor import DataPreprocessor
+from user_strategy.utils.pricing_models.DataFetching.DataPreprocessor import DataPreprocessor
 
 
 class DataPreprocessorEquity(DataPreprocessor):

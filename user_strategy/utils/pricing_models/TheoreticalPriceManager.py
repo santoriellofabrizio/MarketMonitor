@@ -2,7 +2,7 @@ from typing import Optional, List, Type, Dict
 
 import pandas as pd
 
-from user_strategy.utils.Pricing.PricingModel import PricingModel
+from user_strategy.utils.pricing_models.PricingModel import PricingModel
 
 
 class TheoreticalPriceManager:

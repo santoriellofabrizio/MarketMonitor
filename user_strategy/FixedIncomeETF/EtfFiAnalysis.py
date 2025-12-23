@@ -8,7 +8,8 @@ from market_monitor.publishers.redis_publisher import RedisMessaging
 from market_monitor.strategy.StrategyUI.StrategyUI import StrategyUI
 from user_strategy.utils import CustomBDay
 from user_strategy.utils.InputParamsFIAnalysis import InputParamsFIAnalysis
-from user_strategy.utils.TradeManager.trade_manager import TradeManager
+from user_strategy.utils.trade_manager.book_memory import BookStorage
+from user_strategy.utils.trade_manager.trade_manager import TradeManager
 
 
 class FIAnalysis(StrategyUI):
@@ -47,7 +48,7 @@ class FIAnalysis(StrategyUI):
         self.yesterday: dt.date = (today() - CustomBDay).date()
         self.book_mid: pd.DataFrame(dtype=float) | pd.Series(dtype=float) = pd.Series(dtype=float)
         self.input_params = InputParamsFIAnalysis(kwargs)
-        self.book_storage: deque = deque(maxlen=3)
+        self.book_storage = BookStorage(self.input_params.book_storage_size)
 
         # Load the anagraphic data from an Excel file
         self.yesterday_misalignment_cluster: pd.Series = pd.Series(dtype=float)
@@ -121,8 +122,7 @@ class FIAnalysis(StrategyUI):
 
         self.redis_publisher.export_message(channel="trades", value=all_trades)
 
-
-    def update_HF(self, *args, **kwargs) -> Union[dict, Tuple]:
+    def update_HF(self, *args, **kwargs) -> None:
         """
         Update prices over time. Time interval is set from config. Whatever is returned is displayed in the gui.
 
@@ -156,7 +156,7 @@ class FIAnalysis(StrategyUI):
         .update(
             last_book := self.market_data.get_data_field("mid")))
 
-        self.book_storage.append((dt.datetime.now(), pd.Series(last_book).copy()))
+        self.book_storage.append(pd.Series(last_book).copy())
 
     def wait_for_book_initialization(self):
         return True

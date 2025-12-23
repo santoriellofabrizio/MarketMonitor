@@ -16,7 +16,7 @@ class QueueDataSource:
 
     def _register_default_handlers(self):
         """Registra i gestori predefiniti"""
-        for msg_type, handler_name in self.MESSAGE_TYPES.items():
+        for msg_type, handler_name in MESSAGE_TYPES.items():
             if hasattr(self, handler_name):
                 self._handlers[msg_type] = getattr(self, handler_name)
 

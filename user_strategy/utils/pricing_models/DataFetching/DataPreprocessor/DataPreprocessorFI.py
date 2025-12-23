@@ -4,12 +4,12 @@ import numpy as np
 import pandas as pd
 from pandas import DataFrame
 
-from user_strategy.utils.Pricing.DataFetching.DataPreprocessor.DataPreprocessor import fx_forward_mapping, \
+from user_strategy.utils.pricing_models.DataFetching.DataPreprocessor.DataPreprocessor import fx_forward_mapping, \
     DataPreprocessor
-from user_strategy.utils.Pricing.DataFetching.download_functions import download_yas, download_repo, \
+from user_strategy.utils.pricing_models.DataFetching.download_functions import download_yas, download_repo, \
     download_fx_forward_composition
 from user_strategy.utils.InputParamsFI import InputParamsFI
-from user_strategy.utils.Pricing.ExcelStoringDecorator import save_to_excel
+from user_strategy.utils.pricing_models.ExcelStoringDecorator import save_to_excel
 
 
 class DataPreprocessorFI(DataPreprocessor):

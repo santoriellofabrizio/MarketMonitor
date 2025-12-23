@@ -7,7 +7,7 @@ load_strategy_info:
 #  module_name: MockPricePublisher
 #  class_name: MockPricePublisher
 
-  package_path: C:\AFMachineLearning\Projects\Trading\MarketMonitorFI\testing\test_strategy
+  package_path: C:\AFMachineLearning\Libraries\MarketMonitor\testing\test_strategy
   module_name: TestTradeManagerStrategy
   class_name: TestTradeManagerStrategy
 

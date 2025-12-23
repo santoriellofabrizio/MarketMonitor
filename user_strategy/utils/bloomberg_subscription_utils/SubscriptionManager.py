@@ -6,7 +6,7 @@ from ruamel.yaml import YAML
 from user_strategy.utils.bloomberg_subscription_utils.InstrumentMarketCurrency import \
     InstrumentMarketCurrency
 from user_strategy.utils.bloomberg_subscription_utils.Classifier import Classifier
-from user_strategy.utils.Pricing.ExcelStoringDecorator import save_to_excel
+from user_strategy.utils.pricing_models.ExcelStoringDecorator import save_to_excel
 from user_strategy.utils.enums import FIXED_INCOME_FUTURE, Instrument
 
 CACHE_FILE = "input_threads/bloomberg/BbgSubscriptionManager/cachestocks/instrument_status.pkl"

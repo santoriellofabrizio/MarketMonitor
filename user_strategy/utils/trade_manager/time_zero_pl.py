@@ -3,7 +3,7 @@ import logging
 import threading
 import time
 import pandas as pd
-from user_strategy.utils.TradeManager.trade_templates import AbstractTrade, TradeStorage
+from user_strategy.utils.trade_manager.trade_templates import AbstractTrade, TradeStorage
 
 
 class TimeZeroPLManager(threading.Thread):

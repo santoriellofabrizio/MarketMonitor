@@ -4,7 +4,6 @@ import blpapi
 
 from market_monitor.input_threads.event_handler.EventHandlerUI import EventHandler
 from market_monitor.live_data_hub.real_time_data_hub import RTData
-from user_strategy.utils.enums import ISIN_TO_TICKER
 
 logging.getLogger()
 
@@ -89,7 +88,7 @@ class BBGEventHandler(EventHandler):
         """
         _id = msg.correlationIds()[0].value()
         description = msg.getElement("reason").getElementAsString("category")
-        logging.error(f"{_id} ({ISIN_TO_TICKER.get(_id, '')}): Subscription Failed, {description}")
+        logging.error(f"{_id}: Subscription Failed, {description}")
 
         # Mark as failed
         self.real_time_data.mark_subscription_failed(_id, "bloomberg", description)
