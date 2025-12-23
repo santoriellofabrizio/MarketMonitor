@@ -1,4 +1,7 @@
-strategy_name: EtfEquityPriceEngine
+load_strategy_info:
+      package_path: C:\AFMachineLearning\Libraries\MarketMonitor\user_strategy\ETFEquity\LiveQuoting
+      module_name: EtfEquityPriceEngine
+      class_name: EtfEquityPriceEngine
 
 market_monitor:
 
@@ -540,6 +543,7 @@ timescale_connection:
   port: 5432
   user: aivwr
   password: Aivwr-00
+  host: timescaledb.af.pro
 
 
 

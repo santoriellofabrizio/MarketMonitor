@@ -202,7 +202,7 @@ class EtfFiPriceEngine(StrategyUI):
                                      self.historical_fx.loc[self.yesterday]])
         for isin, price in yesterday_price.items():
             if isin in self._all_securities:
-                self.market_data.update(isin, {field: price for field in self.market_data.mid_key}, perform_check=False)
+                self.market_data.update(isin, {field: price for field in self.market_data.mid_key})
 
     def on_start_strategy(self) -> None:
         """

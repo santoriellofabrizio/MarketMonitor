@@ -79,7 +79,6 @@ class BBGEventHandler(EventHandler):
 
         # Mark as received (activates if pending)
         self.real_time_data.mark_subscription_received(_id, "bloomberg")
-        self.real_time_data.instrument_status[_id] = "ACTV"
 
         logging.info(f"Subscription started and activated: {_id}")
 
@@ -90,7 +89,6 @@ class BBGEventHandler(EventHandler):
         """
         _id = msg.correlationIds()[0].value()
         description = msg.getElement("reason").getElementAsString("category")
-
         logging.error(f"{_id} ({ISIN_TO_TICKER.get(_id, '')}): Subscription Failed, {description}")
 
         # Mark as failed

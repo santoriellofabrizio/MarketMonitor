@@ -7,6 +7,8 @@ from pandas import DataFrame
 from tqdm import tqdm
 
 from user_strategy.utils import CustomBDay, memoryPriceProvider
+from user_strategy.utils.Pricing.DataFetching.download_functions import download_daily_prices_fx, \
+    process_downloaded_prices, download_daily_prices, get_price_for_day_time
 from user_strategy.utils.Pricing.ExcelStoringDecorator import save_to_excel
 from user_strategy.utils.InputParams import InputParams
 from user_strategy.utils.bloomberg_subscription_utils.SubscriptionManager import SubscriptionManager
