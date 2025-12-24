@@ -39,7 +39,7 @@ class EtfFiStrategy(StrategyUI):
 
     def __init__(self, *args, **kwargs):
         """
-        Initialize the FixedIncomeETF class, set up theoretical live prices, and start monitoring.
+        Initialize the fixed_income class, set up theoretical live prices, and start monitoring.
 
         Args:
             *args: Additional arguments passed to the superclass.

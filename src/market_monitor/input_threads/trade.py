@@ -3,6 +3,7 @@ import logging
 import os
 import sqlite3
 import threading
+import time
 from enum import Enum
 from pathlib import Path
 from queue import Queue
@@ -150,7 +151,13 @@ class SqliteTradesConnection:
     def __init__(self, path: str):
         self.path = path
         self.n_market_trades, self.n_own_trades = 0, 0
-        self.conn: sqlite3.Connection = sqlite3.connect(self.path)
+        while (count := 0) < 5:
+            try:
+                self.conn: sqlite3.Connection = sqlite3.connect(self.path)
+                break
+            except:
+                time.sleep(5)
+                count += 1
 
         # Messaggio di warning
         self.warning_message = "No OWN_TRADES table found. Please update market trades viewer to the latest one."

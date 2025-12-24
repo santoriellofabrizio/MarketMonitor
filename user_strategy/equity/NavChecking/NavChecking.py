@@ -8,9 +8,9 @@ from market_monitor.data_storage.NAVDataStorage import NAVDataStorage
 
 from market_monitor.gui.implementations.GUI import GUI
 from market_monitor.strategy.StrategyUI.StrategyUI import StrategyUI
-from user_strategy.ETFEquity.utils.DataProcessors.PCFControls import PCFControls
-from user_strategy.ETFEquity.utils.DataProcessors.PCFProcessor import PCFProcessor
-from user_strategy.ETFEquity.utils.DataProcessors.StockSelector import StockSelector
+from user_strategy.equity.utils.DataProcessors.PCFControls import PCFControls
+from user_strategy.equity.utils.DataProcessors.PCFProcessor import PCFProcessor
+from user_strategy.equity.utils.DataProcessors.StockSelector import StockSelector
 from user_strategy import InputParamsQuoting
 
 from user_strategy.utils import CustomBDay

@@ -59,7 +59,7 @@ class Builder:
 
     def _setup_logging(self):
         log_level = self.config['logging'].get('log_level', 'DEBUG').upper()
-        log_dir = os.path.join("logging", self.config['logging']['log_name'])
+        log_dir = os.path.join("logs", self.config['logging']['log_name'])
 
         os.makedirs(os.path.dirname(log_dir), exist_ok=True)
 
@@ -85,6 +85,7 @@ class Builder:
         package_path = load_strategy_info["package_path"]
         module_name = load_strategy_info["module_name"]
         class_name = load_strategy_info["class_name"]
+        package_path = os.path.abspath(package_path)
         file_path = os.path.join(package_path, f"{module_name}.py")
 
         if not os.path.exists(file_path):

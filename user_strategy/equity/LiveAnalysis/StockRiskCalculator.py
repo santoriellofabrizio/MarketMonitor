@@ -6,9 +6,9 @@ from cvxpy import SolverError
 from xbbg.blp import bdp
 from joblib import Memory
 
-from user_strategy.ETFEquity.LiveAnalysis.OptimizationFunctions import linearized_optimization
+from user_strategy.equity.LiveAnalysis.OptimizationFunctions import linearized_optimization
 
-memory = Memory(".cache/strategy/user_strategy/ETFEquity/LiveQuoting/cacheStockRiskCalculator", verbose=False)
+memory = Memory(".cache/strategy/user_strategy/equity/LiveQuoting/cacheStockRiskCalculator", verbose=False)
 
 
 

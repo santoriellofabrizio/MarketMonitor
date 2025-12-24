@@ -7,8 +7,8 @@ import datetime as dt
 from pandas._libs.tslibs.offsets import BDay
 from xbbg.blp import bdp
 
-from user_strategy.ETFEquity.utils.DataProcessors.Classifier import Classifier
-from user_strategy.ETFEquity.utils.SQLUtils.PCFDBManager import PCFDBManager
+from user_strategy.equity.utils.DataProcessors.Classifier import Classifier
+from user_strategy.equity.utils.SQLUtils.PCFDBManager import PCFDBManager
 from user_strategy.utils.bloomberg_subscription_utils.OracleConnection import memoryPCF
 from user_strategy.utils.enums import Instrument, ISINS_ETF_EQUITY, ISIN_TO_TICKER
 

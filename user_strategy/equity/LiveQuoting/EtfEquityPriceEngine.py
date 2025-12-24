@@ -20,11 +20,11 @@ from market_monitor.strategy.StrategyUI.StrategyUI import StrategyUI
 from core.holidays.holiday_manager import HolidayManager
 
 from interface.bshdata import BshData
-from user_strategy.ETFEquity.LiveQuoting.InputParamsQuoting import InputParamsQuoting, \
+from user_strategy.equity.LiveQuoting.InputParamsQuoting import InputParamsQuoting, \
     DISMISSED_ETFS
-from user_strategy.ETFEquity.utils.DataProcessors.PCFControls import PCFControls
-from user_strategy.ETFEquity.utils.DataProcessors.PCFProcessor import PCFProcessor
-from user_strategy.ETFEquity.utils.DataProcessors.StockSelector import StockSelector
+from user_strategy.equity.utils.DataProcessors.PCFControls import PCFControls
+from user_strategy.equity.utils.DataProcessors.PCFProcessor import PCFProcessor
+from user_strategy.equity.utils.DataProcessors.StockSelector import StockSelector
 from user_strategy.utils import CustomBDay
 
 from user_strategy.utils.pricing_models.PricingModel import ClusterPricingModel

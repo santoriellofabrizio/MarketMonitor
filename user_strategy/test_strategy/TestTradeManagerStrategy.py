@@ -6,6 +6,7 @@ import pandas as pd
 from market_monitor.publishers.redis_publisher import RedisMessaging
 from market_monitor.strategy.StrategyUI.StrategyUI import StrategyUI
 from user_strategy.utils.trade_manager.book_memory import BookStorage
+
 from user_strategy.utils.trade_manager.trade_manager import TradeManager
 
 logger = logging.getLogger(__name__)
@@ -64,7 +65,7 @@ class TestTradeManagerStrategy(StrategyUI):
 
     def wait_for_book_initialization(self) -> bool:
         """Attendi book initialization."""
-        mid = self.market_data.get_mid_eur()
+        mid = self.market_data.get_mid()
         return len(mid[~mid.isna()]) >= 1
 
     def on_book_initialized(self):
@@ -74,7 +75,7 @@ class TestTradeManagerStrategy(StrategyUI):
     def update_HF(self):
         """Update HF - monitora prezzi."""
 
-        mid_eur = self.market_data.get_mid_eur()
+        mid_eur = self.market_data.get_mid()
         self.book_storage.append(mid_eur)
 
     def on_trade(self, trades: pd.DataFrame):

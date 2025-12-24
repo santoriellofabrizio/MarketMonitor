@@ -1,3 +1,5 @@
+import argparse
+import sys
 from dataclasses import dataclass
 from difflib import get_close_matches
 from pathlib import Path
@@ -7,6 +9,7 @@ from ruamel.yaml import YAML
 
 reader = YAML(typ='safe')
 
+ENV_DEFAULT_VAR = "MARKET_MONITOR_CONFIG"
 
 @dataclass
 class ConfigEntry:
@@ -188,3 +191,95 @@ def available_names() -> Sequence[str]:
 def suggest_names(name: str, max_suggestions: int = 3) -> List[str]:
     """Return close matches for a missing config/alias name."""
     return get_close_matches(name, available_names(), n=max_suggestions, cutoff=0.6)
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="market-monitor",
+        description=(
+            "Launch the market monitor using a config name or alias. "
+            "Set the environment variable MARKET_MONITOR_CONFIG to choose a default."
+        ),
+    )
+    parser.add_argument(
+        "config_name",
+        nargs="?",
+        help="Config name or alias (see --list). "
+             f"Defaults to ${ENV_DEFAULT_VAR} if set.",
+    )
+    parser.add_argument(
+        "-l", "--list",
+        action="store_true",
+        help="List available aliases and config files.",
+    )
+    parser.add_argument(
+        "--describe",
+        action="store_true",
+        help="Show details about the resolved config and exit.",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Load and validate the config file without starting threads.",
+    )
+    return parser
+
+
+def load_config(path):
+    with open(path, 'r') as stream:
+        return reader.load(stream)
+
+
+def print_config_details(entry):
+    alias_hint = f"(alias for '{entry.alias_of}')" if entry.alias_of else ""
+    print(f"Config: {entry.name} {alias_hint}".strip())
+    print(f"Path:   {entry.path}")
+    if entry.description:
+        print(f"Info:   {entry.description}")
+
+
+def get_config_from_args(argv=None):
+    """Gestisce tutta la logica di argparse e risoluzione configurazione."""
+    parser = build_parser()
+    args = parser.parse_args(argv)
+
+    # 1. Comandi informativi immediati (Lista)
+    if args.list:
+        list_available()
+        sys.exit(0)
+
+    # 2. Identificazione nome configurazione
+    config_name = args.config_name or os.environ.get(ENV_DEFAULT_VAR)
+    if not config_name:
+        parser.print_help()
+        print(f"\nNo config provided. Set {ENV_DEFAULT_VAR} or pass a name.\nOptions:")
+        list_available()
+        sys.exit(1)
+
+    # 3. Risoluzione del file
+    try:
+        config_entry = resolve_config_entry(config_name)
+        if config_entry.alias_of:
+            print(f"Using alias '{config_name}' -> {config_entry.alias_of}")
+        print(f"Loading config: {config_entry.path}")
+    except FileNotFoundError as e:
+        print(f"Error: {e}")
+        suggestions = suggest_names(config_name)
+        if suggestions:
+            print("\nDid you mean:")
+            for s in suggestions: print(f"  - {s}")
+        sys.exit(1)
+
+    # 4. Comandi informativi con config (Describe / Dry-run)
+    if args.describe:
+        print_config_details(config_entry)
+        sys.exit(0)
+
+    config = load_config(config_entry.path)
+
+    if args.dry_run:
+        print_config_details(config_entry)
+        print("\nConfig loaded successfully. Exiting (dry-run).")
+        sys.exit(0)
+
+    return config

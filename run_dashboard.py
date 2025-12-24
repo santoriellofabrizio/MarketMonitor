@@ -12,7 +12,7 @@ def main():
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
         handlers=[
             logging.StreamHandler(sys.stdout),  # Output su console
-            logging.FileHandler('dashboard_debug.log', mode='w')  # Salva su file
+            logging.FileHandler('src/market_monitor/gui/implementations/PyQt5Dashboard/dashboard_debug.log', mode='w')  # Salva su file
         ]
     )
 

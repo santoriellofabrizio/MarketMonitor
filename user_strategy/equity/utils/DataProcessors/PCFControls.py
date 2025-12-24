@@ -5,7 +5,7 @@ from typing import Union, Optional
 import numpy as np
 import pandas as pd
 
-from user_strategy.ETFEquity.utils.DataProcessors.PCFProcessor import PCFProcessor
+from user_strategy.equity.utils.DataProcessors.PCFProcessor import PCFProcessor
 from user_strategy.utils import CustomBDay
 from user_strategy.utils.enums import ISIN_TO_TICKER, ALL_ETF_ISINS
 

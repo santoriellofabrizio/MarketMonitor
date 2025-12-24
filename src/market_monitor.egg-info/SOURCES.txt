@@ -1,7 +1,5 @@
 README.md
 pyproject.toml
-src/__init__.py
-src/run_monitor.py
 src/market_monitor/__init__.py
 src/market_monitor/builder.py
 src/market_monitor.egg-info/PKG-INFO
@@ -20,7 +18,6 @@ src/market_monitor/gui/implementations/PyQt5Dashboard/common.py
 src/market_monitor/gui/implementations/PyQt5Dashboard/dashboard_extension.py
 src/market_monitor/gui/implementations/PyQt5Dashboard/detached_windows.py
 src/market_monitor/gui/implementations/PyQt5Dashboard/metrics_definition.py
-src/market_monitor/gui/implementations/PyQt5Dashboard/run_dashboard.py
 src/market_monitor/gui/implementations/PyQt5Dashboard/trade_dashboard.py
 src/market_monitor/gui/implementations/PyQt5Dashboard/worker_thread.py
 src/market_monitor/gui/implementations/PyQt5Dashboard/widgets/__init__.py
@@ -57,6 +54,10 @@ src/market_monitor/strategy/__init__.py
 src/market_monitor/strategy/StrategyUI/StrategyUI.py
 src/market_monitor/strategy/StrategyUI/StrategyUIAsync.py
 src/market_monitor/strategy/StrategyUI/__init__.py
+src/market_monitor/testing/__init__.py
+src/market_monitor/testing/mock_bloomberg.py
+src/market_monitor/testing/mock_market_trades_viewer.py
+src/market_monitor/testing/test_subscription_lifecycle.py
 src/market_monitor/utils/__init__.py
 src/market_monitor/utils/config_helpers.py
 src/market_monitor/utils/config_observer.py

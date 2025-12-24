@@ -63,7 +63,7 @@ class MockMarketTradesViewer(threading.Thread):
     ]
 
     def __init__(self,
-                 db_path: str = r"C:\AFMachineLearning\Projects\Trading\MarketMonitorFI\testing\mock_trades.db",
+                 db_path: str,
                  trades_per_second: float = 2.5,
                  etf_instruments: Optional[List[Dict]] = None,
                  quantity_range: Tuple[int, int] = (100, 10000),

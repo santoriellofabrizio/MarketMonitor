@@ -24,7 +24,7 @@ from xbbg.blp import bdh, bdib, bdp
 from sfm_dbconnections.DbConnectionParameters import DbConnectionParameters, TimescaleConnectionParameters
 from sfm_timescaledb_queries.QueryTSMarkets import QueryTSMarkets
 from sfm_timescaledb_queries.callable_functions import download_daily_fairvalues, download_daily_fairvalues_currency
-from user_strategy.FixedIncomeETF import memoryFixedIncome
+from user_strategy.fixed_income import memoryFixedIncome
 from user_strategy.utils import memoryPriceProvider
 
 logger = logging.getLogger()
