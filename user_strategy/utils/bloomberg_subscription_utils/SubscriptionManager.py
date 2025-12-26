@@ -12,7 +12,7 @@ from user_strategy.utils.enums import FIXED_INCOME_FUTURE, Instrument
 CACHE_FILE = "input_threads/bloomberg/BbgSubscriptionManager/cachestocks/instrument_status.pkl"
 LIVE_MARKETS = ("GB", "GD", "GZ", "IM", "BW", "GH", "GI", "IB", "GB" "S1", "S4", "TH", "UB")
 CURRENCY_TO_IGNORE = ("EUR", "GBp", "EUREUR", "EUREUR CURCNY")
-STOCK_DB_PATH = "strategy/user_strategy/ETFEquity/stocks.db"
+STOCK_DB_PATH = "strategy/user_strategy/equity/stocks.db"
 
 
 GERMAN_COMPOSITE = {local: "GR" for local in ["GD", "GF", "GS","GH","GI","GB","GS","GM"]}

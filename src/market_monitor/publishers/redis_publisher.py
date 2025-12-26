@@ -8,7 +8,6 @@ import pandas as pd
 import redis
 
 from market_monitor.publishers.base import MessageType
-from user_strategy.utils.trade_manager.flow_detector import Flow
 
 logger = logging.getLogger(__name__)
 
@@ -546,7 +545,7 @@ class RedisMessaging(RedisPublisher):
     def export_flow_detected(
             self,
             channel: str,
-            flow: Flow,
+            flow,
             skip_if_unchanged: bool = False
     ) -> None:
         """
