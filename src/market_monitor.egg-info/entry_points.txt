@@ -1,4 +1,4 @@
 [console_scripts]
-run-dashboard = market_monitor.gui.implementations.PyQt5Dashboard.run_dashboard:main
-run-mock = market_monitor.testing.run_mock:run_mock
-run-monitor = market_monitor.run_strategy:run_strategy
+run-dashboard = market_monitor.cli.run_dashboard:main
+run-mock = market_monitor.cli.run_mock:main
+run-strategy = market_monitor.cli.run_strategy:main

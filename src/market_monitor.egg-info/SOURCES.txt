@@ -8,6 +8,11 @@ src/market_monitor.egg-info/dependency_links.txt
 src/market_monitor.egg-info/entry_points.txt
 src/market_monitor.egg-info/requires.txt
 src/market_monitor.egg-info/top_level.txt
+src/market_monitor/cli/__init__.py
+src/market_monitor/cli/_base.py
+src/market_monitor/cli/run_dashboard.py
+src/market_monitor/cli/run_mock.py
+src/market_monitor/cli/run_strategy.py
 src/market_monitor/gui/__init__.py
 src/market_monitor/gui/implementations/GUI.py
 src/market_monitor/gui/implementations/__init__.py

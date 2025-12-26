@@ -85,7 +85,7 @@ class TestTradeManagerStrategy(StrategyUI):
 
         self.trade_manager.on_trade(trades)
         trades = self.trade_manager.get_trades(10)
-        self.redis_publisher.export_message(channel="trades_df", value=trades)
+        self.redis_publisher.export_message(channel="trades", value=trades)
 
     def on_stop(self):
         self.trade_manager.close()
