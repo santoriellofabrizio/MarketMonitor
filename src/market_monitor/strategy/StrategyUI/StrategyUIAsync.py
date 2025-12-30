@@ -198,7 +198,7 @@ class StrategyUIAsync(ABC):
                 logging.debug(f"Update HF calculation {time() - start:.4f}s")
 
             except Exception as e:
-                logging.info(f"Error while exporting data: {e}")
+                logging.info(f"Error in update HF: {e}")
             await asyncio.sleep(frequency)
 
     async def _async_check_trade_queue(self, *args, **kwargs):

@@ -7,19 +7,17 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 from dateutil.utils import today
-from sfm_return_adjustments_lib.ReturnAdjuster import ReturnAdjuster
 
 from analytics.adjustments import Adjuster
 from analytics.adjustments.dividend import DividendComponent
 from analytics.adjustments.fx_forward_carry import FxForwardCarryComponent
 from analytics.adjustments.fx_spot import FxSpotComponent
 from analytics.adjustments.ter import TerComponent
+from core.holidays.holiday_manager import HolidayManager
+from interface.bshdata import BshData
 from market_monitor.gui.implementations.GUI import GUI
 from market_monitor.publishers.redis_publisher import RedisMessaging
 from market_monitor.strategy.StrategyUI.StrategyUI import StrategyUI
-from core.holidays.holiday_manager import HolidayManager
-
-from interface.bshdata import BshData
 from user_strategy.equity.LiveQuoting.InputParamsQuoting import InputParamsQuoting, \
     DISMISSED_ETFS
 from user_strategy.equity.utils.DataProcessors.PCFControls import PCFControls
@@ -37,6 +35,7 @@ class EtfEquityPriceEngine(StrategyUI):
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
 
+        self.currencies = list(CURRENCY)
         self.gui_redis = RedisMessaging()
         self.gui_redis.export_static_data(ENGINE_PID=os.getpid())
 
@@ -122,24 +121,28 @@ class EtfEquityPriceEngine(StrategyUI):
         # self.etf_prices = self.prices_provider.get_hist_prices()
         # self.fx_prices = self.prices_provider.get_hist_fx_prices()
         start, end = today() - self.number_of_days * CustomBDay, today() - CustomBDay
+        self.holidays = HolidayManager()
+        start = self.holidays.subtract_business_days(today(), self.number_of_days)
+        end = self.holidays.previous_business_day(today())
+        days = self.holidays.get_business_days(start=start, end=end)
+        snapshot_time = time(16)
 
         self.API = BshData(config_path=r"C:\AFMachineLearning\Libraries\BshDataProvider\config\bshdata_config.yaml")
         self.fx_prices = self.API.market.get_daily_currency(id=[f"EUR{ccy}" for ccy in CURRENCY],
                                                             start=start,
                                                             end=end,
-                                                            snapshot_time=time(17),
-                                                            fallbacks=[{"source": "bloomberg"}])
+                                                            snapshot_time=snapshot_time,
+                                                            fallbacks=[{"source": "bloomberg"}]).reindex(days)
 
         self.etf_prices = self.API.market.get_daily_etf(id=self.instruments,
                                                         start=start,
                                                         end=end,
-                                                        snapshot_time=time(17))
+                                                        snapshot_time=snapshot_time,
+                                                        fallbacks=[{"source": "bloomberg", "market": "IM"}]).reindex(days)
 
-        _, fx_full = self.input_params.get_currency_data(self.instruments)
-        fx_full = fx_full.reset_index()
-
-        fx_composition = fx_full.pivot(index="index", columns="CURRENCY", values="WEIGHT").fillna(0)
-        fx_forward = fx_full.pivot(index="index", columns="CURRENCY", values="WEIGHT_FX_FORWARD").fillna(0)
+        # _, fx_full = self.input_params.get_currency_data(self.instruments)
+        fx_composition = self.API.info.get_fx_composition(self.instruments, "fx")
+        fx_forward = self.API.info.get_fx_composition(self.instruments, "fxfwrd")
 
         fx_forward_needed = fx_forward.columns.tolist()
 
@@ -151,12 +154,20 @@ class EtfEquityPriceEngine(StrategyUI):
         ter = self.API.info.get_ter(id=self.instruments)
         ter.update(self.input_params.ter_manual)
 
+        self.etf_prices.to_parquet("data/etf_prices.parquet")
+        self.fx_prices.to_parquet("data/fx_prices.parquet")
+        dividends.to_parquet("data/dividends.parquet")
+        ter.to_parquet("data/ter.parquet")
+        fx_composition.to_parquet("data/fx_composition.parquet")
+        fx_forward.to_parquet("data/fx_forward.parquet")
+        fx_forward_prices.to_parquet("data/fx_forward_prices.parquet")
+
         self.adjuster = (
-            Adjuster(self.etf_prices)
+            Adjuster(self.etf_prices, intraday=False)
             .add(TerComponent(ter))
             .add(FxSpotComponent(fx_composition, self.fx_prices))
             .add(FxForwardCarryComponent(fx_forward, fx_forward_prices, "1M", self.fx_prices))
-            .add(DividendComponent(dividends))
+            .add(DividendComponent(dividends, fx_prices=self.fx_prices))
         )
 
         self.corrected_return: Optional[pd.DataFrame] = pd.DataFrame(index=self.etf_prices.index,
@@ -167,8 +178,6 @@ class EtfEquityPriceEngine(StrategyUI):
         self.all_etf_plus_securities = list(set(self.all_securities + list(ISINS_ETF_EQUITY)))
         self.subscription_manager = SubscriptionManager(self.all_etf_plus_securities,
                                                         self.bloomberg_subscription_config_path)
-
-        self.return_adjustments = self.adjuster.get_adjustments_cumulative()
 
         # ----------------------------------------- PRICING ------------------------------------------------------------
 
@@ -238,7 +247,7 @@ class EtfEquityPriceEngine(StrategyUI):
 
         self.initialize_fx_prices()
         self.initialize_issuer_prices()
-        mid = self.market_data.get_mid_eur()
+        mid = self.market_data.get_mid()
         missing = mid[mid.isna()]
         for instr in missing.index:
             if self.ask_for_stock_drop:
@@ -366,8 +375,8 @@ class EtfEquityPriceEngine(StrategyUI):
             pd.Series: Series of md-prices for ETFs, Drivers, and FX.
         """
 
-        last_mid = self.market_data.get_mid_eur()
-        self.book_eur = self.market_data.get_book_eur()
+        last_mid = self.market_data.get_mid()
+        self.book_eur = self.market_data.get_data_field(["BID","ASK"])
         if self.mid_eur is not None:
             safe_last_book = last_mid.replace(0, np.nan)
             is_outlier = (
@@ -383,10 +392,8 @@ class EtfEquityPriceEngine(StrategyUI):
         else:
             self.mid_eur = last_mid
 
-        self.corrected_return = (self.get_live_returns().
-                                 add(self.get_live_fx_return_correction().T, fill_value=0).
-                                 add(self.return_adjustments.T, fill_value=0))
-
+        self.corrected_return = self.adjuster.clean_returns(cumulative=True, fx_prices=last_mid[self.currencies],
+                                                            live_prices=last_mid).T
         # Publish returns
         for i in self.return_to_publish:
             self.gui_redis.export_message(f"market:{i}D_return",

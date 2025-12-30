@@ -4,7 +4,7 @@ from typing import List, Optional
 
 import pandas as pd
 
-from sfm_pcf_db_library.PCFDBManager import PCFDBManager
+
 from user_strategy.utils.pricing_models.AggregationFunctions import forecast_aggregation
 from user_strategy.utils.InputParams import InputParams
 from market_monitor.live_data_hub.real_time_data_hub import EUR_SYNONYM
@@ -44,7 +44,7 @@ class InputParamsQuoting(InputParams):
         self._isin_nav = []
         self.isins = []
         self._isin_quoting = []
-        self._pcf_db_manager: Optional[PCFDBManager] = None
+        # self._pcf_db_manager: Optional[PCFDBManager] = None
         self.forecast_aggregator_driver = None
         self.forecast_aggregator_cluster = None
         self.file_path = file_path
@@ -370,8 +370,8 @@ class InputParamsQuoting(InputParams):
 
         conn.close()
 
-    def _initialize_pcf_db_manager(self):
-        self._pcf_db_manager = PCFDBManager()
+    # def _initialize_pcf_db_manager(self):
+    #     self._pcf_db_manager = PCFDBManager()
 
     def _get_currency_data_oracle(self, isins: List[str]) -> (pd.DataFrame, pd.DataFrame):
         if self._pcf_db_manager is None:

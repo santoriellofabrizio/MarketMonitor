@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 2
 requires-python = ">=3.11"
 resolution-markers = [
     "python_full_version >= '3.12' and sys_platform == 'win32'",
@@ -67,6 +67,14 @@ dependencies = [
 ]
 wheels = [
     { path = "cffi-2.0.0-cp311-cp311-win_amd64.whl" },
+]
+
+[[package]]
+name = "colorama"
+version = "0.4.6"
+source = { registry = '\\nas1bes\AreaFinanza/SHARE/PROGETTI ML/Python/python3_11/python packages' }
+wheels = [
+    { path = "colorama-0.4.6-py2.py3-none-any.whl" },
 ]
 
 [[package]]
@@ -148,6 +156,7 @@ dependencies = [
     { name = "ruamel-yaml", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "scipy", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "sfm-timescaledb-queries", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "tqdm", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "watchdog", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "xlwings", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
@@ -171,6 +180,7 @@ requires-dist = [
     { name = "ruamel-yaml", specifier = ">=0.18.6" },
     { name = "scipy", specifier = ">=1.16.0" },
     { name = "sfm-timescaledb-queries", specifier = ">=1.0.72117" },
+    { name = "tqdm", specifier = ">=4.64.0" },
     { name = "watchdog", specifier = ">=2.2.1" },
     { name = "xlwings", specifier = ">=0.31.4" },
 ]
@@ -552,6 +562,17 @@ version = "1.17.0"
 source = { registry = '\\nas1bes\AreaFinanza/SHARE/PROGETTI ML/Python/python3_11/python packages' }
 wheels = [
     { path = "six-1.17.0-py2.py3-none-any.whl" },
+]
+
+[[package]]
+name = "tqdm"
+version = "4.64.0"
+source = { registry = '\\nas1bes\AreaFinanza/SHARE/PROGETTI ML/Python/python3_11/python packages' }
+dependencies = [
+    { name = "colorama", marker = "sys_platform == 'win32'" },
+]
+wheels = [
+    { path = "tqdm-4.64.0-py2.py3-none-any.whl" },
 ]
 
 [[package]]

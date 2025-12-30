@@ -5,7 +5,7 @@ import pandas as pd
 import datetime as dt
 
 from pandas._libs.tslibs.offsets import BDay
-from xbbg.blp import bdp
+
 
 from user_strategy.equity.utils.DataProcessors.Classifier import Classifier
 from user_strategy.equity.utils.SQLUtils.PCFDBManager import PCFDBManager
@@ -277,10 +277,11 @@ class PCFProcessor:
 
 @memoryPCF.cache
 def download_future_multiplier(future: str):
-    flds = "price_multiplier"
-    mult = bdp(future, flds).loc[future, flds]
-    logging.info(f"multiplier of {future}: {mult}")
-    return mult
+    pass
+    # flds = "price_multiplier"
+    # mult = bdp(future, flds).loc[future, flds]
+    # logging.info(f"multiplier of {future}: {mult}")
+    # return mult
 
 if __name__ == "__main__":
     isins = ISINS_ETF_EQUITY

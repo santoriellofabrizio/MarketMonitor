@@ -16,6 +16,7 @@ Requires-Dist: redis>=6.2.0
 Requires-Dist: ruamel-yaml>=0.18.6
 Requires-Dist: scipy>=1.16.0
 Requires-Dist: sfm-timescaledb-queries>=1.0.72117
+Requires-Dist: tqdm>=4.64.0
 Requires-Dist: watchdog>=2.2.1
 Requires-Dist: xlwings>=0.31.4
 
