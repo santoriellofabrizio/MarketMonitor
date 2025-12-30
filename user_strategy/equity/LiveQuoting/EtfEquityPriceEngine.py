@@ -57,7 +57,7 @@ class EtfEquityPriceEngine(StrategyUI):
         self.position: Optional[pd.Series] = None
         self.live_weights: Optional[pd.Series] = None
         self.threshold_exceeded_instruments = set()
-        self.return_to_publish: list = [1, 2, 3, 4]
+        self.return_to_publish: list = [1, 2, 3, 4, 5, 6, 7, 8]
         self._cumulative_returns: bool = True
 
         self.fx_list: list | None = None
@@ -128,6 +128,10 @@ class EtfEquityPriceEngine(StrategyUI):
         snapshot_time = time(16)
 
         self.API = BshData(config_path=r"C:\AFMachineLearning\Libraries\BshDataProvider\config\bshdata_config.yaml")
+
+        fx_composition = self.API.info.get_fx_composition(self.instruments, fx_fxfwrd="fx")
+        fx_forward =  self.API.info.get_fx_composition(self.instruments, fx_fxfwrd="fxfwrd")
+
         self.fx_prices = self.API.market.get_daily_currency(id=[f"EUR{ccy}" for ccy in CURRENCY],
                                                             start=start,
                                                             end=end,
@@ -141,8 +145,7 @@ class EtfEquityPriceEngine(StrategyUI):
                                                         fallbacks=[{"source": "bloomberg", "market": "IM"}]).reindex(days)
 
         # _, fx_full = self.input_params.get_currency_data(self.instruments)
-        fx_composition = self.API.info.get_fx_composition(self.instruments, "fx")
-        fx_forward = self.API.info.get_fx_composition(self.instruments, "fxfwrd")
+
 
         fx_forward_needed = fx_forward.columns.tolist()
 
@@ -153,14 +156,6 @@ class EtfEquityPriceEngine(StrategyUI):
         dividends = self.API.info.get_dividends(id=self.instruments)
         ter = self.API.info.get_ter(id=self.instruments)
         ter.update(self.input_params.ter_manual)
-
-        self.etf_prices.to_parquet("data/etf_prices.parquet")
-        self.fx_prices.to_parquet("data/fx_prices.parquet")
-        dividends.to_parquet("data/dividends.parquet")
-        ter.to_parquet("data/ter.parquet")
-        fx_composition.to_parquet("data/fx_composition.parquet")
-        fx_forward.to_parquet("data/fx_forward.parquet")
-        fx_forward_prices.to_parquet("data/fx_forward_prices.parquet")
 
         self.adjuster = (
             Adjuster(self.etf_prices, intraday=False)
