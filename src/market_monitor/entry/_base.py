@@ -53,7 +53,7 @@ def _get_config_choices() -> List[Dict[str, str]]:
     # Prima gli alias (sono shortcut comuni)
     for alias, config_name in sorted(aliases.items()):
         desc = _read_description(configs.get(config_name))
-        label = f"[alias] {alias} → {config_name}"
+        label = f"[alias] {alias} -> {config_name}"
         if desc:
             label += f"  ({desc})"
         choices.append({"name": label, "value": alias})

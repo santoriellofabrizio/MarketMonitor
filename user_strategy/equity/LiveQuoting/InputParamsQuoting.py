@@ -34,7 +34,7 @@ DISMISSED_ETFS = ("LU2037749822",
 
 class InputParamsQuoting(InputParams):
 
-    def __init__(self, file_path, path_db, **kwargs):
+    def __init__(self, path_db, **kwargs):
 
         super().__init__()
 
@@ -47,7 +47,6 @@ class InputParamsQuoting(InputParams):
         # self._pcf_db_manager: Optional[PCFDBManager] = None
         self.forecast_aggregator_driver = None
         self.forecast_aggregator_cluster = None
-        self.file_path = file_path
         self.r2_cluster = None
         self.r2_cluster_index = None
         self.logger = logging.getLogger()
@@ -59,33 +58,6 @@ class InputParamsQuoting(InputParams):
         self._load_inputs_db(path_db)
         # self._load_inputs_excel(file_path)
 
-
-    @property
-    def lambda_hedging(self):
-        return self._lambda_hedging
-
-    @lambda_hedging.setter
-    def lambda_hedging(self, value: float):
-        if value < 0:
-            logger.warning("lambda_hedging must be positive")
-            return
-        self._lambda_hedging = value
-
-    @lambda_hedging.getter
-    def lambda_hedging(self):
-        return self._lambda_hedging
-
-    @property
-    def beta_driver(self):
-        return self._beta_driver
-
-    @beta_driver.setter
-    def beta_driver(self, value: pd.DataFrame):
-        original_etfs = set(value.index)
-        value = value.drop(DISMISSED_ETFS, errors='ignore')
-        if dropped_etfs := original_etfs - set(value.index):
-            logger.info(f"Dropped dismissed ETFs: {', '.join(dropped_etfs)}")
-        self._beta_driver = value
 
     @property
     def beta_cluster(self):
@@ -196,27 +168,6 @@ class InputParamsQuoting(InputParams):
             except KeyError:
                 self.logger.error(f"forecast aggregator for {key} not implemented.")
 
-    def _load_inputs_excel(self, file_path: str) -> None:
-        """
-        Load anagraphic data from an Excel file into class attributes.
-
-        The data loaded includes:
-
-            - Beta driver
-            - Beta cluster
-            - Currency exposure
-
-        Args:
-            file_path (str): Path to the Excel file containing the data.
-        """
-        inputs = {sheet_name: df for sheet_name, df in pd.read_excel(file_path, sheet_name=None, index_col=0).items()}
-        # + ["BETA_CLUSTER","BETA_CLUSTER_INDEX"]
-        for params in ["ISIN_INPUTS", "CURRENCY_EXPOSURE", "ANAGRAPHIC"]:
-            if params not in inputs.keys():
-                logger.warning(f"sheet {params} not found in the Excel sheet {file_path}")
-            else:
-                setattr(self, params.lower(), inputs[params])
-
     @property
     def isin_inputs(self):
         return self._isin_inputs
@@ -230,21 +181,6 @@ class InputParamsQuoting(InputParams):
                 logging.warning(f"isin_{group} columns not found in ISINS_INPUT")
             else:
                 setattr(self, f"isin_{group.lower()}", value[group].dropna())
-
-    @property
-    def isin_driver(self):
-        return self._isin_driver
-
-    @isin_driver.setter
-    def isin_driver(self, isins: list | pd.Series):
-        if isinstance(isins, pd.Series):
-            isins = isins[isins == True].index.tolist()
-        for isin in isins:
-            if isin in DISMISSED_ETFS:
-                logging.warning(f"{isin} is Dismissed")
-            else:
-                if isin not in self.isins: self.isins.append(isin)
-        self._isin_driver = isins
 
     @property
     def isin_quoting(self) -> list:

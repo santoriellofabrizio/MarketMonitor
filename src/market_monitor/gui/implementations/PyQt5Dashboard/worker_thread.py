@@ -347,7 +347,7 @@ class RedisPubSubThread(BaseDashboardThread):
 
         AGGIORNAMENTO: Lavora con messaggi normalizzati.
         """
-        # Caso 1: Lista di messaggi → process batch
+        # Caso 1: Lista di messaggi -> process batch
         if isinstance(msg, list):
             data_frames = []
 

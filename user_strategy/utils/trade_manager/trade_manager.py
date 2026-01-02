@@ -22,7 +22,7 @@ class TradeManager:
     # Configurabili via kwargs
     DEFAULT_MAX_TIME_TO_MATCH_SECONDS = 10.0
     DEFAULT_AUTO_SAVE_INTERVAL = 500
-    DEFAULT_MAX_CACHE_SIZE = 10000
+    DEFAULT_MAX_CACHE_SIZE = 50_000
 
     def __init__(
             self,
@@ -163,7 +163,7 @@ class TradeManager:
         if snapshot:
             snapshot_time, mid_prices = snapshot
             mid = mid_prices.get(trade.isin)
-            logging.debug(f"matched side: snapshot time: {snapshot_time}, trade_time: {trade.timestamp}")
+            logger.info(f"matched side: snapshot time: {snapshot_time}, trade_time: {trade.timestamp}")
             if mid is not None:
                 trade.side = "bid" if trade.price < mid else "ask"
 

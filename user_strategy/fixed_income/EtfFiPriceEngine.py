@@ -7,6 +7,8 @@ import pandas as pd
 from dateutil.utils import today
 import datetime as dt
 
+from core.holidays.holiday_manager import HolidayManager
+from interface.bshdata import BshData
 from market_monitor.publishers.redis_publisher import RedisMessaging
 from market_monitor.strategy.StrategyUI.StrategyUI import StrategyUI
 from user_strategy.utils import CustomBDay
@@ -168,6 +170,40 @@ class EtfFiPriceEngine(StrategyUI):
                                                                                                )
                                                    )
         self.gui_redis = RedisMessaging()
+
+        self.api = BshData(r"C:\AFMachineLearning\Libraries\BshDataProviderDeveloper\config\bshdata_config.yaml")
+        today_ = today()
+        self.holidays = HolidayManager()
+
+        start, end = (self.holidays.add_business_days(today_, - self.input_params.number_of_days),
+                      self.holidays.previous_business_day(today_))
+
+        snipping = self.input_params.price_snipping_time
+
+        self.historical_prices: pd.DataFrame = self.api.market.get_daily_etf(id=self.etf_isins,
+                                                                             start=start, end=end,
+                                                                             snapshot_time=snipping,
+                                                                             fallbacks=[{"source": "bloomberg",
+                                                                                         "market": mkt}
+                                                                                        for mkt in ["IM", "FP", "NA"]])
+
+        self.historical_fx: pd.DataFrame = self.api.market.get_daily_currency(id=self.input_params.currencies_EUR_ccy,
+                                                                              start=start,
+                                                                              end=end,
+                                                                              snapshot_time=snipping,
+                                                                              fallbacks=[{"source": "bloomberg"}])
+
+        ter = self.api.info.get_ter(id=self.etf_isins)
+        dividends = self.api.info.get_dividends(id=self.etf_isins, start=start)
+        ytm = self.api.info.get_etp_fields(id=self.etf_isins,
+                                           fields="ytm",
+                                           source="timescale",
+                                           start=start,
+                                           end=end)
+
+        fx_composition, fx_forward_composition = self.input_params.currency_weights, self.currency_exposure
+
+
         self.on_start_strategy()
 
     def on_market_data_setting(self) -> None:
@@ -216,7 +252,8 @@ class EtfFiPriceEngine(StrategyUI):
                                                 instruments_to_download_eod=self.index_drivers + self.irs_contracts_list + self.irp_contracts_list,
                                                 additional_contracts=additional_contracts,
                                                 trading_currency=self.trading_currency)
-        self.historical_prices: pd.DataFrame = self.prices_provider.get_hist_prices()
+
+        self.historical_prices: pd.DataFrame = self.api.market.get_historical_prices()
         self.historical_fx: pd.DataFrame = self.prices_provider.get_hist_fx_prices()
 
         self.irp_manager.save_historical_prices(self.historical_prices)

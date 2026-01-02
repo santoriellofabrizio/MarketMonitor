@@ -2,7 +2,7 @@
 RTData - Refactored con API pulita e corretta
 
 Correzioni:
-- index_data → store (naming consistente)
+- index_data -> store (naming consistente)
 - Nessun accesso a membri privati degli store (_market_data, _last_update, etc.)
 - Routing chiaro: "market", "state", "events", "blob" (NO "redis")
 - Nessuna validazione valori (non è competenza di RTData)
@@ -43,7 +43,7 @@ EUR_SYNONYM = ["EUREUR", "EUREUR CURNCY"]
 
 
 def handle_currency_conversion(func):
-    """Decorator to handle GBP/ILS conversion (GBP → GBp, ILS → ILs)"""
+    """Decorator to handle GBP/ILS conversion (GBP -> GBp, ILS -> ILs)"""
 
     def wrapper(*args, **kwargs):
         result = func(*args, **kwargs)
@@ -94,7 +94,8 @@ class RTData:
                  subscription_dict: Optional[Dict] = None,
                  instruments_status: Optional[Dict] = None,
                  currency_information: Optional[Dict[str, str]] = None,
-                 subscription_service: Optional[SubscriptionService] = None):
+                 subscription_service: Optional[SubscriptionService] = None,
+                 **kwargs):
         """Initialize RTData"""
         self.logger = logging.getLogger(__name__)
         self.locker = locker
@@ -403,7 +404,7 @@ class RTData:
             else:
                 converted[isin] = price  # Fallback: no conversion
 
-        # Invert FX rates (CCY/EUR → EUR/CCY)
+        # Invert FX rates (CCY/EUR -> EUR/CCY)
         fx_inverted = {ccy: 1.0 / rate for ccy, rate in fx_rates.items() if rate != 0}
 
         # Combine
@@ -486,7 +487,7 @@ class RTData:
         Get currency information for all instruments.
 
         Returns:
-            Dict mapping ISIN → currency code (e.g., {"ISIN1": "USD"})
+            Dict mapping ISIN -> currency code (e.g., {"ISIN1": "USD"})
         """
         return self._currency_information.copy()
 
@@ -496,7 +497,7 @@ class RTData:
         Set currency information for instruments.
 
         Args:
-            value: Dict or Series mapping ISIN → currency code
+            value: Dict or Series mapping ISIN -> currency code
 
         Example:
             >>> rtdata = RTData()

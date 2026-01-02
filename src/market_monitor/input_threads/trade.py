@@ -20,6 +20,7 @@ class TradeType(Enum):
     MARKET = 1
     OWN = 2
 
+
 class MyEventHandler(FileSystemEventHandler):
 
     def __init__(self, trade_thread: 'trade'):
@@ -43,16 +44,16 @@ class MyEventHandler(FileSystemEventHandler):
                     self.trade_thread.on_start_of_day()
                     return
             except Exception as e:
-                logging.error(f"Error while getting market trades: {e}")
+                logger.error(f"Error while getting market trades: {e}")
                 return
             if not market_trades.empty:
                 market_trades.set_index("ticker", inplace=True)
                 self.trade_thread.put_in_queue(TradeType.MARKET, market_trades)
-                logging.info(f"New market trades added to the queue: {market_trades.index.tolist()}")
+                logger.info(f"New market trades added to the queue: {market_trades.index.tolist()}")
             if not own_trades.empty:
                 own_trades.set_index("ticker", inplace=True)
                 self.trade_thread.put_in_queue(TradeType.OWN, own_trades)
-                logging.info(f"New own trades added to the queue: {own_trades.index.tolist()}")
+                logger.info(f"New own trades added to the queue: {own_trades.index.tolist()}")
 
 
 class TradeThread(threading.Thread):
@@ -93,15 +94,15 @@ class TradeThread(threading.Thread):
                 if not own_trades.empty:
                     self.put_in_queue(TradeType.OWN, own_trades)
             except KeyError as e:
-                logging.warning(f"own_trades table is Empty. Please update market trades viewer to the latest one.")
+                logger.warning(f"own_trades table is Empty. Please update market trades viewer to the latest one.")
 
-            logging.info("All trades added to the queues at the start of the day.")
+            logger.info("All trades added to the queues at the start of the day.")
             self._is_initialized = True
         except Exception as e:
-            logging.error(f"Error while getting market trades on start_of_day: {e}")
+            logger.error(f"Error while getting market trades on start_of_day: {e}")
 
     def run(self):
-        logging.info(f"Starting observer for path: {self.path}")
+        logger.info(f"Starting observer for path: {self.path}")
         path = Path(self.path).parent if self.path.endswith(".db") else self.path
 
         self.observer.schedule(self.event_handler, str(path), recursive=False)
@@ -123,13 +124,13 @@ class TradeThread(threading.Thread):
                 # Quando usciamo dal loop, puliamo tutto
         self.observer.stop()
         self.observer.join()
-        logging.info("TradeThread stopped.")
+        logger.info("TradeThread stopped.")
 
     def stop(self):
         self.running = True
         self.observer.stop()
         self.observer.join()
-        logging.info("Observer stopped.")
+        logger.info("Observer stopped.")
         if self.asynchronous:
             self.loop.stop()
 
@@ -164,8 +165,8 @@ class SqliteTradesConnection:
 
         # Se il logger non ha già un handler, aggiungi uno per stampare i messaggi di warning nella console
         if not logger.hasHandlers():
-            handler = logging.StreamHandler()
-            formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+            handler = logger.StreamHandler()
+            formatter = logger.Formatter('%(asctime)s - %(levelname)s - %(message)s')
             handler.setFormatter(formatter)
             logger.addHandler(handler)
 

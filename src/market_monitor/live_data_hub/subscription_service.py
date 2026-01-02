@@ -15,6 +15,7 @@ from market_monitor.live_data_hub.live_subscription import (
 SECURITY_TO_IGNORE = ["GBp", "OTHEREQUIEUR", "ILs"]
 EUR_SYNONYM = ["EUREUR", "EUREUR CURNCY"]
 
+logger = logging.getLogger(__name__)
 
 class SubscriptionService:
     """
@@ -86,7 +87,7 @@ class SubscriptionService:
         group: Optional[str] = None,
     ) -> BloombergSubscription:
         if not self._validate_subscription_target(id):
-            raise ValueError(f"Invalid subscription target: {id}")
+            logger.warning("Subscription %s invalid", id)
 
         bloomberg_sub = BloombergSubscription(
             id=id,

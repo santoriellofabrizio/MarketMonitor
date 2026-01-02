@@ -18,6 +18,8 @@ from market_monitor.input_threads.trade import TradeType
 from market_monitor.live_data_hub.real_time_data_hub import RTData
 from market_monitor.utils.config_observer import ConfigChangeHandler
 
+logger = logging.getLogger(__name__)
+
 
 class StrategyUIAsync(ABC):
     """
@@ -39,8 +41,7 @@ class StrategyUIAsync(ABC):
           kwargs (dict): Additional configuration arguments.
     """
 
-    def __init__(self, q_trade: None | Queue | asyncio.Queue = None, market_data: RTData = None,
-                 gui: GUI = None, storage: None = None, **kwargs):
+    def __init__(self, q_trade: None | Queue | asyncio.Queue = None, market_data: RTData = None, **kwargs):
         """
          Initializes an instance of StrategyUIAsync.rst with the necessary components.
 
@@ -51,7 +52,6 @@ class StrategyUIAsync(ABC):
              **kwargs: Additional configuration arguments. Read config for other info's.
          """
         self.input_params = None
-        logging.getLogger()
         self.q_trade: None | Queue | asyncio.Queue = q_trade
         self.synchronous_trade_handling: bool = True
         self.GUIs: dict[str, GUI] = {}
@@ -61,7 +61,7 @@ class StrategyUIAsync(ABC):
 
     def start(self):
         """ Starts the strategy"""
-        logging.debug("Entering start method.")
+        logger.debug("Entering start method.")
         asyncio.run(self._async_run())
 
     def _schedule_tasks(self) -> list[Coroutine[Any, Any, None]] | None:
@@ -77,7 +77,7 @@ class StrategyUIAsync(ABC):
         try:
             self.synchronous_trade_handling = self.kwargs["tasks"]["trade"]["synchronous"]
         except KeyError:
-            logging.error("please add synchornous (bool) in tasks->trade config")
+            logger.error("please add synchornous (bool) in tasks->trade config")
 
         task_dict = {
             "update_LF": self._async_update_LF,
@@ -90,10 +90,10 @@ class StrategyUIAsync(ABC):
             return [task_dict[task](**params) for task, params in self.kwargs["tasks"].items() if
                     params.pop("activate")]
         except KeyError as e:
-            logging.critical(f"task not implemented. available are {', '.join(task_dict.keys())}.\n {e}")
+            logger.critical(f"task not implemented. available are {', '.join(task_dict.keys())}.\n {e}")
             raise KeyboardInterrupt
         except Exception as e:
-            logging.critical(f"Unhandled error in scheduling tasks.  {e}")
+            logger.critical(f"Unhandled error in scheduling tasks.  {e}")
 
     async def _async_run(self):
         """
@@ -103,14 +103,14 @@ class StrategyUIAsync(ABC):
         that the market data book is initialized before proceeding.
         """
 
-        logging.debug("Entering _async_run method.")
+        logger.debug("Entering _async_run method.")
         if await self._wait_for_book_initialization():
             print("started!")
             tasks = self._schedule_tasks()
             self._on_other_thread_start()
             await asyncio.gather(*tasks, return_exceptions=True)
         else:
-            logging.error("Book initialization failed.")
+            logger.error("Book initialization failed.")
 
     async def _async_dynamic_params_observer(self, dynamic_config_path: str, frequency: float):
         """
@@ -120,7 +120,7 @@ class StrategyUIAsync(ABC):
             dynamic_config_path: Path al file di configurazione
             frequency: Frequenza di controllo (in secondi)
         """
-        logging.debug("Starting config observer")
+        logger.debug("Starting config observer")
 
         event_handler = ConfigChangeHandler(
             dynamic_config_path=dynamic_config_path,
@@ -138,7 +138,7 @@ class StrategyUIAsync(ABC):
             while not self.running:
                 await asyncio.sleep(frequency)
         except Exception as e:
-            logging.error(f"Error in config observer: {e}")
+            logger.error(f"Error in config observer: {e}")
         finally:
             observer.stop()
             observer.join()
@@ -152,12 +152,12 @@ class StrategyUIAsync(ABC):
             old_value: Valore precedente
             new_value: Nuovo valore
         """
-        logging.info(f"Handling config change: {key} = {new_value} (was {old_value})")
+        logger.info(f"Handling config change: {key} = {new_value} (was {old_value})")
 
         try:
             self.on_config_change(key, old_value, new_value)
         except Exception as e:
-            logging.error(f"Error handling config change for {key}: {e}", exc_info=True)
+            logger.error(f"Error handling config change for {key}: {e}", exc_info=True)
 
     def on_config_change(self, key: str, old_value: Any, new_value: Any):
         """
@@ -190,15 +190,15 @@ class StrategyUIAsync(ABC):
         Returns:
             None: This method does not return a value.
         """
-        logging.debug("Entering _async_update_HF method.")
+        logger.debug("Entering _async_update_HF method.")
         while not self.running:
             start = time()
             try:
                 self.update_HF()
-                logging.debug(f"Update HF calculation {time() - start:.4f}s")
+                logger.debug(f"Update HF calculation {time() - start:.4f}s")
 
             except Exception as e:
-                logging.info(f"Error in update HF: {e}")
+                logger.info(f"Error in update HF: {e}")
             await asyncio.sleep(frequency)
 
     async def _async_check_trade_queue(self, *args, **kwargs):
@@ -228,11 +228,11 @@ class StrategyUIAsync(ABC):
                None: This method does not return a value.
            """
         while not self.running:
-            logging.debug("Entering _check_trade_queue_on_event method.")
+            logger.debug("Entering _check_trade_queue_on_event method.")
             trade_type, item = await self.q_trade.get()
             start = time()
             self._on_trade(trade_type, item)
-            logging.debug(f"trade elaborated {time() - start:.4f}s")
+            logger.debug(f"trade elaborated {time() - start:.4f}s")
 
     async def _check_trade_queue_on_time(self, frequency, *args, **kwargs):
         """
@@ -246,33 +246,33 @@ class StrategyUIAsync(ABC):
         Returns:
             None: This method does not return a value.
         """
-        logging.debug("Entering _sync_check_queue_update method.")
+        logger.debug("Entering _sync_check_queue_update method.")
         while not self.running:
-            logging.debug("Entering _check_trade_queue_on_time method.")
+            logger.debug("Entering _check_trade_queue_on_time method.")
             market_trades, own_trades = [], []
             batch_size = 0
             while not self.q_trade.empty():
                 batch_size += 1
                 trade_type, item = self.q_trade.get_nowait()
-                logging.debug(f"Got trade from the queue_trade. batch: {batch_size}")
+                logger.debug(f"Got trade from the queue_trade. batch: {batch_size}")
                 if isinstance(item, pd.DataFrame):
                     if trade_type == TradeType.MARKET:
                         market_trades.append(item)
                     elif trade_type == TradeType.OWN:
                         own_trades.append(item)
                     else:
-                        logging.error(f"Unknown trade type: {trade_type}")
+                        logger.error(f"Unknown trade type: {trade_type}")
             try:
                 if len(market_trades):
                     start = time()
                     self._on_trade(TradeType.MARKET, pd.concat(market_trades))
-                    logging.debug(f"Task market trades completed ({time() - start:.4f}s)")
+                    logger.debug(f"Task market trades completed ({time() - start:.4f}s)")
                 if len(own_trades):
                     start = time()
                     self._on_trade(TradeType.OWN, pd.concat(own_trades))
-                    logging.debug(f"Task own trades completed ({time() - start:.4f}s)")
+                    logger.debug(f"Task own trades completed ({time() - start:.4f}s)")
             except Exception as e:
-                logging.error(f"Task trade: error in processing trades")
+                logger.error(f"Task trade: error in processing trades")
             await asyncio.sleep(frequency)
 
     async def _async_update_LF(self, frequency):
@@ -285,15 +285,15 @@ class StrategyUIAsync(ABC):
         Returns:
             None: This method does not return a value.
         """
-        logging.debug("Entering _async_update_LF method.")
+        logger.debug("Entering _async_update_LF method.")
         while not self.running:
             try:
                 start = time()
-                logging.debug("entering _async_update_LF")
+                logger.debug("entering _async_update_LF")
                 self.update_LF()
-                logging.debug(f"_async_update_LF check ({time() - start:.4f})s")
+                logger.debug(f"_async_update_LF check ({time() - start:.4f})s")
             except Exception as e:
-                logging.error(f"Error during periodic check: {e}")
+                logger.error(f"Error during periodic check: {e}")
             await asyncio.sleep(frequency)
 
     async def _wait_for_book_initialization(self):
@@ -302,10 +302,10 @@ class StrategyUIAsync(ABC):
         Returns:
             bool: True se l'inizializzazione è riuscita, False altrimenti.
         """
-        logging.debug("Entering _wait_for_book_initialization method.")
+        logger.debug("Entering _wait_for_book_initialization method.")
         while not self.wait_for_book_initialization():
             await asyncio.sleep(3)
-            logging.info("Waiting for _real_time_data initialization...")
+            logger.info("Waiting for _real_time_data initialization...")
         self.on_book_initialized()
         return True
 
@@ -316,7 +316,7 @@ class StrategyUIAsync(ABC):
         """
         Arresta la strategia e chiude la gui.
         """
-        logging.debug("Entering shutdown method.")
+        logger.debug("Entering shutdown method.")
         self.running = True  # Segnala la chiusura agli altri cicli
 
         try:
@@ -332,10 +332,10 @@ class StrategyUIAsync(ABC):
 
             await asyncio.gather(*tasks, return_exceptions=True)
 
-            logging.info("Shutdown completo.")
+            logger.info("Shutdown completo.")
 
         except Exception as e:
-            logging.error(f"Errore nello shutdown: {e}", exc_info=True)
+            logger.error(f"Errore nello shutdown: {e}", exc_info=True)
 
     def set_gui(self,gui_name: str, gui: GUI):
         """ sets gui for the strategy"""
@@ -358,20 +358,20 @@ class StrategyUIAsync(ABC):
 
         try:
             start = time()
-            logging.debug("Entering _on_trade method.")
+            logger.debug("Entering _on_trade method.")
             if trade_type == TradeType.MARKET:
                 self.on_trade(trade)
             elif trade_type == TradeType.OWN:
                 self._on_my_trade(trade)
             else:
-                logging.error(f"Invalid trade_type: {trade_type}")
-            logging.debug(f"_on_trade takes ({time() - start:.4f})s")
+                logger.error(f"Invalid trade_type: {trade_type}")
+            logger.debug(f"_on_trade takes ({time() - start:.4f})s")
         except Exception as e:
-            logging.error(f"error in _on_trade method: {e}")
+            logger.error(f"error in _on_trade method: {e}")
         return
 
     def _on_my_trade(self, trade: pd.DataFrame):
-        logging.info("Entering on_my_trade method.")
+        logger.info("Entering on_my_trade method.")
         self.on_my_trade(trade)
 
     def _on_market_data_setting(self):
@@ -384,7 +384,7 @@ class StrategyUIAsync(ABC):
 
     def _on_start_strategy(self):
 
-        logging.debug("Entering _on_start_monitor method.")
+        logger.debug("Entering _on_start_monitor method.")
         self.on_start_strategy()
 
     @abstractmethod
@@ -399,7 +399,7 @@ class StrategyUIAsync(ABC):
         Returns:
             None: This method does not return a value.
         """
-        logging.debug("Entering update_on_time method.")
+        logger.debug("Entering update_on_time method.")
         return None, None, None
 
     def update_LF(self, *args, **kwargs):
@@ -413,7 +413,7 @@ class StrategyUIAsync(ABC):
         Returns:
             None: This method does not return a value.
         """
-        logging.debug("Entering periodic_check method.")
+        logger.debug("Entering periodic_check method.")
         pass
 
     def export_data(self, *args, **kwargs):
@@ -422,7 +422,7 @@ class StrategyUIAsync(ABC):
     def stop(self):
         """Stop non bloccante."""
         self.on_stop()
-        logging.debug("Entering stop method.")
+        logger.debug("Entering stop method.")
 
         # Se hai un event loop attivo
         if hasattr(self, '_loop') and self._loop and self._loop.is_running():
@@ -433,7 +433,7 @@ class StrategyUIAsync(ABC):
             try:
                 asyncio.run(self.shutdown())
             except RuntimeError as e:
-                logging.warning(f"Impossibile eseguire shutdown async: {e}")
+                logger.warning(f"Impossibile eseguire shutdown async: {e}")
 
     def on_start_strategy(self):
         """Callback invoked when a strategy is started"""

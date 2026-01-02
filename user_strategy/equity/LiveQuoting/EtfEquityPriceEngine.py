@@ -2,7 +2,7 @@ import logging
 import os
 import time
 from collections import deque
-from datetime import datetime, time
+from datetime import datetime, time, date
 from typing import Optional
 import numpy as np
 import pandas as pd
@@ -35,7 +35,7 @@ class EtfEquityPriceEngine(StrategyUI):
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
 
-        self.currencies = list(CURRENCY)
+        self.currencies = [f"EUR{c}" for c in CURRENCY if c != "EUR"]
         self.gui_redis = RedisMessaging()
         self.gui_redis.export_static_data(ENGINE_PID=os.getpid())
 
@@ -129,8 +129,10 @@ class EtfEquityPriceEngine(StrategyUI):
 
         self.API = BshData(config_path=r"C:\AFMachineLearning\Libraries\BshDataProvider\config\bshdata_config.yaml")
 
-        fx_composition = self.API.info.get_fx_composition(self.instruments, fx_fxfwrd="fx")
-        fx_forward =  self.API.info.get_fx_composition(self.instruments, fx_fxfwrd="fxfwrd")
+        fx_composition = self.API.info.get_fx_composition(self.instruments, fx_fxfwrd="fx",
+                                                          reference_date=date(2025,12,18))
+        fx_forward = self.API.info.get_fx_composition(self.instruments, fx_fxfwrd="fxfwrd",
+                                                      reference_date=date(2025,12,18))
 
         self.fx_prices = self.API.market.get_daily_currency(id=[f"EUR{ccy}" for ccy in CURRENCY],
                                                             start=start,
@@ -145,7 +147,6 @@ class EtfEquityPriceEngine(StrategyUI):
                                                         fallbacks=[{"source": "bloomberg", "market": "IM"}]).reindex(days)
 
         # _, fx_full = self.input_params.get_currency_data(self.instruments)
-
 
         fx_forward_needed = fx_forward.columns.tolist()
 
@@ -169,7 +170,7 @@ class EtfEquityPriceEngine(StrategyUI):
                                                                      columns=self.etf_prices.columns,
                                                                      dtype=float)
         self.bloomberg_subscription_config_path = kwargs.get("bloomberg_subscription_config_path", None)
-        self.all_securities = list(set(self.securities_list) | CURRENCY)
+        self.all_securities = list(set(self.securities_list) | {f"EUR{ccy}" for ccy in CURRENCY})
         self.all_etf_plus_securities = list(set(self.all_securities + list(ISINS_ETF_EQUITY)))
         self.subscription_manager = SubscriptionManager(self.all_etf_plus_securities,
                                                         self.bloomberg_subscription_config_path)
