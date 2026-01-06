@@ -94,15 +94,15 @@ class EtfEquityLiveAnalysis(StrategyUI):
 
         processed_new = self.trade_manager.on_trade(new_trades)
 
-        self.flow_detector.process_trades(processed_new)
-        if self.flow_detector.has_new_flows():
-            for flow in self.flow_detector.get_new_flows():  # ← Una volta sola!
-                self.trade_dashboard_messaging.export_flow_detected(channel="trades", flow=flow)
+        # self.flow_detector.process_trades(processed_new)
+        # if self.flow_detector.has_new_flows():
+        #     for flow in self.flow_detector.get_new_flows():  # ← Una volta sola!
+        #         self.trade_dashboard_messaging.export_flow_detected(channel="trades_df", flow=flow)
 
-        last_trades = self.trade_manager.get_trades(len(processed_new) + 10)
+        last_trades = self.trade_manager.get_trades(len(processed_new) + 30)
         self.publish_trades_on_dashboard(last_trades)
 
-        self.trade_dashboard_messaging.export_message(channel="trades",
+        self.trade_dashboard_messaging.export_message(channel="trades_df",
                                                       value=last_trades.drop(["is_elaborated"],
                                                                              errors='ignore'),
                                                       date_format='iso',
@@ -111,7 +111,7 @@ class EtfEquityLiveAnalysis(StrategyUI):
     def publish_trades_on_dashboard(self, new_trades):
 
         start = time()
-        self.trade_dashboard_messaging.export_message(channel="trades",
+        self.trade_dashboard_messaging.export_message(channel="trades_df",
                                                    value=new_trades,
                                                    date_format='iso',
                                                    orient="records")

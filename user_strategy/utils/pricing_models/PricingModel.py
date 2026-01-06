@@ -17,7 +17,7 @@ class PricingModel:
     def __init__(self, returns: pd.DataFrame | None = None, *args, **kwargs):
         self.returns: pd.DataFrame = returns
 
-        if returns is not None:  self.dates = returns.index
+        if returns is not None:  self.timestamps = returns.index
 
         self.yesterday: dt.date = (today() - CustomBDay).date()
 
@@ -51,8 +51,8 @@ class MultiPeriodLinearPricingModel(LinearPricingModel, ABC):
 
         super().__init__(returns=returns, beta=beta)
 
-        self.theoretical_returns_matrix: pd.DataFrame = pd.DataFrame(index=self.target_variables, columns=self.dates)
-        self.theoretical_prices_matrix: pd.DataFrame = pd.DataFrame(index=self.target_variables, columns=self.dates)
+        self.theoretical_returns_matrix: pd.DataFrame = pd.DataFrame(index=self.target_variables, columns=self.timestamps)
+        self.theoretical_prices_matrix: pd.DataFrame = pd.DataFrame(index=self.target_variables, columns=self.timestamps)
         self.theoretical_price: pd.Series = pd.Series(dtype=float, index=self.target_variables)
 
         self.forecast_aggregator = forecast_aggregator or EwmaOutlier(5, 3)
@@ -63,7 +63,7 @@ class MultiPeriodLinearPricingModel(LinearPricingModel, ABC):
         if missing_regressors:
             logging.warning(f"missing regressor: {missing_regressors}")
 
-        missing_dates = set(self.dates) - set(returns.index)
+        missing_dates = set(self.timestamps) - set(returns.index)
         if missing_dates:
             logging.warning(f"missing dates: {missing_dates}")
 
@@ -74,11 +74,11 @@ class MultiPeriodLinearPricingModel(LinearPricingModel, ABC):
                 self.target_variables.remove(m)
                 self.beta.drop(m, inplace=True)
 
-        returns = returns.loc[self.dates, self.regressor].T
+        returns = returns.loc[self.timestamps, self.regressor].T
         self.beta_sparse = csr_matrix(self.beta[self.regressor])
         predictions = pd.DataFrame(
             self.beta_sparse.dot(returns.values.astype(float)),
-            columns=self.dates,
+            columns=self.timestamps,
             index=self.beta.index
         )
         return predictions.T
@@ -100,7 +100,7 @@ class MultiPeriodLinearPricingModel(LinearPricingModel, ABC):
              Returns: pd.Series of price prediction
 
              """
-        self.dates = all_returns.index.tolist()
+        self.timestamps = all_returns.index.tolist()
         predictions = self.predict_prices(book, all_returns)
         prediction = self.forecast_aggregator(predictions)
         self.theoretical_price.update(prediction)
@@ -122,7 +122,7 @@ class ClusterPricingModel(MultiPeriodLinearPricingModel):
                  *args, **kwargs):
         super().__init__(beta, returns, forecast_aggregator, *args, **kwargs)
 
-        self.yesterday_misalignment_cluster: None | pd.Series = None
+        self.last_misalignment_cluster: None | pd.Series = None
         rows, cols = beta.shape
         if not disable_warning:
             if rows != cols:
@@ -132,7 +132,7 @@ class ClusterPricingModel(MultiPeriodLinearPricingModel):
         self.theoretical_price.name = name
 
     def predict_prices(self,
-                       book: pd.DataFrame,
+                       prices: pd.DataFrame,
                        all_returns: pd.DataFrame | None = None,
                        *args) -> pd.DataFrame:
 
@@ -141,8 +141,8 @@ class ClusterPricingModel(MultiPeriodLinearPricingModel):
         theoretical_live_return = self.predict_returns(all_returns)
 
         misalignment = (theoretical_live_return - all_returns[theoretical_live_return.columns]) * correction
-        self.yesterday_misalignment_cluster = misalignment.iloc[-1]
-        all_predictions = (1 + misalignment) * book[self.target_variables]
+        self.last_misalignment_cluster = misalignment.iloc[-1]
+        all_predictions = (1 + misalignment) * prices[self.target_variables]
 
         return all_predictions
 
@@ -172,9 +172,7 @@ class DriverPricingModel(MultiPeriodLinearPricingModel):
         all_predictions = (1 + misalignment) * book[self.target_variables]
         return all_predictions
 
-
 #------------------------------------------------------------------------------------#
-
 
 class RatePricingModel:
 

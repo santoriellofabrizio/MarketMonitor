@@ -13,6 +13,7 @@ from user_strategy.utils.enums import ISIN_TO_TICKER, TICKER_TO_ISIN
 logger = logging.getLogger()
 
 DISMISSED_ETFS = ("LU2037749822",
+                  "IE00BHBFDF83",
                   "LU1602145119",
                   "LU1437024992",
                   "LU1781540957",

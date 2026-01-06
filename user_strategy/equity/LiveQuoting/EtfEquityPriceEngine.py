@@ -13,6 +13,7 @@ from analytics.adjustments.dividend import DividendComponent
 from analytics.adjustments.fx_forward_carry import FxForwardCarryComponent
 from analytics.adjustments.fx_spot import FxSpotComponent
 from analytics.adjustments.ter import TerComponent
+from core.enums.currencies import CurrencyEnum
 from core.holidays.holiday_manager import HolidayManager
 from interface.bshdata import BshData
 from market_monitor.gui.implementations.GUI import GUI
@@ -20,14 +21,9 @@ from market_monitor.publishers.redis_publisher import RedisMessaging
 from market_monitor.strategy.StrategyUI.StrategyUI import StrategyUI
 from user_strategy.equity.LiveQuoting.InputParamsQuoting import InputParamsQuoting, \
     DISMISSED_ETFS
-from user_strategy.equity.utils.DataProcessors.PCFControls import PCFControls
-from user_strategy.equity.utils.DataProcessors.PCFProcessor import PCFProcessor
-from user_strategy.equity.utils.DataProcessors.StockSelector import StockSelector
-from user_strategy.utils import CustomBDay
 
 from user_strategy.utils.pricing_models.PricingModel import ClusterPricingModel
 from user_strategy.utils.bloomberg_subscription_utils.SubscriptionManager import SubscriptionManager
-from user_strategy.utils.enums import ISIN_TO_TICKER, CURRENCY, ISINS_ETF_EQUITY, TICK_SIZE
 
 
 class EtfEquityPriceEngine(StrategyUI):
@@ -35,19 +31,26 @@ class EtfEquityPriceEngine(StrategyUI):
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
 
-        self.currencies = [f"EUR{c}" for c in CURRENCY if c != "EUR"]
+        self.API = BshData(config_path=r"C:\AFMachineLearning\Libraries\BshDataProvider\config\bshdata_config.yaml")
+
+        isins_etf_equity = self.API.general.get_etp_isins(underlying="EQUITY", segments="IM")
+        self.reference_tick_size = self.API.info.get_etp_fields(isin=isins_etf_equity,
+                                                                fields=["REFERENCE_TICK_SIZE"],
+                                                                source="bloomberg")["REFERENCE_TICK_SIZE"].to_dict()
+
+        self.isin_to_ticker = self.API.info.get_etp_fields(isin=isins_etf_equity, source="bloomberg",
+                                                           fields=["TICKER"])["TICKER"].to_dict()
+
+        self.currencies = [f"EUR{c}" for c in CurrencyEnum.__members__ if c != "EUR"]
         self.gui_redis = RedisMessaging()
         self.gui_redis.export_static_data(ENGINE_PID=os.getpid())
 
         self.mid_eur: Optional[pd.Series] = None
-        self.nav_bid_ask: Optional[pd.Series] = pd.Series()
         self.book_mid_threshold = .5
         self.subscription_summary: pd.DataFrame | None = None
         self.input_params = InputParamsQuoting(**kwargs)
         self.subscription_manager: None | SubscriptionManager = None
-        self.isin_to_ticker = ISIN_TO_TICKER
         self.ticker_to_isin = {ticker: isin for isin, ticker in self.isin_to_ticker.items()}
-        self.activate_driver_price_calculator = kwargs.get("activate_driver_price_calculator", True)
         self.number_of_days = kwargs.get("number_of_days", 5)
 
         self.theoretical_prices: pd.DataFrame | None = None
@@ -70,71 +73,24 @@ class EtfEquityPriceEngine(StrategyUI):
         self.today = pd.Timestamp.today().normalize()
         self.yesterday = HolidayManager().previous_business_day(self.today)
 
-        self.nav_matrix = pd.DataFrame()
-        self.issuer_prices = pd.DataFrame()
-        self.weight_nav_matrix = pd.DataFrame()
-
-        # ------------------------------------ STOCK COMPRESSION -------------------------------------------------------
-        if self.input_params.isin_nav:
-            self.pcf_processor = PCFProcessor(etf_list=self.input_params.isin_nav, date=self.yesterday)
-            self.missing_isins = self.pcf_processor.get_missing_pcfs()
-            self.classifier = self.pcf_processor.isin_classifier
-            self.pcf_controls = PCFControls(self.pcf_processor)
-            self.nav_matrix = self.pcf_processor.get_nav_matrix()
-            self.weight_nav_matrix = self.pcf_processor.get_nav_matrix(weight=True)
-            self.stock_selector = StockSelector(self.weight_nav_matrix)
-            stock_to_keep, etf_to_keep = self.stock_selector.truncate_stocks(2000)
-            stock_to_keep += list(CURRENCY)
-            stock_to_keep = [stock for stock in stock_to_keep if stock not in kwargs.get("stock_to_ignore", [])]
-            self.nav_matrix = self.nav_matrix.loc[etf_to_keep, self.nav_matrix.columns.isin(stock_to_keep)]
-            self.weight_nav_matrix = self.weight_nav_matrix.loc[etf_to_keep,
-            self.weight_nav_matrix.columns.isin(stock_to_keep)]
-            self.weight_correction = self.weight_nav_matrix.sum(axis=1)
-            self.composition = self.pcf_processor.pcf_composition
-            self.composition["PRICE_EUR"] = (self.composition["PRICE_FUND_CCY"] /
-                                             self.composition["BSH_ID_ETF"].
-                                             map(self.pcf_controls.convert_fund_ccy_to_eur()))
-            self.issuer_prices = self.pcf_controls.get_issuer_prices()
-        # -------------------------------------- SETTING INSTRUMENTS ---------------------------------------------------
-
-        self.instruments_NAV = self.nav_matrix.index.tolist()
-
-        self.instruments_driver = self.input_params.isin_driver
         self.instruments_cluster = self.input_params.isin_cluster
-        cluster_price_regressor = list(set(ISINS_ETF_EQUITY).
+
+        cluster_price_regressor = list(set(isins_etf_equity).
                                        intersection(self.as_isin(self.input_params.beta_cluster.columns)))
+        self.instruments = list(set(self.instruments_cluster + cluster_price_regressor))
 
-        self.instruments = list(set(self.instruments_NAV + self.instruments_driver
-                                    + self.instruments_cluster + cluster_price_regressor))
-
-        self.isins_components = list(set(self.nav_matrix.columns))
-        self.securities_list = list(set(self.nav_matrix.columns) | set(self.instruments))
-
-        self.output_theoretical_prices = pd.DataFrame(index=self.instruments_driver)
-        self.output_theoretical_prices.index.name = "ETF"
-
-        # self.prices_provider = PricesProviderEquity(etfs=sorted(self.instruments),
-        #                                             input_params=self.input_params,
-        #                                             subscription_manager=self.subscription_manager,
-        #                                             number_of_days=self.number_of_days)
-        #
-        # self.etf_prices = self.prices_provider.get_hist_prices()
-        # self.fx_prices = self.prices_provider.get_hist_fx_prices()
-        start, end = today() - self.number_of_days * CustomBDay, today() - CustomBDay
         self.holidays = HolidayManager()
         start = self.holidays.subtract_business_days(today(), self.number_of_days)
         end = self.holidays.previous_business_day(today())
         days = self.holidays.get_business_days(start=start, end=end)
         snapshot_time = time(16)
 
-        self.API = BshData(config_path=r"C:\AFMachineLearning\Libraries\BshDataProvider\config\bshdata_config.yaml")
-
         fx_composition = self.API.info.get_fx_composition(self.instruments, fx_fxfwrd="fx",
                                                           reference_date=date(2025,12,18))
         fx_forward = self.API.info.get_fx_composition(self.instruments, fx_fxfwrd="fxfwrd",
                                                       reference_date=date(2025,12,18))
 
-        self.fx_prices = self.API.market.get_daily_currency(id=[f"EUR{ccy}" for ccy in CURRENCY],
+        self.fx_prices = self.API.market.get_daily_currency(id=self.currencies,
                                                             start=start,
                                                             end=end,
                                                             snapshot_time=snapshot_time,
@@ -170,17 +126,14 @@ class EtfEquityPriceEngine(StrategyUI):
                                                                      columns=self.etf_prices.columns,
                                                                      dtype=float)
         self.bloomberg_subscription_config_path = kwargs.get("bloomberg_subscription_config_path", None)
-        self.all_securities = list(set(self.securities_list) | {f"EUR{ccy}" for ccy in CURRENCY})
-        self.all_etf_plus_securities = list(set(self.all_securities + list(ISINS_ETF_EQUITY)))
+        self.all_etf_plus_securities = list(set(self.currencies + list(isins_etf_equity)))
         self.subscription_manager = SubscriptionManager(self.all_etf_plus_securities,
                                                         self.bloomberg_subscription_config_path)
 
         # ----------------------------------------- PRICING ------------------------------------------------------------
 
-        # DRIVER
-        self.nav = pd.Series(index=self.instruments_NAV)
-        self.theoretical_live_driver_price: Optional[pd.Series] = None
         self.theoretical_live_cluster_price: Optional[pd.Series] = None
+        self.theoretical_live_index_cluster_price: pd.Series | None = None
 
         beta_cluster = (self.input_params.beta_cluster
                         .rename(self.ticker_to_isin, axis=1)
@@ -241,126 +194,30 @@ class EtfEquityPriceEngine(StrategyUI):
         Attende l'inizializzazione del book e gestisce strumenti con dati mancanti.
         """
 
-        self.initialize_fx_prices()
-        self.initialize_issuer_prices()
-        mid = self.market_data.get_mid()
-        missing = mid[mid.isna()]
-        for instr in missing.index:
-            if self.ask_for_stock_drop:
-                response = input(f"\nSubscription of {instr}: Want to impute a value? Y/N ").strip().upper() == "Y"
-            else:
-                response = False
-            if response:
-                self.impute_user_price(instr)
-            else:
-                self.nav_matrix.drop(instr, axis=1, inplace=True, errors="ignore")
-                self.weight_nav_matrix.drop(instr, axis=1, inplace=True, errors="ignore")
+        while datetime.today().time() < time(9,5):
+            return False
 
         return True
-
-    def impute_user_price(self, instr):
-        while True:
-            try:
-                price = float(input(f"Enter a price for {instr}: "))
-                self.market_data.update(instr, {fld: price for fld in self.market_data.mid_key})
-                break
-            except ValueError:
-                print("Invalid input. Please enter a numeric value.")
-
-    def initialize_fx_prices(self):
-        """
-        Aggiorna i prezzi FX nel market data.
-        """
-        for ccy, prices in self.fx_prices.items():
-            price = prices.dropna()
-            if price is not None and not price.empty:
-                price = price.iloc[0]
-                ccy = str(ccy).replace("EUR", "")
-                self.market_data.update(ccy, {fld: price for fld in self.market_data.fields})
-
-    def initialize_issuer_prices(self):
-        """
-        Aggiorna i prezzi degli strumenti emittenti nel market data.
-        """
-        mid = self.market_data.get_mid()
-        for isin, price in self.issuer_prices.items():
-            if not np.isnan(price) and price is not None:
-                if isin in self.market_data.securities:
-                    ccy = self.market_data.currency_information.get(isin, "EUR")
-                    fx = mid.get(ccy, 1)
-                    self.market_data.update(str(isin), {fld: price * fx for fld in self.market_data.fields})
-                    self.mid_eur[isin] = price
 
     def update_HF(self):
 
         self.get_mid()
         self.calculate_cluster_theoretical_price()
-        self.calculate_NAV()
-
-        self.gui_redis.export_message("market:nav",
-                                      self.round_series_to_tick(self.nav.fillna(0), TICK_SIZE))
-        self.gui_redis.export_message("market:nav_bid",
-                                      self.round_series_to_tick(self.nav_bid_ask["BID"], TICK_SIZE))
-        self.gui_redis.export_message("market:nav_ask",
-                                      self.round_series_to_tick(self.nav_bid_ask["ASK"], TICK_SIZE))
         self.gui_redis.export_message("market:theoretical_live_index_cluster_price",
-                                      self.round_series_to_tick(self.theoretical_live_index_cluster_price, TICK_SIZE))
+                                          self.round_series_to_tick(self.theoretical_live_index_cluster_price,
+                                                                    self.reference_tick_size))
+
+
         self.gui_redis.export_message("market:theoretical_live_cluster_price",
-                                      self.round_series_to_tick(self.theoretical_live_cluster_price.fillna(0),
-                                                                TICK_SIZE))
+                                          self.round_series_to_tick(self.theoretical_live_cluster_price.fillna(0),
+                                                                    self.reference_tick_size))
+
         self.gui_redis.export_message("market:mid",
-                                      self.round_series_to_tick(self.mid_eur.fillna(0), TICK_SIZE))
+                                      self.round_series_to_tick(self.mid_eur.fillna(0), self.reference_tick_size))
 
     def update_LF(self):
         # self.check_book_update(1200)
         pass
-
-    def on_book_initialized(self):
-
-        if self.instruments_NAV:
-            self.check_live_weights()
-            self.check_pcf_controls()
-            self.check_inactive_subs()
-
-            self.gui_redis.export_static_data(LIVE_WEIGHTS=self.live_weights,
-                                              NAV_WEIGHTS=self.weight_nav_matrix.sum(axis=1),
-                                              R2_CLUSTER=self.input_params.r2_cluster)
-
-    def calculate_NAV(self):
-
-        self.nav = (
-            (self.nav_matrix @ self.mid_eur[self.nav_matrix.columns]).T.div(
-                self.weight_nav_matrix.sum(axis=1)[self.instruments_NAV])
-        ).replace({0: np.nan})
-
-        all_book = self.book_eur.loc[self.nav_matrix.columns]
-
-        self.nav_bid_ask = (
-            (self.nav_matrix @ all_book).T.div(
-                self.weight_nav_matrix.sum(axis=1)[self.instruments_NAV])
-        ).replace({0: np.nan}).T
-
-    def get_live_fx_return_correction(self, EUR_CCY: bool = True) -> pd.DataFrame:
-        """
-        Calculate FX live return correction.
-        Returns:
-            pd.Series: FX live correction series.
-        """
-        fx_book: pd.Series = self.market_data.get_mid([ccy for ccy in CURRENCY])  # getting EURCCY
-        fx_book.index = fx_book.index.str[-3:]
-        fx_live_correction: pd.DataFrame = self.return_adjuster.get_fx_corrections(fx_book,
-                                                                                   cumulative=self._cumulative_returns)
-        return fx_live_correction
-
-    def get_live_returns(self) -> pd.Series(dtype=float):
-        """
-        Get live ETF and drivers returns by comparing current prices with historical prices.
-
-        Returns:
-            pd.Series: ETF live returns.
-        """
-        etfs_returns: pd.Series(dtype=float) = self.mid_eur[self.etf_prices.columns] / self.etf_prices - 1
-        return etfs_returns.T
 
     def get_mid(self) -> pd.Series:
         """
@@ -388,8 +245,10 @@ class EtfEquityPriceEngine(StrategyUI):
         else:
             self.mid_eur = last_mid
 
-        self.corrected_return = self.adjuster.clean_returns(cumulative=True, fx_prices=last_mid[self.currencies],
+        self.corrected_return = self.adjuster.clean_returns(cumulative=True,
+                                                            fx_prices=last_mid[self.currencies],
                                                             live_prices=last_mid).T
+
         # Publish returns
         for i in self.return_to_publish:
             self.gui_redis.export_message(f"market:{i}D_return",
@@ -397,47 +256,6 @@ class EtfEquityPriceEngine(StrategyUI):
 
         self.book_storage.append(last_mid)
         return last_mid
-
-    def check_book_update(self, threshold_seconds):
-
-        warning = {isin: (datetime.now() - last_up).seconds
-                   for isin, last_up in self.market_data.last_update.items()
-                   if (datetime.now() - last_up).seconds > threshold_seconds}
-        if warning:
-            logging.info(f"no update in the last {threshold_seconds} seconds for {len(warning)} instr:\n" +
-                         "\n-".join(f"{isin}: {delay}" for isin, delay in warning.items()))
-
-    def check_live_weights(self):
-
-        weights = self.pcf_processor.get_nav_matrix(weight=True).copy()
-        delayed_securities_bool = self.market_data.get_delayed_status()
-        self.subscription_summary = pd.DataFrame({isin:
-                                                      {"status": status,
-                                                       "market": self.subscription_manager.get_ref_market(isin)}
-                                                  for isin, status in delayed_securities_bool.items()}).T
-
-        logging.warning("subscription market summary:\n" + self.subscription_summary
-                        .groupby("market").
-                        agg(count=('status', 'count'),
-                            delayed_=('status', 'mean')).
-                        to_string())
-
-        live_securities = delayed_securities_bool[~delayed_securities_bool].index.tolist()
-        self.live_weights = weights[weights.columns.intersection(live_securities)].sum(axis=1)
-        error_live_weights = (self.live_weights[self.live_weights < 0.95]
-                              .sort_values(ascending=False)
-                              .rename(ISIN_TO_TICKER))
-        if len(error_live_weights): logging.warning(f"\nlow live weights for:\n\n" + error_live_weights.to_string())
-
-    def check_pcf_controls(self):
-        stock_warnings = self.pcf_controls.check_for_issuers_price_errors()
-        if stock_warnings and input("want to drop these stocks?(Y/N):\n\n"
-                                    + '\n'.join(stock_warnings)
-                                    + "\n\n\n").upper() != "N":
-            self.nav_matrix.drop(stock_warnings, axis=1, inplace=True, errors="ignore")
-            self.weight_nav_matrix.drop(stock_warnings, axis=1, inplace=True, errors="ignore")
-        self.pcf_controls.check_for_my_price_errors(self.market_data.get_mid_eur())
-        self.pcf_controls.check_delisting_and_issuer_price(self.market_data.instrument_status)
 
     def on_stop(self):
         # saving instruments with probably wrong currency
@@ -451,17 +269,6 @@ class EtfEquityPriceEngine(StrategyUI):
 
         self.gui_redis.export_static_data(ENGINE_PID=None)
 
-    @property
-    def instruments_NAV(self) -> list:
-        return self._instruments_NAV
-
-    @instruments_NAV.setter
-    def instruments_NAV(self, value: list):
-        self._instruments_NAV = [self.as_isin(id) for id in value]
-
-    @instruments_NAV.getter
-    def instruments_NAV(self) -> list[str]:
-        return self._instruments_NAV
 
     @property
     def instruments(self) -> list:
@@ -488,27 +295,15 @@ class EtfEquityPriceEngine(StrategyUI):
         except Exception as e:
             logging.error(f"Exception occurred while calculating cluster price: {e}")
 
-    def check_inactive_subs(self):
-
-        dump_path = r"C:\AFMachineLearning\Applications\DBAnagrafica\isin_list.txt"
-        inactive_isin = [isin for isin, status in self.market_data.instrument_status.items() if status != "ACTV"]
-        with open(dump_path, "w") as file:
-            for key in inactive_isin:
-                file.write(f"{key}\n")
-
-        logging.info(f"Inactive ISIN saved to {dump_path}")
-
-    def check_missing_ccy_info(self, isins):
-        dump_path = r"C:\AFMachineLearning\Applications\DBAnagrafica\isin_list_ccy.txt"
-        with open(dump_path, "w") as file:
-            for key in isins:
-                file.write(f"{key}\n")
-
-        logging.info(f"missing ccy ISIN saved to {dump_path}")
 
     @staticmethod
     def round_series_to_tick(series, tick_dict, default_tick=0.001):
         """ Arrotonda una Series ai tick specificati per ciascun strumento e normalizza i float. """
+        if series is None:
+            return series
+        if isinstance(tick_dict, pd.Series):
+            tick_dict = tick_dict.to_dict()
+
         ticks = np.array([tick_dict.get(idx, default_tick) for idx in series.index]) / 2
         values = series.fillna(0).values.astype(float)
         rounded_values = np.round(np.round(values / ticks) * ticks, 10)

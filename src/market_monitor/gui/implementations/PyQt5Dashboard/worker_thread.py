@@ -268,7 +268,7 @@ class RedisPubSubThread(BaseDashboardThread):
             self.redis_client.ping()
 
             # Sottoscrivi canale
-            channel = self.redis_config.get('channel', 'trades')
+            channel = self.redis_config.get('channel', 'trades_df')
             self.pubsub = self.redis_client.pubsub()
             self.pubsub.subscribe(channel)
 

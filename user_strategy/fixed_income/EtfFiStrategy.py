@@ -198,7 +198,7 @@ class EtfFiStrategy(StrategyUI):
 
         all_predictions_NAV = (self.book_mid[self.etf_isins]
                                * (1 + self.theoretical_misalignment_basis.mul(self.cluster_correction))
-                               * (1 + self.cluster_model.yesterday_misalignment_cluster))
+                               * (1 + self.cluster_model.last_misalignment_cluster))
         theoretical_nav_prices = self.input_params.forecast_aggregator_nav(all_predictions_NAV)
 
         self.theoretical_live_nav_price.update(theoretical_nav_prices)
