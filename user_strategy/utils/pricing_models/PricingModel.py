@@ -89,11 +89,11 @@ class MultiPeriodLinearPricingModel(LinearPricingModel, ABC):
         return theoretical_live_return
 
     def get_price_prediction(self,
-                             book: pd.DataFrame,
+                             prices: pd.DataFrame | pd.Series,
                              all_returns: pd.DataFrame) -> pd.Series:
         """
              Args:
-                 book:
+                 prices:
                  all_returns: pd.Dataframe: on rows you have dates, on cols instruments
                  forecast into a single one
 
@@ -101,7 +101,7 @@ class MultiPeriodLinearPricingModel(LinearPricingModel, ABC):
 
              """
         self.timestamps = all_returns.index.tolist()
-        predictions = self.predict_prices(book, all_returns)
+        predictions = self.predict_prices(prices, all_returns)
         prediction = self.forecast_aggregator(predictions)
         self.theoretical_price.update(prediction)
         return self.theoretical_price

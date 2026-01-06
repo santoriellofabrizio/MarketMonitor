@@ -180,21 +180,13 @@ class EtfFiStrategy(StrategyUI):
                 "force": False}
 
     def calculate_theoretical_prices(self):
-        self.theoretical_live_driver_price =\
-        self.driver_model.get_price_prediction(self.book_mid,
-                                                self.corrected_return.T,
-                                                self.input_params.forecast_aggregator_driver)
-        self.theoretical_live_cluster_price =\
-            self.cluster_model.get_price_prediction(self.book_mid,
-                                                    self.corrected_return.T,
-                                                    self.input_params.forecast_aggregator_cluster,
-                                                    self.cluster_correction)
+        self.theoretical_live_driver_price = \
+            self.driver_model.get_price_prediction(self.book_mid, self.corrected_return.T)
+        self.theoretical_live_cluster_price = \
+            self.cluster_model.get_price_prediction(self.book_mid, self.corrected_return.T)
 
-        self.theoretical_live_brother_price =\
-            self.brother_model.get_price_prediction(self.book_mid,
-                                                    self.corrected_return.T,
-                                                    self.input_params.forecast_aggregator_brother,
-                                                    self.brothers_correction)
+        self.theoretical_live_brother_price = \
+            self.brother_model.get_price_prediction(self.book_mid, self.corrected_return.T)
 
         all_predictions_NAV = (self.book_mid[self.etf_isins]
                                * (1 + self.theoretical_misalignment_basis.mul(self.cluster_correction))

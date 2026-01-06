@@ -21,6 +21,7 @@ from market_monitor.publishers.redis_publisher import RedisMessaging
 from market_monitor.strategy.StrategyUI.StrategyUI import StrategyUI
 from user_strategy.equity.LiveQuoting.InputParamsQuoting import InputParamsQuoting, \
     DISMISSED_ETFS
+from user_strategy.utils.pricing_models.AggregationFunctions import ForecastAggregator, TrimmedMean
 
 from user_strategy.utils.pricing_models.PricingModel import ClusterPricingModel
 from user_strategy.utils.bloomberg_subscription_utils.SubscriptionManager import SubscriptionManager
@@ -81,14 +82,14 @@ class EtfEquityPriceEngine(StrategyUI):
 
         self.holidays = HolidayManager()
         start = self.holidays.subtract_business_days(today(), self.number_of_days)
-        end = self.holidays.previous_business_day(today())
+        end = yesterday = self.holidays.previous_business_day(today())
         days = self.holidays.get_business_days(start=start, end=end)
         snapshot_time = time(16)
 
         fx_composition = self.API.info.get_fx_composition(self.instruments, fx_fxfwrd="fx",
-                                                          reference_date=date(2025,12,18))
+                                                          reference_date=date(2025, 12, 18))
         fx_forward = self.API.info.get_fx_composition(self.instruments, fx_fxfwrd="fxfwrd",
-                                                      reference_date=date(2025,12,18))
+                                                      reference_date=date(2025, 12, 18))
 
         self.fx_prices = self.API.market.get_daily_currency(id=self.currencies,
                                                             start=start,
@@ -100,7 +101,18 @@ class EtfEquityPriceEngine(StrategyUI):
                                                         start=start,
                                                         end=end,
                                                         snapshot_time=snapshot_time,
-                                                        fallbacks=[{"source": "bloomberg", "market": "IM"}]).reindex(days)
+                                                        fallbacks=[{"source": "bloomberg", "market": "IM"}]).reindex(
+            days)
+
+        self.fx_prices_intraday = self.API.market.get_intraday_fx(id=self.currencies,
+                                                                  date=yesterday,
+                                                                  start_time=time(10),
+                                                                  frequency="15m")
+
+        self.etf_prices_intraday = self.API.market.get_intraday_etf(id=self.instruments,
+                                                                    date=yesterday,
+                                                                    start_time=time(10),
+                                                                    frequency="15m")
 
         # _, fx_full = self.input_params.get_currency_data(self.instruments)
 
@@ -111,7 +123,7 @@ class EtfEquityPriceEngine(StrategyUI):
                                                                  end=end)
 
         dividends = self.API.info.get_dividends(id=self.instruments)
-        ter = self.API.info.get_ter(id=self.instruments)
+        ter = self.API.info.get_ter(id=self.instruments)/100
         ter.update(self.input_params.ter_manual)
 
         self.adjuster = (
@@ -122,9 +134,20 @@ class EtfEquityPriceEngine(StrategyUI):
             .add(DividendComponent(dividends, fx_prices=self.fx_prices))
         )
 
+        self.intraday_adjuster = (
+            Adjuster(self.etf_prices_intraday)
+            .add(FxSpotComponent(fx_composition, self.fx_prices_intraday))
+            .add(DividendComponent(dividends, fx_prices=self.fx_prices))
+        )
+
         self.corrected_return: Optional[pd.DataFrame] = pd.DataFrame(index=self.etf_prices.index,
                                                                      columns=self.etf_prices.columns,
                                                                      dtype=float)
+
+        self.corrected_return_intraday: Optional[pd.DataFrame] = pd.DataFrame(index=self.etf_prices_intraday.index,
+                                                                              columns=self.etf_prices_intraday.columns,
+                                                                              dtype=float)
+
         self.bloomberg_subscription_config_path = kwargs.get("bloomberg_subscription_config_path", None)
         self.all_etf_plus_securities = list(set(self.currencies + list(isins_etf_equity)))
         self.subscription_manager = SubscriptionManager(self.all_etf_plus_securities,
@@ -134,6 +157,7 @@ class EtfEquityPriceEngine(StrategyUI):
 
         self.theoretical_live_cluster_price: Optional[pd.Series] = None
         self.theoretical_live_index_cluster_price: pd.Series | None = None
+        self.theoretical_intraday_prices: pd.Series | None = None
 
         beta_cluster = (self.input_params.beta_cluster
                         .rename(self.ticker_to_isin, axis=1)
@@ -146,9 +170,15 @@ class EtfEquityPriceEngine(StrategyUI):
         self.input_params.set_forecast_aggregation_func(kwargs["pricing"])
 
         self.cluster_model = ClusterPricingModel(
-            beta=beta_cluster,
+            beta=beta_cluster_index,
             returns=self.corrected_return,
             forecast_aggregator=self.input_params.forecast_aggregator_cluster,
+            name="theoretical_live_cluster_price")
+
+        self.cluster_model_intraday = ClusterPricingModel(
+            beta=beta_cluster,
+            returns=self.corrected_return_intraday,
+            forecast_aggregator=TrimmedMean(0.2),
             name="theoretical_live_cluster_price")
 
         self.index_cluster_model = ClusterPricingModel(
@@ -194,7 +224,7 @@ class EtfEquityPriceEngine(StrategyUI):
         Attende l'inizializzazione del book e gestisce strumenti con dati mancanti.
         """
 
-        while datetime.today().time() < time(9,5):
+        while datetime.today().time() < time(9, 5):
             return False
 
         return True
@@ -204,13 +234,16 @@ class EtfEquityPriceEngine(StrategyUI):
         self.get_mid()
         self.calculate_cluster_theoretical_price()
         self.gui_redis.export_message("market:theoretical_live_index_cluster_price",
-                                          self.round_series_to_tick(self.theoretical_live_index_cluster_price,
-                                                                    self.reference_tick_size))
-
+                                      self.round_series_to_tick(self.theoretical_live_index_cluster_price,
+                                                                self.reference_tick_size))
 
         self.gui_redis.export_message("market:theoretical_live_cluster_price",
-                                          self.round_series_to_tick(self.theoretical_live_cluster_price.fillna(0),
-                                                                    self.reference_tick_size))
+                                      self.round_series_to_tick(self.theoretical_live_cluster_price.fillna(0),
+                                                                self.reference_tick_size))
+
+        self.gui_redis.export_message("market:theoretical_live_intraday_price",
+                                      self.round_series_to_tick(self.theoretical_intraday_prices.fillna(0),
+                                                                self.reference_tick_size))
 
         self.gui_redis.export_message("market:mid",
                                       self.round_series_to_tick(self.mid_eur.fillna(0), self.reference_tick_size))
@@ -229,7 +262,7 @@ class EtfEquityPriceEngine(StrategyUI):
         """
 
         last_mid = self.market_data.get_mid()
-        self.book_eur = self.market_data.get_data_field(["BID","ASK"])
+        self.book_eur = self.market_data.get_data_field(["BID", "ASK"])
         if self.mid_eur is not None:
             safe_last_book = last_mid.replace(0, np.nan)
             is_outlier = (
@@ -249,6 +282,10 @@ class EtfEquityPriceEngine(StrategyUI):
                                                             fx_prices=last_mid[self.currencies],
                                                             live_prices=last_mid).T
 
+        self.corrected_return_intraday = self.intraday_adjuster.clean_returns(cumulative=True,
+                                                                              fx_prices=last_mid[self.currencies],
+                                                                              live_prices=last_mid).T
+
         # Publish returns
         for i in self.return_to_publish:
             self.gui_redis.export_message(f"market:{i}D_return",
@@ -256,19 +293,6 @@ class EtfEquityPriceEngine(StrategyUI):
 
         self.book_storage.append(last_mid)
         return last_mid
-
-    def on_stop(self):
-        # saving instruments with probably wrong currency
-
-        instr = list(self.threshold_exceeded_instruments)
-        (pd.DataFrame({
-            'Instrument': instr,
-            'ActualCurrency': [self.subscription_manager.get_currency_informations().get(i) for i in instr],
-            'ActualMarket': [self.subscription_manager.get_ref_market(i) for i in instr]})
-         .to_excel('logging/instruments_threshold_exceeded.xlsx'))
-
-        self.gui_redis.export_static_data(ENGINE_PID=None)
-
 
     @property
     def instruments(self) -> list:
@@ -288,13 +312,18 @@ class EtfEquityPriceEngine(StrategyUI):
 
     def calculate_cluster_theoretical_price(self):
         try:
-            self.theoretical_live_cluster_price = self.cluster_model.get_price_prediction(self.mid_eur,
-                                                                                          self.corrected_return.T)
-            self.theoretical_live_index_cluster_price = self.index_cluster_model.get_price_prediction(self.mid_eur,
-                                                                                                      self.corrected_return.T)
+            self.theoretical_live_cluster_price = (self.cluster_model.
+                                                   get_price_prediction(self.mid_eur,
+                                                                        self.corrected_return.T))
+            self.theoretical_live_index_cluster_price = (self.index_cluster_model.
+                                                         get_price_prediction(self.mid_eur,
+                                                                              self.corrected_return.T))
+
+            self.theoretical_intraday_prices = (self.cluster_model_intraday.
+                                                get_price_prediction(self.mid_eur,
+                                                                     self.corrected_return.T))
         except Exception as e:
             logging.error(f"Exception occurred while calculating cluster price: {e}")
-
 
     @staticmethod
     def round_series_to_tick(series, tick_dict, default_tick=0.001):
