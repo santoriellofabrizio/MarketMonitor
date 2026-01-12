@@ -8,7 +8,6 @@ import pandas as pd
 import redis
 
 from market_monitor.publishers.base import MessageType
-from user_strategy.utils.trade_manager.flow_detector import Flow
 
 logger = logging.getLogger(__name__)
 
@@ -203,9 +202,9 @@ class DataSerializer:
         Serializza dati con metadati opzionali in formato RTD-compatible.
 
         Regole:
-        1. Se data è dict/Series con valori scalari → JSON piatto con metadati in __metadata__
-        2. Se data è DataFrame → formato 'records' + metadati in __metadata__
-        3. Se data è scalar/list → wrappa in struttura con __value__ e __metadata__
+        1. Se data è dict/Series con valori scalari -> JSON piatto con metadati in __metadata__
+        2. Se data è DataFrame -> formato 'records' + metadati in __metadata__
+        3. Se data è scalar/list -> wrappa in struttura con __value__ e __metadata__
 
         Args:
             data: Dati da serializzare (già normalizzati)
@@ -217,7 +216,7 @@ class DataSerializer:
             JSON string
 
         Examples:
-            >>> # Dict con valori scalari → piatto
+            >>> # Dict con valori scalari -> piatto
             >>> serialize_with_metadata(
             ...     {"AAPL": 150, "GOOGL": 2800},
             ...     metadata={"source": "bloomberg"},
@@ -232,7 +231,7 @@ class DataSerializer:
                 }
             }
 
-            >>> # DataFrame → records + metadata
+            >>> # DataFrame -> records + metadata
             >>> serialize_with_metadata(
             ...     [{"ticker": "AAPL", "price": 150}, {"ticker": "GOOGL", "price": 2800}],
             ...     metadata={"source": "bloomberg"},
@@ -249,7 +248,7 @@ class DataSerializer:
                 }
             }
 
-            >>> # Scalar → wrapped
+            >>> # Scalar -> wrapped
             >>> serialize_with_metadata(
             ...     42,
             ...     metadata={"unit": "seconds"},
@@ -285,19 +284,19 @@ class DataSerializer:
 
         # Determina struttura basata sul tipo di data
         if isinstance(data, dict):
-            # Dict → merge diretto (valori scalari piatti)
+            # Dict -> merge diretto (valori scalari piatti)
             result.update(data)
             if meta:
                 result["__metadata__"] = meta
 
         elif isinstance(data, list):
-            # List (es. DataFrame records) → chiave 'records'
+            # List (es. DataFrame records) -> chiave 'records'
             result["records"] = data
             if meta:
                 result["__metadata__"] = meta
 
         else:
-            # Scalar o altri tipi → wrappa in __value__
+            # Scalar o altri tipi -> wrappa in __value__
             result["__value__"] = data
             if meta:
                 result["__metadata__"] = meta
@@ -494,11 +493,11 @@ class RedisMessaging(RedisPublisher):
             flat_mode: Se True (default), usa formato piatto RTD-compatible
 
         Examples:
-            >>> # Prezzi (dict) → JSON piatto
+            >>> # Prezzi (dict) -> JSON piatto
             >>> gui.export_message("rtd:prices", {"AAPL": 150, "GOOGL": 2800})
             >>> # Pubblica: {"AAPL": 150, "GOOGL": 2800, "__metadata__": {"type": "DATA"}}
 
-            >>> # DataFrame → records format
+            >>> # DataFrame -> records format
             >>> gui.export_message("rtd:positions", df)
             >>> # Pubblica: {"records": [...], "__metadata__": {"type": "DATA"}}
 
@@ -546,7 +545,7 @@ class RedisMessaging(RedisPublisher):
     def export_flow_detected(
             self,
             channel: str,
-            flow: Flow,
+            flow,
             skip_if_unchanged: bool = False
     ) -> None:
         """

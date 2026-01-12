@@ -48,7 +48,6 @@ class MarketStore:
 
         AGGIORNAMENTO: Crea automaticamente ticker/colonne se mancanti.
         """
-        rejected = []
 
         with self._lock:
             try:
@@ -240,12 +239,12 @@ class MarketStore:
 class StateStore:
     """
     Hierarchical dict storage for application state.
-    Organized as: namespace/key → data
+    Organized as: namespace/key -> data
 
     Examples:
-        portfolio/positions → {ISIN: {qty, avg_price}}
-        portfolio/pnl → {ISIN: pnl}
-        metadata/timestamps → {...}
+        portfolio/positions -> {ISIN: {qty, avg_price}}
+        portfolio/pnl -> {ISIN: pnl}
+        metadata/timestamps -> {...}
 
     AGGIORNAMENTO: Metodi sempre sicuri anche con namespace/key mancanti.
     """
@@ -363,8 +362,8 @@ class EventStore:
     Uses bounded deques to prevent memory growth.
 
     Examples:
-        trades → deque([{ts, isin, qty, price}, ...], maxlen=1000)
-        logs → deque([{ts, level, msg}, ...], maxlen=500)
+        trades -> deque([{ts, isin, qty, price}, ...], maxlen=1000)
+        logs -> deque([{ts, level, msg}, ...], maxlen=500)
 
     AGGIORNAMENTO: Metodi sempre sicuri anche con event_type mancante.
     """
@@ -473,7 +472,7 @@ class EventStore:
 class BlobStore:
     """
     Storage for binary/file data.
-    Maps keys → raw data (bytes, files, etc.)
+    Maps keys -> raw data (bytes, files, etc.)
 
     AGGIORNAMENTO: Metodi sempre sicuri anche con key mancante.
     """

@@ -43,22 +43,6 @@ wheels = [
 ]
 
 [[package]]
-name = "asgiref"
-version = "3.8.1"
-source = { registry = '\\nas.sg.gbs.pro\AreaFinanza/Share/PROGETTI ML/Python/python3_11/python packages' }
-wheels = [
-    { path = "asgiref-3.8.1-py3-none-any.whl" },
-]
-
-[[package]]
-name = "asteval"
-version = "1.0.5"
-source = { registry = '\\nas.sg.gbs.pro\AreaFinanza/Share/PROGETTI ML/Python/python3_11/python packages' }
-wheels = [
-    { path = "asteval-1.0.5-py3-none-any.whl" },
-]
-
-[[package]]
 name = "async-timeout"
 version = "5.0.1"
 source = { registry = '\\nas.sg.gbs.pro\AreaFinanza/Share/PROGETTI ML/Python/python3_11/python packages' }
@@ -83,18 +67,6 @@ dependencies = [
 ]
 wheels = [
     { path = "cffi-2.0.0-cp311-cp311-win_amd64.whl" },
-]
-
-[[package]]
-name = "clarabel"
-version = "0.9.0"
-source = { registry = '\\nas.sg.gbs.pro\AreaFinanza/Share/PROGETTI ML/Python/python3_11/python packages' }
-dependencies = [
-    { name = "numpy", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "scipy", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
-]
-wheels = [
-    { path = "clarabel-0.9.0-cp37-abi3-win_amd64.whl" },
 ]
 
 [[package]]
@@ -128,61 +100,11 @@ wheels = [
 ]
 
 [[package]]
-name = "cvxpy"
-version = "1.5.3"
-source = { registry = '\\nas.sg.gbs.pro\AreaFinanza/Share/PROGETTI ML/Python/python3_11/python packages' }
-dependencies = [
-    { name = "clarabel", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "ecos", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "numpy", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "osqp", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "scipy", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "scs", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
-]
-wheels = [
-    { path = "cvxpy-1.5.3-cp311-cp311-win_amd64.whl" },
-]
-
-[[package]]
 name = "cycler"
 version = "0.12.1"
 source = { registry = '\\nas.sg.gbs.pro\AreaFinanza/Share/PROGETTI ML/Python/python3_11/python packages' }
 wheels = [
     { path = "cycler-0.12.1-py3-none-any.whl" },
-]
-
-[[package]]
-name = "dill"
-version = "0.3.9"
-source = { registry = '\\nas.sg.gbs.pro\AreaFinanza/Share/PROGETTI ML/Python/python3_11/python packages' }
-wheels = [
-    { path = "dill-0.3.9-py3-none-any.whl" },
-]
-
-[[package]]
-name = "django"
-version = "5.1.5"
-source = { registry = '\\nas.sg.gbs.pro\AreaFinanza/Share/PROGETTI ML/Python/python3_11/python packages' }
-dependencies = [
-    { name = "asgiref", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "sqlparse", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "tzdata", marker = "sys_platform == 'win32'" },
-]
-sdist = { path = "Django-5.1.5.tar.gz" }
-wheels = [
-    { path = "Django-5.1.5-py3-none-any.whl" },
-]
-
-[[package]]
-name = "ecos"
-version = "2.0.14"
-source = { registry = '\\nas.sg.gbs.pro\AreaFinanza/Share/PROGETTI ML/Python/python3_11/python packages' }
-dependencies = [
-    { name = "numpy", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "scipy", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
-]
-wheels = [
-    { path = "ecos-2.0.14-cp311-cp311-win_amd64.whl" },
 ]
 
 [[package]]
@@ -226,37 +148,22 @@ wheels = [
 ]
 
 [[package]]
-name = "lmfit"
-version = "1.3.2"
-source = { registry = '\\nas.sg.gbs.pro\AreaFinanza/Share/PROGETTI ML/Python/python3_11/python packages' }
-dependencies = [
-    { name = "asteval", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "dill", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "numpy", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "scipy", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "uncertainties", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
-]
-wheels = [
-    { path = "lmfit-1.3.2-py3-none-any.whl" },
-]
-
-[[package]]
 name = "market-monitor"
 version = "1.0"
 source = { editable = "." }
 dependencies = [
     { name = "aiosqlite", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "cvxpy", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "django", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "blpapi", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "joblib", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "matplotlib", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "openpyxl", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "pyarrow", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "pyqt5", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "questionary", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "redis", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "ruamel-yaml", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "scipy", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "sfm-pcf-db-library", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "sfm-quantlib", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "sfm-return-adjustment-lib", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "sfm-timescaledb-queries", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "tqdm", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -273,18 +180,18 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "aiosqlite", specifier = ">=0.20.0" },
-    { name = "cvxpy", specifier = ">=1.5.3" },
-    { name = "django", specifier = ">=5.1.5" },
-    { name = "joblib", specifier = ">=1.4.2" },
+    { name = "blpapi", specifier = ">=3.24.6" },
+    { name = "joblib", specifier = ">=1.3.0" },
     { name = "matplotlib", specifier = ">=3.9.0" },
     { name = "openpyxl", specifier = ">=3.1.2" },
+    { name = "pyarrow", specifier = ">=14.0.0" },
     { name = "pyqt5", specifier = ">=5.15.11" },
+    { name = "questionary", specifier = ">=2.0.0" },
     { name = "redis", specifier = ">=6.2.0" },
     { name = "ruamel-yaml", specifier = ">=0.18.6" },
     { name = "scipy", specifier = ">=1.16.0" },
     { name = "sfm-pcf-db-library", specifier = ">=1.0.72038" },
-    { name = "sfm-quantlib", specifier = ">=1.0.72184" },
-    { name = "sfm-return-adjustment-lib", specifier = ">=1.0.72051" },
+    { name = "sfm-return-adjustment-lib", specifier = ">=1.0.75641" },
     { name = "sfm-timescaledb-queries", specifier = ">=1.0.72117" },
     { name = "tqdm", specifier = ">=4.64.0" },
     { name = "watchdog", specifier = ">=2.2.1" },
@@ -342,22 +249,6 @@ wheels = [
 ]
 
 [[package]]
-name = "narwhals"
-version = "1.44.0"
-source = { registry = '\\nas.sg.gbs.pro\AreaFinanza/Share/PROGETTI ML/Python/python3_11/python packages' }
-wheels = [
-    { path = "narwhals-1.44.0-py3-none-any.whl" },
-]
-
-[[package]]
-name = "networkx"
-version = "3.1"
-source = { registry = '\\nas.sg.gbs.pro\AreaFinanza/Share/PROGETTI ML/Python/python3_11/python packages' }
-wheels = [
-    { path = "networkx-3.1-py3-none-any.whl" },
-]
-
-[[package]]
 name = "numpy"
 version = "2.3.1"
 source = { registry = '\\nas.sg.gbs.pro\AreaFinanza/Share/PROGETTI ML/Python/python3_11/python packages' }
@@ -385,19 +276,6 @@ dependencies = [
 ]
 wheels = [
     { path = "oracledb-2.3.0-cp311-cp311-win_amd64.whl" },
-]
-
-[[package]]
-name = "osqp"
-version = "0.6.7.post3"
-source = { registry = '\\nas.sg.gbs.pro\AreaFinanza/Share/PROGETTI ML/Python/python3_11/python packages' }
-dependencies = [
-    { name = "numpy", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "qdldl", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "scipy", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
-]
-wheels = [
-    { path = "osqp-0.6.7.post3-cp311-cp311-win_amd64.whl" },
 ]
 
 [[package]]
@@ -439,23 +317,22 @@ wheels = [
 ]
 
 [[package]]
-name = "plotly"
-version = "6.5.0"
-source = { registry = '\\nas.sg.gbs.pro\AreaFinanza/Share/PROGETTI ML/Python/python3_11/python packages' }
-dependencies = [
-    { name = "narwhals", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "packaging", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
-]
-wheels = [
-    { path = "plotly-6.5.0-py3-none-any.whl" },
-]
-
-[[package]]
 name = "pluggy"
 version = "1.5.0"
 source = { registry = '\\nas.sg.gbs.pro\AreaFinanza/Share/PROGETTI ML/Python/python3_11/python packages' }
 wheels = [
     { path = "pluggy-1.5.0-py3-none-any.whl" },
+]
+
+[[package]]
+name = "prompt-toolkit"
+version = "3.0.48"
+source = { registry = '\\nas.sg.gbs.pro\AreaFinanza/Share/PROGETTI ML/Python/python3_11/python packages' }
+dependencies = [
+    { name = "wcwidth", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+wheels = [
+    { path = "prompt_toolkit-3.0.48-py3-none-any.whl" },
 ]
 
 [[package]]
@@ -483,17 +360,6 @@ version = "2.23"
 source = { registry = '\\nas.sg.gbs.pro\AreaFinanza/Share/PROGETTI ML/Python/python3_11/python packages' }
 wheels = [
     { path = "pycparser-2.23-py3-none-any.whl" },
-]
-
-[[package]]
-name = "pydot"
-version = "3.0.4"
-source = { registry = '\\nas.sg.gbs.pro\AreaFinanza/Share/PROGETTI ML/Python/python3_11/python packages' }
-dependencies = [
-    { name = "pyparsing", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
-]
-wheels = [
-    { path = "pydot-3.0.4-py3-none-any.whl" },
 ]
 
 [[package]]
@@ -610,20 +476,6 @@ wheels = [
 ]
 
 [[package]]
-name = "pyvinecopulib"
-version = "0.7.1"
-source = { registry = '\\nas.sg.gbs.pro\AreaFinanza/Share/PROGETTI ML/Python/python3_11/python packages' }
-dependencies = [
-    { name = "matplotlib", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "networkx", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "numpy", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "pydot", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
-]
-wheels = [
-    { path = "pyvinecopulib-0.7.1-cp311-cp311-win_amd64.whl" },
-]
-
-[[package]]
 name = "pywin32"
 version = "311"
 source = { registry = '\\nas.sg.gbs.pro\AreaFinanza/Share/PROGETTI ML/Python/python3_11/python packages' }
@@ -640,23 +492,14 @@ wheels = [
 ]
 
 [[package]]
-name = "qdldl"
-version = "0.1.7.post4"
+name = "questionary"
+version = "2.1.1"
 source = { registry = '\\nas.sg.gbs.pro\AreaFinanza/Share/PROGETTI ML/Python/python3_11/python packages' }
 dependencies = [
-    { name = "numpy", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "scipy", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "prompt-toolkit", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
 wheels = [
-    { path = "qdldl-0.1.7.post4-cp311-cp311-win_amd64.whl" },
-]
-
-[[package]]
-name = "quantlib"
-version = "1.36"
-source = { registry = '\\nas.sg.gbs.pro\AreaFinanza/Share/PROGETTI ML/Python/python3_11/python packages' }
-wheels = [
-    { path = "QuantLib-1.36-cp38-abi3-win_amd64.whl" },
+    { path = "questionary-2.1.1-py3-none-any.whl" },
 ]
 
 [[package]]
@@ -698,18 +541,6 @@ dependencies = [
 ]
 wheels = [
     { path = "scipy-1.16.0-cp311-cp311-win_amd64.whl" },
-]
-
-[[package]]
-name = "scs"
-version = "3.2.7"
-source = { registry = '\\nas.sg.gbs.pro\AreaFinanza/Share/PROGETTI ML/Python/python3_11/python packages' }
-dependencies = [
-    { name = "numpy", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "scipy", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
-]
-wheels = [
-    { path = "scs-3.2.7-cp311-cp311-win_amd64.whl" },
 ]
 
 [[package]]
@@ -774,24 +605,6 @@ wheels = [
 ]
 
 [[package]]
-name = "sfm-quantlib"
-version = "1.1.75336"
-source = { registry = '\\nas.sg.gbs.pro\AreaFinanza/Share/PROGETTI ML/Python/python3_11/python packages' }
-dependencies = [
-    { name = "lmfit", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "pandas", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "plotly", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "pyvinecopulib", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "quantlib", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "scipy", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "sfm-dbconnections", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "threadpoolctl", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
-]
-wheels = [
-    { path = "sfm_quantlib-1.1.75336-py3-none-any.whl" },
-]
-
-[[package]]
 name = "sfm-return-adjustment-lib"
 version = "1.0.75641"
 source = { registry = '\\nas.sg.gbs.pro\AreaFinanza/Share/PROGETTI ML/Python/python3_11/python packages' }
@@ -824,22 +637,6 @@ wheels = [
 ]
 
 [[package]]
-name = "sqlparse"
-version = "0.5.3"
-source = { registry = '\\nas.sg.gbs.pro\AreaFinanza/Share/PROGETTI ML/Python/python3_11/python packages' }
-wheels = [
-    { path = "sqlparse-0.5.3-py3-none-any.whl" },
-]
-
-[[package]]
-name = "threadpoolctl"
-version = "3.5.0"
-source = { registry = '\\nas.sg.gbs.pro\AreaFinanza/Share/PROGETTI ML/Python/python3_11/python packages' }
-wheels = [
-    { path = "threadpoolctl-3.5.0-py3-none-any.whl" },
-]
-
-[[package]]
 name = "tqdm"
 version = "4.64.0"
 source = { registry = '\\nas.sg.gbs.pro\AreaFinanza/Share/PROGETTI ML/Python/python3_11/python packages' }
@@ -867,19 +664,19 @@ wheels = [
 ]
 
 [[package]]
-name = "uncertainties"
-version = "3.2.2"
-source = { registry = '\\nas.sg.gbs.pro\AreaFinanza/Share/PROGETTI ML/Python/python3_11/python packages' }
-wheels = [
-    { path = "uncertainties-3.2.2-py3-none-any.whl" },
-]
-
-[[package]]
 name = "watchdog"
 version = "2.2.1"
 source = { registry = '\\nas.sg.gbs.pro\AreaFinanza/Share/PROGETTI ML/Python/python3_11/python packages' }
 wheels = [
     { path = "watchdog-2.2.1-py3-none-win_amd64.whl" },
+]
+
+[[package]]
+name = "wcwidth"
+version = "0.2.13"
+source = { registry = '\\nas.sg.gbs.pro\AreaFinanza/Share/PROGETTI ML/Python/python3_11/python packages' }
+wheels = [
+    { path = "wcwidth-0.2.13-py2.py3-none-any.whl" },
 ]
 
 [[package]]

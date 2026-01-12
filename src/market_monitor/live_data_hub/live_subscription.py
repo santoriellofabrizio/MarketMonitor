@@ -27,7 +27,7 @@ class LiveSubscription:
     """
     id: str
     source: Optional[str] = None
-    status: str = "pending"  # pending → active → failed/closed
+    status: str = "pending"  # pending -> active -> failed/closed
     is_delayed: bool = False
     last_update: Optional[datetime] = None
     error_count: int = 0
@@ -202,7 +202,7 @@ class LiveSubscriptionManager:
     Advanced subscription manager using LiveSubscription dataclass.
 
     Features:
-    - Track subscription lifecycle (pending → active → failed/closed)
+    - Track subscription lifecycle (pending -> active -> failed/closed)
     - Detect stale subscriptions
     - Group subscriptions by category
     - Rich metadata support
@@ -405,7 +405,7 @@ class LiveSubscriptionManager:
             source: Filter by source (None = all sources)
 
         Returns:
-            Dict of ticker → LiveSubscription
+            Dict of ticker -> LiveSubscription
         """
         if source:
             return self._live_subscriptions.get(source.lower(), {}).copy()
@@ -468,7 +468,7 @@ class LiveSubscriptionManager:
         Set Bloomberg subscriptions (legacy API).
 
         Args:
-            subscriptions: Dict of ticker → subscription string
+            subscriptions: Dict of ticker -> subscription string
             fields: Optional list of fields to subscribe to
             params: Optional Bloomberg parameters
         """
@@ -512,7 +512,7 @@ class LiveSubscriptionManager:
             self.add_subscription(redis_sub)
 
     def get_bloomberg_subscriptions(self) -> Dict[str, str]:
-        """Get Bloomberg subscriptions (legacy API - returns ticker → subscription_string)"""
+        """Get Bloomberg subscriptions (legacy API - returns ticker -> subscription_string)"""
         subs = self._live_subscriptions.get("bloomberg", {})
         return {
             ticker: sub.subscription_string

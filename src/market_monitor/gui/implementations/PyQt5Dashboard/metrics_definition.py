@@ -19,14 +19,29 @@ METRIC_DEFINITIONS = {
         "label": "Total Spread P&L",
         "compute": lambda df: df["spread_pl"].sum()
         if "spread_pl" in df.columns else 0.0,
-        "format": "${:,.2f}",
+        "format": "€{:,.2f}",
+        "colorize": True
+    },
+    "my_spread_pl_sum": {
+        "label": "My Total Spread P&L",
+        "compute": lambda df: df[df["own_trade"] == True]["spread_pl"].sum()
+        if "spread_pl" in df.columns else 0.0,
+        "format": "€{:,.2f}",
+        "colorize": True
+    },
+
+    "my_ctv_sum": {
+        "label": "My Total ctv",
+        "compute": lambda df: df[df["own_trade"] == True]["ctv"].sum()
+        if "ctv" in df.columns else 0.0,
+        "format": "€{:,.2f}",
         "colorize": True
     },
     "spread_pl_mean": {
         "label": "Avg Spread P&L",
         "compute": lambda df: df["spread_pl"].mean()
         if "spread_pl" in df.columns else 0.0,
-        "format": "${:,.2f}"
+        "format": "€{:,.2f}"
     },
 
     # --- CTV ---
@@ -34,7 +49,7 @@ METRIC_DEFINITIONS = {
         "label": "Total CTV",
         "compute": lambda df: df["ctv"].sum()
         if "ctv" in df.columns else 0.0,
-        "format": "${:,.2f}"
+        "format": "€{:,.2f}"
     },
 
     # =========================
@@ -52,8 +67,8 @@ METRIC_DEFINITIONS = {
     "my_pl_marginality": {
         "label": "My PL Marginality",
         "compute": lambda df: (
-            df.loc[df["own_trade"] == True, "spread_pl"].sum() /
-            df.loc[df["own_trade"] == True, "ctv"].sum()
+            df.loc[df["own_trade"] == True]["spread_pl"].sum() /
+            df.loc[df["own_trade"] == True]["ctv"].sum()
             if {"spread_pl", "ctv", "own_trade"}.issubset(df.columns)
             and df.loc[df["own_trade"] == True, "ctv"].sum() != 0
             else 0.0

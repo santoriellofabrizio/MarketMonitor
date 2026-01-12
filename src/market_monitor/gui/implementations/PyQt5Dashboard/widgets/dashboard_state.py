@@ -396,6 +396,10 @@ class DashboardState:
                 window = dashboard._create_detached_pivot_internal()
                 window.restoreGeometry(self._hex_to_qbytearray(config['geometry']))
 
+                # ✅ CARICA DATI STORICI PRIMA DI RESTORE CONFIG
+                if not dashboard.all_trades.empty:
+                    window.pivot_widget.set_source_data(dashboard.all_trades)
+
                 if config.get('pivot_config'):
                     pivot_cfg = config['pivot_config']
 
@@ -418,6 +422,10 @@ class DashboardState:
             for config in detached.get('chart_windows', []):
                 window = dashboard._create_detached_chart_internal()
                 window.restoreGeometry(self._hex_to_qbytearray(config['geometry']))
+
+                # ✅ CARICA DATI STORICI PRIMA DI RESTORE CONFIG
+                if not dashboard.all_trades.empty:
+                    window.chart_widget.set_data(dashboard.all_trades)
 
                 if config.get('chart_config'):
                     chart_cfg = config['chart_config']
@@ -453,39 +461,41 @@ class DashboardState:
         🆕 Deserializza un FilterGroup da dict JSON
         """
         try:
-            # Import necessari
             from market_monitor.gui.implementations.PyQt5Dashboard.widgets.filter import (
-                FilterGroup, ColumnFilter, FilterOperator
+                FilterOperator, FilterGroup, FilterCondition
             )
 
             logic = filter_data.get('logic', 'AND')
-            conditions = []
+            
+            # Crea FilterGroup SENZA conditions
+            filter_group = FilterGroup(logic=logic)
 
+            # Aggiungi conditions dopo
             for cond_dict in filter_data.get('conditions', []):
                 try:
                     operator = FilterOperator(cond_dict['operator'])
                     value = self._deserialize_filter_value(cond_dict['value'])
                     value2 = self._deserialize_filter_value(cond_dict.get('value2'))
 
-                    condition = ColumnFilter(
+                    condition = FilterCondition(
                         column=cond_dict['column'],
                         operator=operator,
                         value=value,
                         value2=value2
                     )
-                    conditions.append(condition)
+                    filter_group.add_condition(condition)
 
                 except Exception as e:
                     self.logger.warning(f"Failed to deserialize filter condition: {e}")
                     continue
 
-            if conditions:
-                return FilterGroup(logic=logic, conditions=conditions)
+            if filter_group.conditions:
+                return filter_group
 
             return None
 
-        except ImportError:
-            self.logger.warning("Could not import FilterGroup/ColumnFilter for filter restoration")
+        except ImportError as ie:
+            self.logger.warning(f"Could not import FilterGroup/ColumnFilter for filter restoration: {ie}")
             return None
         except Exception as e:
             self.logger.warning(f"Failed to deserialize filter group: {e}")

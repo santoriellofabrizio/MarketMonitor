@@ -905,7 +905,7 @@ class ThreadGUITkinter(threading.Thread, ABC):
         in which columns were clicked by. When a column’s sorting is removed, the priority
         shifts to the next active column in the list.
 
-        This allows toggling through sorting states (ascending → descending → no sort)
+        This allows toggling through sorting states (ascending -> descending -> no sort)
         on each column click, supporting multi-column sorting with prioritization based
         on click order.
         """

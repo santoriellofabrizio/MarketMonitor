@@ -50,7 +50,7 @@ class BBGEventHandler(EventHandler):
 
         Args:
             isin: Instrument identifier
-            data: Dict of field → value (e.g., {"BID": 100.0, "ASK": 102.0})
+            data: Dict of field -> value (e.g., {"BID": 100.0, "ASK": 102.0})
         """
         # Bloomberg always routes to MarketStore
         self.real_time_data.update(isin, data, store="market")

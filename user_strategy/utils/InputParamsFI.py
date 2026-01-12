@@ -6,7 +6,7 @@ import os
 import calendar
 from dateutil.relativedelta import relativedelta
 
-from user_strategy.FixedIncomeETF.InstrumentDbManager.InstrumentDbManager import \
+from user_strategy.fixed_income.InstrumentDbManager.InstrumentDbManager import \
     InstrumentDbManager
 from user_strategy.utils import CustomBDay
 

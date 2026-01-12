@@ -17,7 +17,7 @@ class OracleConnection(sfm_OracleConnection):
     database = "ORACLE"
     user = "AF_PCF"
     password = "AAAbbb2022!!!"
-    host = "dcdwboh-cli.sg.gbs.pro"
+    host = "dcdwboh-entry.sg.gbs.pro"
     port = 1521
     service = "OTH_ORABOH.bsella.it"
     tns = "ORABOH"

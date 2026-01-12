@@ -22,7 +22,7 @@ class TradeManager:
     # Configurabili via kwargs
     DEFAULT_MAX_TIME_TO_MATCH_SECONDS = 10.0
     DEFAULT_AUTO_SAVE_INTERVAL = 500
-    DEFAULT_MAX_CACHE_SIZE = 10000
+    DEFAULT_MAX_CACHE_SIZE = 1e9
 
     def __init__(
             self,
@@ -50,7 +50,7 @@ class TradeManager:
         # Config
         self.max_time_to_match = kwargs.get('max_time_to_match_side', self.DEFAULT_MAX_TIME_TO_MATCH_SECONDS)
         self.max_cache_size = kwargs.get("max_cache_size", self.DEFAULT_MAX_CACHE_SIZE)
-        self.trade_folder = trade_folder or Path.cwd() / "data" / "trades"
+        self.trade_folder = trade_folder or Path.cwd() / "etc" / "data" / "trades"
         self.use_timezone_aware = kwargs.get("use_timezone_aware", True)
 
 
@@ -163,7 +163,7 @@ class TradeManager:
         if snapshot:
             snapshot_time, mid_prices = snapshot
             mid = mid_prices.get(trade.isin)
-            logging.debug(f"matched side: snapshot time: {snapshot_time}, trade_time: {trade.timestamp}")
+            logger.info(f"matched side: snapshot time: {snapshot_time}, trade_time: {trade.timestamp}")
             if mid is not None:
                 trade.side = "bid" if trade.price < mid else "ask"
 
@@ -304,9 +304,29 @@ class TradeManager:
         try:
             # ✅ Leggi tutto, concatena, riscrivi (sempre funziona)
             if filepath.exists():
-                existing_df = pd.read_parquet(filepath, engine="pyarrow")
-                combined_df = pd.concat([existing_df, new_df], ignore_index=True)
+                try:
+                    existing_df = pd.read_parquet(filepath, engine="pyarrow")
+                except Exception as read_error:
+                    # File corrotto - backup e riparti da zero
+                    logger.warning(
+                        f"Parquet file corrupted ({read_error}). "
+                        f"Backing up and creating new file."
+                    )
+                    backup_path = filepath.with_stem(filepath.stem + "_corrupted_backup")
+                    try:
+                        filepath.rename(backup_path)
+                        logger.info(f"Corrupted file backed up to: {backup_path}")
+                    except Exception as backup_error:
+                        logger.error(f"Could not backup corrupted file: {backup_error}")
+                    
+                    existing_df = pd.DataFrame()  # Restart from empty
+                else:
+                    combined_df = pd.concat([existing_df, new_df], ignore_index=True)
             else:
+                combined_df = new_df
+
+            # Se non c'è existing_df (file corrotto), usa solo new_df
+            if 'combined_df' not in locals():
                 combined_df = new_df
 
             combined_df.to_parquet(

@@ -1,6 +1,6 @@
 """
 FlowMonitorWidget - Displays detected trading flows in real-time.
-Compact design with instrument filtering.
+Compact design with instrument filtering and Min CTV filtering.
 """
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
                              QScrollArea, QFrame, QPushButton, QGroupBox,
@@ -125,7 +125,8 @@ class FlowCard(QFrame):
         self.flow_id_label.setText(f"[{flow_data['flow_id']}]")
 
         # Side badge
-        side = flow_data['side'].upper()
+        side = flow_data.get('side')
+        side = side.upper() if side else 'UNKNOWN'
         if side in ['BUY', 'BID']:
             self.side_label.setText("BUY")
             self.side_label.setStyleSheet(
@@ -134,7 +135,7 @@ class FlowCard(QFrame):
                 "padding: 2px 6px; border-radius: 3px;"
             )
             self._set_color('#e8f5e9')  # Very light green
-        else:
+        elif side in ['SELL', 'ASK']:
             self.side_label.setText("SELL")
             self.side_label.setStyleSheet(
                 "font-size: 9px; font-weight: bold; "
@@ -142,6 +143,14 @@ class FlowCard(QFrame):
                 "padding: 2px 6px; border-radius: 3px;"
             )
             self._set_color('#ffebee')  # Very light red
+        else:
+            self.side_label.setText("UNKNOWN")
+            self.side_label.setStyleSheet(
+                "font-size: 9px; font-weight: bold; "
+                "background-color: #999999; color: white; "
+                "padding: 2px 6px; border-radius: 3px;"
+            )
+            self._set_color('#f5f5f5')  # Light gray
 
         # Status
         if flow_data['is_active']:
@@ -195,7 +204,9 @@ class FlowCard(QFrame):
 
     def mousePressEvent(self, event):
         """Handle click."""
+        print(f"\n>>> FlowCard.mousePressEvent: flow_id={self.flow_id}")
         if event.button() == Qt.LeftButton:
+            print(f">>> Emitting flow_selected signal with flow_id={self.flow_id}")
             self.clicked.emit(self.flow_id)
         super().mousePressEvent(event)
 
@@ -203,7 +214,7 @@ class FlowCard(QFrame):
 class FlowMonitorWidget(QWidget):
     """
     Widget to monitor and display detected flows.
-    Compact design with instrument filtering.
+    Compact design with instrument filtering and Min CTV filtering.
     """
 
     flow_selected = pyqtSignal(str)  # flow_id
@@ -217,6 +228,7 @@ class FlowMonitorWidget(QWidget):
 
         # Filtering
         self.hidden_instruments: Set[str] = set()  # Instruments to hide
+        self.min_ctv_filter = 0  # Minimum CTV filter
 
         self._setup_ui()
 
@@ -267,7 +279,7 @@ class FlowMonitorWidget(QWidget):
 
         header_layout.addLayout(top_row)
 
-        # Bottom row: Filter
+        # Filter instruments row
         filter_row = QHBoxLayout()
 
         filter_label = QLabel("Hide:")
@@ -300,6 +312,32 @@ class FlowMonitorWidget(QWidget):
         filter_row.addWidget(clear_filters_btn)
 
         header_layout.addLayout(filter_row)
+        
+        # Min CTV Filter row
+        ctv_filter_row = QHBoxLayout()
+        
+        ctv_label = QLabel("Min CTV:")
+        ctv_label.setStyleSheet("font-size: 9px;")
+        ctv_filter_row.addWidget(ctv_label)
+        
+        self.min_ctv_input = QLineEdit()
+        self.min_ctv_input.setPlaceholderText("0")
+        self.min_ctv_input.setMaximumWidth(70)
+        self.min_ctv_input.setMaximumHeight(22)
+        self.min_ctv_input.setStyleSheet("font-size: 9px;")
+        self.min_ctv_input.textChanged.connect(self._apply_ctv_filter)
+        ctv_filter_row.addWidget(self.min_ctv_input)
+        
+        clear_ctv_btn = QPushButton("Clear CTV")
+        clear_ctv_btn.setMaximumWidth(70)
+        clear_ctv_btn.setMaximumHeight(22)
+        clear_ctv_btn.clicked.connect(self._clear_ctv_filter)
+        clear_ctv_btn.setStyleSheet("font-size: 9px; padding: 2px;")
+        ctv_filter_row.addWidget(clear_ctv_btn)
+        
+        ctv_filter_row.addStretch()
+        
+        header_layout.addLayout(ctv_filter_row)
 
         header.setLayout(header_layout)
         layout.addWidget(header)
@@ -333,10 +371,19 @@ class FlowMonitorWidget(QWidget):
         # Check if instrument is hidden
         if instrument_id in self.hidden_instruments:
             return
+        
+        # Check if CTV is within range
+        if not self._is_ctv_in_range(flow_data):
+            return
 
         if flow_id in self.flow_cards:
-            # Update existing card
-            self.flow_cards[flow_id].update_flow(flow_data)
+            # Update existing card - sposta in cima
+            card = self.flow_cards[flow_id]
+            card.update_flow(flow_data)
+            
+            # Rimuovi e rimetti in cima per visibilità
+            self.cards_layout.removeWidget(card)
+            self.cards_layout.insertWidget(0, card)
         else:
             # Create new card
             card = FlowCard(flow_data)
@@ -353,8 +400,8 @@ class FlowMonitorWidget(QWidget):
                     self.show()
                     self.has_ever_had_flows = True
 
-            # Add to layout
-            self.cards_layout.addWidget(card)
+            # ✅ INSERISCI IN CIMA (index 0)
+            self.cards_layout.insertWidget(0, card)
 
         self._update_count()
 
@@ -410,6 +457,27 @@ class FlowMonitorWidget(QWidget):
         self.hidden_instruments.clear()
         self._update_hidden_label()
         self._apply_filters()
+    
+    def _apply_ctv_filter(self):
+        """Apply Min CTV filter and reapply all filters."""
+        try:
+            min_text = self.min_ctv_input.text().strip()
+            self.min_ctv_filter = float(min_text) if min_text else 0
+            self._apply_filters()
+        except ValueError:
+            # Invalid input, ignore
+            pass
+    
+    def _clear_ctv_filter(self):
+        """Clear CTV filter."""
+        self.min_ctv_input.clear()
+        self.min_ctv_filter = 0
+        self._apply_filters()
+    
+    def _is_ctv_in_range(self, flow_data: dict) -> bool:
+        """Check if flow CTV è >= min filter."""
+        ctv = flow_data.get('ctv', flow_data.get('total_quantity', 0) * flow_data.get('avg_price', 0))
+        return ctv >= self.min_ctv_filter
 
     def _apply_filters(self):
         """Reapply filters to all cards."""
@@ -417,7 +485,13 @@ class FlowMonitorWidget(QWidget):
             instrument_id = card.flow_data.get('instrument_id',
                                                card.flow_data.get('ticker', 'N/A'))
 
-            if instrument_id in self.hidden_instruments:
+            # Check instrument filter
+            is_hidden_instrument = instrument_id in self.hidden_instruments
+            
+            # Check CTV filter
+            is_out_of_ctv_range = not self._is_ctv_in_range(card.flow_data)
+            
+            if is_hidden_instrument or is_out_of_ctv_range:
                 # Hide card
                 card.hide()
             else:
