@@ -104,8 +104,8 @@ class DetachedFlowWindow(QMainWindow):
         self.flow_widget = FlowMonitorWidget(auto_hide=False)
         layout.addWidget(self.flow_widget)
 
-        # Connetti signal
-        self.flow_widget.flow_selected.connect(self._on_flow_selected)
+        # NON connettere qui - sarà connesso dalla dashboard a _show_trade_history
+        # self.flow_widget.flow_selected.connect(self._on_flow_selected)
 
     def add_flow(self, flow_data: dict):
         """Aggiungi un flow al monitor"""
@@ -122,11 +122,3 @@ class DetachedFlowWindow(QMainWindow):
         """Pulisce tutti i flow"""
         self.flow_widget.clear_all()
         self.info_label.setText(f"Flow Monitor #{self.window_number} | Flows: 0")
-
-    def _on_flow_selected(self, flow_id: str):
-        """Callback quando si clicca su un flow"""
-        QMessageBox.information(
-            self,
-            f"Flow Selected: {flow_id}",
-            f"Flow {flow_id} selected.\n\nAll details are shown in the Flow Monitor card."
-        )

@@ -6,6 +6,7 @@ from typing import Type
 
 import pandas as pd
 
+from interface.bshdata import BshData
 from market_monitor.gui.implementations.GUI import GUI
 from market_monitor.publishers.redis_publisher import RedisMessaging
 from market_monitor.strategy.StrategyUI.StrategyUI import StrategyUI
@@ -21,17 +22,18 @@ from user_strategy.utils.trade_manager.trade_manager import TradeManager
 from user_strategy.utils.bloomberg_subscription_utils.SubscriptionManager import SubscriptionManager
 from user_strategy.utils.enums import ISIN_TO_TICKER, CURRENCY
 
-future_mapping = {"FESX202503": "IE00B53L3W79",  # CSSX5E
-                  "FXXP202503": "LU0908500753",  # MEUD
-                  "FDXM202503": "LU0274211480",  # CG1
-                  "FESB202503": "LU1834983477"}  # BNK
-
 
 class EtfEquityLiveAnalysis(StrategyUI):
 
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
-        self.isin_to_ticker = ISIN_TO_TICKER
+
+        self.API = BshData(config_path=r"C:\AFMachineLearning\Libraries\BshDataProvider\config\bshdata_config.yaml")
+
+        self.all_isin_ETFP = self.API.general.get_etp_isins(underlying="EQUITY", segments="IM")
+
+        self.isin_to_ticker = self.API.info.get_etp_fields(isin=self.all_isin_ETFP[:1000], fields="TICKER")["TICKER"].to_dict()
+        self.isin_to_ticker.update(self.API.info.get_etp_fields(isin=self.all_isin_ETFP[1000:], fields="TICKER")["TICKER"].to_dict())
         self.ticker_to_isin = {ticker: isin for isin, ticker in self.isin_to_ticker.items()}
 
         self.subscription_manager: None | SubscriptionManager = None
@@ -56,7 +58,7 @@ class EtfEquityLiveAnalysis(StrategyUI):
         # -------------------------------------- SETTING INSTRUMENTS ---------------------------------------------------
 
         self.theoretical_live_cluster_price: pd.Series = pd.Series(index=self.instruments, name="TH_CLUSTER_PRICE")
-        self.mid = pd.Series(index=self.instruments, name="mid")
+        self.mid = pd.Series(index=self.all_isin_ETFP, name="mid")
 
         self.trade_dashboard_messaging = RedisMessaging()
 
@@ -66,20 +68,34 @@ class EtfEquityLiveAnalysis(StrategyUI):
 
     def wait_for_book_initialization(self):
         while True:
-            data = self.market_data.get_data_field(field="mid")
+            data = self.market_data.get_data_field(field="MID")
             if data is not None and not data.empty:
                 break
             sleep(1)
+        self.on_start_strategy()
         return True
+
+    def on_start_strategy(self):
+
+        last_trades = self.trade_manager.get_trades()
+        self.publish_trades_on_dashboard(last_trades)
+
+        self.trade_dashboard_messaging.export_message(channel="trades_df",
+                                                      value=last_trades.drop(["is_elaborated"],
+                                                                             errors='ignore'),
+                                                      date_format='iso',
+                                                      orient="records")
 
     def on_market_data_setting(self) -> None:
         # Subscribe to original channel names with market: prefix
         subscription_manager = self.market_data.get_subscription_manager()
-        for channel in ["nav", "mid", "theoretical_live_cluster_price"]:
+        for channel in ["nav", "theoretical_live_cluster_price"]:
             subscription_manager.subscribe_redis(
                 channel=f"market:{channel}",
                 store="market"
             )
+        for isin in self.all_isin_ETFP:
+            subscription_manager.subscribe_bloomberg(isin, f"{isin} IM EQUITY", ["MID"])
 
     def update_LF(self) -> None:
         try:
@@ -94,10 +110,10 @@ class EtfEquityLiveAnalysis(StrategyUI):
 
         processed_new = self.trade_manager.on_trade(new_trades)
 
-        # self.flow_detector.process_trades(processed_new)
-        # if self.flow_detector.has_new_flows():
-        #     for flow in self.flow_detector.get_new_flows():  # ← Una volta sola!
-        #         self.trade_dashboard_messaging.export_flow_detected(channel="trades_df", flow=flow)
+        self.flow_detector.process_trades(processed_new)
+        if self.flow_detector.has_new_flows():
+            for flow in self.flow_detector.get_new_flows():  # ← Una volta sola!
+                self.trade_dashboard_messaging.export_flow_detected(channel="trades_df", flow=flow)
 
         last_trades = self.trade_manager.get_trades(len(processed_new) + 30)
         self.publish_trades_on_dashboard(last_trades)
@@ -112,9 +128,9 @@ class EtfEquityLiveAnalysis(StrategyUI):
 
         start = time()
         self.trade_dashboard_messaging.export_message(channel="trades_df",
-                                                   value=new_trades,
-                                                   date_format='iso',
-                                                   orient="records")
+                                                      value=new_trades,
+                                                      date_format='iso',
+                                                      orient="records")
 
         logging.debug(f"processing trades takes {time() - start} seconds.")
 
@@ -125,7 +141,7 @@ class EtfEquityLiveAnalysis(StrategyUI):
         # Read from MarketStore using original channel names
         self.theoretical_live_cluster_price.update(
             self.market_data.get_data_field(field="theoretical_live_cluster_price"))
-        self.mid.update(self.market_data.get_data_field(field="mid"))
+        self.mid.update(self.market_data.get_data_field(field="MID"))
 
         # Store book with timestamp
         self.book_storage.append(self.mid.copy())

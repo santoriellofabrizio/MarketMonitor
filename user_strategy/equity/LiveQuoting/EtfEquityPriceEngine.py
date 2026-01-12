@@ -13,7 +13,6 @@ from analytics.adjustments.dividend import DividendComponent
 from analytics.adjustments.fx_forward_carry import FxForwardCarryComponent
 from analytics.adjustments.fx_spot import FxSpotComponent
 from analytics.adjustments.ter import TerComponent
-from core.enums.currencies import CurrencyEnum
 from core.holidays.holiday_manager import HolidayManager
 from interface.bshdata import BshData
 from market_monitor.gui.implementations.GUI import GUI
@@ -32,6 +31,7 @@ class EtfEquityPriceEngine(StrategyUI):
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
 
+        self.number_of_days_intraday = kwargs.get("number_of_days_intraday", 3)
         self.API = BshData(config_path=r"C:\AFMachineLearning\Libraries\BshDataProvider\config\bshdata_config.yaml")
 
         isins_etf_equity = self.API.general.get_etp_isins(underlying="EQUITY", segments="IM")
@@ -42,7 +42,10 @@ class EtfEquityPriceEngine(StrategyUI):
         self.isin_to_ticker = self.API.info.get_etp_fields(isin=isins_etf_equity, source="bloomberg",
                                                            fields=["TICKER"])["TICKER"].to_dict()
 
-        self.currencies = [f"EUR{c}" for c in CurrencyEnum.__members__ if c != "EUR"]
+        currencies = ['USD', 'GBP', 'CHF', 'AUD', 'DKK', 'HKD', 'NOK', 'PLN', 'SEK', 'CNY', 'JPY', 'CNH', 'CAD', 'INR',
+                      'BRL']
+
+        self.currencies = [f"EUR{c}" for c in currencies if c != "EUR"]
         self.gui_redis = RedisMessaging()
         self.gui_redis.export_static_data(ENGINE_PID=os.getpid())
 
@@ -82,12 +85,14 @@ class EtfEquityPriceEngine(StrategyUI):
 
         self.holidays = HolidayManager()
         start = self.holidays.subtract_business_days(today(), self.number_of_days)
+        start_intraday = self.holidays.subtract_business_days(today(), self.number_of_days_intraday)
         end = yesterday = self.holidays.previous_business_day(today())
         days = self.holidays.get_business_days(start=start, end=end)
-        snapshot_time = time(16)
+        snapshot_time = time(16, 45)
 
         fx_composition = self.API.info.get_fx_composition(self.instruments, fx_fxfwrd="fx",
                                                           reference_date=date(2025, 12, 18))
+
         fx_forward = self.API.info.get_fx_composition(self.instruments, fx_fxfwrd="fxfwrd",
                                                       reference_date=date(2025, 12, 18))
 
@@ -104,15 +109,25 @@ class EtfEquityPriceEngine(StrategyUI):
                                                         fallbacks=[{"source": "bloomberg", "market": "IM"}]).reindex(
             days)
 
-        self.fx_prices_intraday = self.API.market.get_intraday_fx(id=self.currencies,
-                                                                  date=yesterday,
-                                                                  start_time=time(10),
-                                                                  frequency="15m")
+        self.fx_prices_intraday = self.filter_outliers(
+            self.API.market.get_intraday_fx(id=self.currencies,
+                                            start=start_intraday,
+                                            end=end,
+                                            frequency="15m")
+            .between_time("10:00", "17:00"))
 
-        self.etf_prices_intraday = self.API.market.get_intraday_etf(id=self.instruments,
-                                                                    date=yesterday,
-                                                                    start_time=time(10),
-                                                                    frequency="15m")
+        self.etf_prices_intraday = self.filter_outliers(
+            self.API.market.get_intraday_etf(id=self.instruments,
+                                             start=start_intraday,
+                                             end=end,
+                                             frequency="15m")
+            .between_time("10:00", "17:00"))
+
+        Q1 = self.etf_prices_intraday.quantile(0.25)
+        Q3 = self.etf_prices_intraday.quantile(0.75)
+        outliers = (self.etf_prices_intraday < Q1 - 1.5 * (Q3 - Q1)) | (self.etf_prices_intraday > Q3 + 1.5 * (Q3 - Q1))
+        self.etf_prices_intraday[outliers] = np.nan
+        self.etf_prices = self.etf_prices.interpolate("time")
 
         # _, fx_full = self.input_params.get_currency_data(self.instruments)
 
@@ -122,23 +137,21 @@ class EtfEquityPriceEngine(StrategyUI):
                                                                  start=start,
                                                                  end=end)
 
-        dividends = self.API.info.get_dividends(id=self.instruments)
-        ter = self.API.info.get_ter(id=self.instruments)/100
+        dividends = self.API.info.get_dividends(id=self.instruments, start=start)
+        ter = self.API.info.get_ter(id=self.instruments) / 100
         ter.update(self.input_params.ter_manual)
 
         self.adjuster = (
-            Adjuster(self.etf_prices, intraday=False)
+            Adjuster(self.etf_prices)
             .add(TerComponent(ter))
             .add(FxSpotComponent(fx_composition, self.fx_prices))
             .add(FxForwardCarryComponent(fx_forward, fx_forward_prices, "1M", self.fx_prices))
-            .add(DividendComponent(dividends, fx_prices=self.fx_prices))
+            .add(DividendComponent(dividends, self.etf_prices, fx_prices=self.fx_prices))
         )
 
-        self.intraday_adjuster = (
-            Adjuster(self.etf_prices_intraday)
-            .add(FxSpotComponent(fx_composition, self.fx_prices_intraday))
-            .add(DividendComponent(dividends, fx_prices=self.fx_prices))
-        )
+        self.intraday_adjuster = Adjuster(self.etf_prices_intraday).add(
+            FxSpotComponent(fx_composition, self.fx_prices_intraday)).add(
+            DividendComponent(dividends, self.etf_prices_intraday, fx_prices=self.fx_prices_intraday))
 
         self.corrected_return: Optional[pd.DataFrame] = pd.DataFrame(index=self.etf_prices.index,
                                                                      columns=self.etf_prices.columns,
@@ -170,21 +183,24 @@ class EtfEquityPriceEngine(StrategyUI):
         self.input_params.set_forecast_aggregation_func(kwargs["pricing"])
 
         self.cluster_model = ClusterPricingModel(
-            beta=beta_cluster_index,
+            beta=beta_cluster,
             returns=self.corrected_return,
             forecast_aggregator=self.input_params.forecast_aggregator_cluster,
+            cluster_correction=self._calculate_cluster_correction(beta_cluster, 0),
             name="theoretical_live_cluster_price")
 
         self.cluster_model_intraday = ClusterPricingModel(
-            beta=beta_cluster,
+            beta=beta_cluster_index,
             returns=self.corrected_return_intraday,
             forecast_aggregator=TrimmedMean(0.2),
+            cluster_correction=self._calculate_cluster_correction(beta_cluster_index, 0),
             name="theoretical_live_cluster_price")
 
         self.index_cluster_model = ClusterPricingModel(
             beta=beta_cluster_index,
             returns=self.corrected_return,
             forecast_aggregator=self.input_params.forecast_aggregator_cluster,
+            cluster_correction=self._calculate_cluster_correction(beta_cluster_index, 0),
             name="theoretical_live_index_cluster_price")
 
         self.cluster_model.calculate_cluster_correction()
@@ -249,8 +265,10 @@ class EtfEquityPriceEngine(StrategyUI):
                                       self.round_series_to_tick(self.mid_eur.fillna(0), self.reference_tick_size))
 
     def update_LF(self):
-        # self.check_book_update(1200)
-        pass
+        fx = self.mid_eur[self.currencies]
+        etfs = self.mid_eur[self.all_etf_plus_securities]
+        self.intraday_adjuster.append_update(prices=etfs, fx_prices=fx)
+
 
     def get_mid(self) -> pd.Series:
         """
@@ -278,13 +296,10 @@ class EtfEquityPriceEngine(StrategyUI):
         else:
             self.mid_eur = last_mid
 
-        self.corrected_return = self.adjuster.clean_returns(cumulative=True,
-                                                            fx_prices=last_mid[self.currencies],
-                                                            live_prices=last_mid).T
-
-        self.corrected_return_intraday = self.intraday_adjuster.clean_returns(cumulative=True,
-                                                                              fx_prices=last_mid[self.currencies],
-                                                                              live_prices=last_mid).T
+        with self.adjuster.live_update(fx_prices=last_mid[self.currencies], prices=last_mid):
+            self.corrected_return = self.adjuster.get_clean_returns(cumulative=True).T
+        with self.intraday_adjuster.live_update(fx_prices=last_mid[self.currencies], prices=last_mid):
+            self.corrected_return_intraday = self.intraday_adjuster.get_clean_returns(cumulative=True).T
 
         # Publish returns
         for i in self.return_to_publish:
@@ -321,7 +336,7 @@ class EtfEquityPriceEngine(StrategyUI):
 
             self.theoretical_intraday_prices = (self.cluster_model_intraday.
                                                 get_price_prediction(self.mid_eur,
-                                                                     self.corrected_return.T))
+                                                                     self.corrected_return_intraday.T))
         except Exception as e:
             logging.error(f"Exception occurred while calculating cluster price: {e}")
 
@@ -337,3 +352,32 @@ class EtfEquityPriceEngine(StrategyUI):
         values = series.fillna(0).values.astype(float)
         rounded_values = np.round(np.round(values / ticks) * ticks, 10)
         return pd.Series(rounded_values, index=series.index).fillna(0)
+
+    @staticmethod
+    def filter_outliers(df: pd.DataFrame) -> pd.DataFrame:
+        Q1 = df.quantile(0.25)
+        Q3 = df.quantile(0.75)
+        outliers = (df < Q1 - 1.5 * (Q3 - Q1)) | (df > Q3 + 1.5 * (Q3 - Q1))
+        df[outliers] = np.nan
+        return df
+
+    @staticmethod
+    def _calculate_cluster_correction(cluster_betas: pd.DataFrame, threshold: float = 0.5) -> pd.Series:
+        """
+        Calculate the cluster correction factor for each subcluster.
+
+        Returns:
+            pd.Series: Series with correction factors for each ISIN.
+        """
+        # this first line is used for the brothers matrix, in order to make it comparable with the clusters matrix
+        cluster_betas = cluster_betas.sort_index(axis=1)
+        cluster_betas = cluster_betas.sort_index(axis=0)
+        for label in cluster_betas.index:
+            cluster_betas.loc[label, label] = 0
+        # with the first series we define which is the threshold for a betas to be considered
+        cluster_threshold: pd.Series = threshold / (cluster_betas != 0).sum(axis=1)
+        # here we count only the beta which are above the threshold
+        cluster_sizes = cluster_betas.gt(cluster_threshold, axis=0).sum(axis=1) + 1
+        # the correction is than calculated as the number of elements which truly influence our calculations
+        correction = cluster_sizes.where(cluster_sizes == 1, (cluster_sizes - 1) / cluster_sizes)
+        return correction

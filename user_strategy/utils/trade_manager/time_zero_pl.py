@@ -183,7 +183,7 @@ class TimeZeroPLManager(threading.Thread):
                     f"model_pl={trade.lagged_spread_pl_model}"
                 )
             else:
-                logger.warning(
+                logger.info(
                     f"[MODEL_PRICE_MISSING] trade_id={trade.trade_index} | "
                     f"isin={trade.isin} | "
                     f"impossibile calcolare model PL"
@@ -250,7 +250,7 @@ class TimeZeroPLManager(threading.Thread):
                 return None
 
             if mid_price <= 0:
-                logger.warning(
+                logger.info(
                     f"[GET_MODEL] Model price non valido | "
                     f"isin={isin} | "
                     f"price={mid_price}"
@@ -319,7 +319,7 @@ class TimeZeroPLManager(threading.Thread):
         side_multiplier = side_map.get(side, None)
 
         if side_multiplier is None:
-            logger.error(
+            logger.info(
                 f"[CALC_PL] Side non riconosciuto | "
                 f"trade_id={trade.trade_index} | "
                 f"side='{side}' (expected 'bid' or 'ask')"
