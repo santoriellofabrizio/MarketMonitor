@@ -1,15 +1,24 @@
 """
-ChartWidget con filtri avanzati AND/OR
+ChartWidget con filtri avanzati AND/OR e ottimizzazioni per stabilità.
+
+Refactoring in 3 fasi:
+- Fase 1: Throttling e reattività (debounce, rendering flag, datetime preprocessing)
+- Fase 2: Filtro rolling temporale e "Top N" categorie
+- Fase 3: Ottimizzazione rendering (downsampling, aggiornamento incrementale)
+
 - Mode: Static Snapshot | Time Evolution
 - Filtri avanzati con logica AND/OR
-- Auto-update
+- Auto-update con debounce
 """
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QGroupBox,
                              QLabel, QComboBox, QPushButton, QRadioButton,
                              QSpinBox, QCheckBox, QMessageBox, QFileDialog)
-from PyQt5.QtCore import Qt, pyqtSignal
+from PyQt5.QtCore import Qt, pyqtSignal, QTimer
 import pandas as pd
+import numpy as np
+from datetime import datetime, timedelta
 from typing import Optional, Dict, Any
+import logging
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
@@ -19,17 +28,66 @@ from market_monitor.gui.implementations.PyQt5Dashboard.widgets.filter import Adv
 
 
 class ChartWidget(QWidget):
-    """Widget versatile per chart con filtri avanzati e dual mode"""
+    """
+    Widget versatile per chart con filtri avanzati e dual mode.
+
+    Ottimizzazioni per stabilità:
+    - Debounce su set_data per evitare ridisegni multipli
+    - Protezione rendering con flag _is_rendering
+    - Preprocessing datetime per performance
+    - Filtro temporale rapido (rolling)
+    - Limitatore "Top N" per bar chart
+    - Downsampling intelligente per line chart
+    """
+
+    # ========================
+    # CONFIGURAZIONE THROTTLING (Fase 1)
+    # ========================
+    DEBOUNCE_MS = 300  # Millisecondi di attesa prima del render
+    MAX_POINTS_LINE_CHART = 2000  # Soglia per downsampling (Fase 3)
+    DEFAULT_TOP_N = 20  # Default barre per bar chart (Fase 2)
+
+    # Opzioni filtro temporale rapido (Fase 2)
+    TIME_FILTER_OPTIONS = {
+        'All': None,
+        '1 min': timedelta(minutes=1),
+        '5 min': timedelta(minutes=5),
+        '15 min': timedelta(minutes=15),
+        '30 min': timedelta(minutes=30),
+        '1 ora': timedelta(hours=1),
+        '4 ore': timedelta(hours=4),
+        'Oggi': 'today',
+    }
 
     def __init__(self, parent=None):
         super().__init__(parent)
+
+        self.logger = logging.getLogger(__name__)
 
         self.source_data = pd.DataFrame()
         self.current_config = None
         self.mode = 'static'
 
+        # ========================
+        # FASE 1: STATO THROTTLING
+        # ========================
+        self._is_rendering = False  # Flag protezione render
+        self._pending_render = False  # Render in attesa
+
+        # Timer per debounce
+        self._debounce_timer = QTimer()
+        self._debounce_timer.setSingleShot(True)
+        self._debounce_timer.timeout.connect(self._on_debounce_timeout)
+
+        # Riferimenti per aggiornamento incrementale (Fase 3)
+        self._line_objects: Dict[str, Any] = {}
+        self._last_chart_mode: Optional[str] = None
+
         # Filtri avanzati
         self.active_filter: Optional[FilterGroup] = None
+
+        # Configurazione pending per restore dopo set_data
+        self._pending_config: Optional[Dict[str, Any]] = None
 
         self._setup_ui()
 
@@ -85,6 +143,40 @@ class ChartWidget(QWidget):
         self.active_filters_label.setStyleSheet("font-style: italic; color: #666; padding: 5px;")
         self.active_filters_label.setWordWrap(True)
         filter_layout.addWidget(self.active_filters_label)
+
+        # ========================
+        # FASE 2: FILTRI RAPIDI
+        # ========================
+        quick_filter_row = QHBoxLayout()
+
+        # Filtro temporale rapido
+        quick_filter_row.addWidget(QLabel("Time Filter:"))
+        self.quick_time_filter = QComboBox()
+        self.quick_time_filter.addItems(list(self.TIME_FILTER_OPTIONS.keys()))
+        self.quick_time_filter.setToolTip("Filtra i dati per finestra temporale rolling")
+        self.quick_time_filter.currentTextChanged.connect(self._on_quick_filter_changed)
+        self.quick_time_filter.setMaximumWidth(100)
+        quick_filter_row.addWidget(self.quick_time_filter)
+
+        # Limitatore Top N (per bar chart)
+        quick_filter_row.addWidget(QLabel("Top N:"))
+        self.top_n_spin = QSpinBox()
+        self.top_n_spin.setRange(0, 500)
+        self.top_n_spin.setValue(0)  # 0 = no limit
+        self.top_n_spin.setSpecialValueText("All")
+        self.top_n_spin.setToolTip("Limita categorie nel chart (0 = tutte)")
+        self.top_n_spin.valueChanged.connect(self._on_quick_filter_changed)
+        self.top_n_spin.setMaximumWidth(80)
+        quick_filter_row.addWidget(self.top_n_spin)
+
+        # Checkbox downsampling (Fase 3)
+        self.downsample_check = QCheckBox("Auto Downsample")
+        self.downsample_check.setChecked(True)
+        self.downsample_check.setToolTip(f"Riduce automaticamente i punti a {self.MAX_POINTS_LINE_CHART} per line/scatter")
+        quick_filter_row.addWidget(self.downsample_check)
+
+        quick_filter_row.addStretch()
+        filter_layout.addLayout(quick_filter_row)
 
         filter_group.setLayout(filter_layout)
         settings_layout.addWidget(filter_group)
@@ -331,19 +423,43 @@ class ChartWidget(QWidget):
         return df[mask]
 
     def set_data(self, df: pd.DataFrame):
-        """Imposta i dati sorgente"""
+        """
+        Imposta i dati sorgente con debounce (Fase 1).
+
+        NON triggera rendering immediato. Avvia invece un timer che,
+        se non interrotto da nuovi dati, eseguirà il rendering.
+
+        Preprocessing datetime eseguito qui (una sola volta).
+        """
+        if df is None:
+            df = pd.DataFrame()
+
+        # ========================
+        # FASE 1: PREPROCESSING DATETIME
+        # ========================
+        if not df.empty:
+            df = self._preprocess_datetime(df)
+
         self.source_data = df
 
         if df.empty:
             return
 
-        # Salva selezioni correnti
-        current_static_x = self.static_x_combo.currentText()
-        current_static_y = self.static_y_combo.currentText()
-        current_static_group = self.static_group_combo.currentText()
-        current_time_col = self.time_column_combo.currentText()
-        current_metric = self.metric_combo.currentText()
-        current_time_group = self.time_group_combo.currentText()
+        # Salva selezioni correnti (o da pending config)
+        if self._pending_config:
+            current_static_x = self._pending_config.get('static_x', 'None')
+            current_static_y = self._pending_config.get('static_y', 'None')
+            current_static_group = self._pending_config.get('static_group', 'None')
+            current_time_col = self._pending_config.get('time_column', 'None')
+            current_metric = self._pending_config.get('metric', 'None')
+            current_time_group = self._pending_config.get('time_group', 'None')
+        else:
+            current_static_x = self.static_x_combo.currentText()
+            current_static_y = self.static_y_combo.currentText()
+            current_static_group = self.static_group_combo.currentText()
+            current_time_col = self.time_column_combo.currentText()
+            current_metric = self.metric_combo.currentText()
+            current_time_group = self.time_group_combo.currentText()
 
         # Aggiorna combo boxes
         columns = ['None'] + list(df.columns)
@@ -381,9 +497,274 @@ class ChartWidget(QWidget):
         if current_time_group in columns:
             self.time_group_combo.setCurrentText(current_time_group)
 
-        # Auto-update
-        if self.current_config and self.auto_update_checkbox.isChecked():
+        # Applica pending config se presente
+        if self._pending_config:
+            self._apply_pending_config()
+            self._pending_config = None
+        # ========================
+        # FASE 1: DEBOUNCE AUTO-UPDATE
+        # ========================
+        # Invece di chiamare direttamente _apply_chart_from_config,
+        # avviamo il timer di debounce
+        elif self.current_config and self.auto_update_checkbox.isChecked():
+            self._debounce_timer.stop()
+            self._debounce_timer.start(self.DEBOUNCE_MS)
+
+    def _apply_pending_config(self):
+        """Applica la configurazione pending dopo che le combo box sono state popolate."""
+        config = self._pending_config
+        if not config:
+            return
+
+        # Mode
+        if config.get('static_mode', True):
+            self.static_radio.setChecked(True)
+            self.mode = 'static'
+        elif config.get('time_evolution_mode', False):
+            self.time_evolution_radio.setChecked(True)
+            self.mode = 'time_evolution'
+
+        # Chart type
+        if 'chart_type' in config:
+            index = self.chart_type_combo.findText(config['chart_type'])
+            if index >= 0:
+                self.chart_type_combo.setCurrentIndex(index)
+
+        # Static controls
+        if 'static_x' in config and config['static_x']:
+            index = self.static_x_combo.findText(config['static_x'])
+            if index >= 0:
+                self.static_x_combo.setCurrentIndex(index)
+
+        if 'static_y' in config and config['static_y']:
+            index = self.static_y_combo.findText(config['static_y'])
+            if index >= 0:
+                self.static_y_combo.setCurrentIndex(index)
+
+        if 'static_group' in config and config['static_group']:
+            index = self.static_group_combo.findText(config['static_group'])
+            if index >= 0:
+                self.static_group_combo.setCurrentIndex(index)
+
+        if 'static_agg' in config:
+            index = self.static_agg_combo.findText(config['static_agg'])
+            if index >= 0:
+                self.static_agg_combo.setCurrentIndex(index)
+
+        # Time evolution controls
+        if 'time_column' in config and config['time_column']:
+            index = self.time_column_combo.findText(config['time_column'])
+            if index >= 0:
+                self.time_column_combo.setCurrentIndex(index)
+
+        if 'metric' in config and config['metric']:
+            index = self.metric_combo.findText(config['metric'])
+            if index >= 0:
+                self.metric_combo.setCurrentIndex(index)
+
+        if 'operation' in config:
+            index = self.operation_combo.findText(config['operation'])
+            if index >= 0:
+                self.operation_combo.setCurrentIndex(index)
+
+        if 'time_group' in config and config['time_group']:
+            index = self.time_group_combo.findText(config['time_group'])
+            if index >= 0:
+                self.time_group_combo.setCurrentIndex(index)
+
+        if 'window' in config:
+            self.window_spinbox.setValue(config['window'])
+
+        if 'auto_update' in config:
+            self.auto_update_checkbox.setChecked(config['auto_update'])
+
+        # Quick filters (Fase 2-3)
+        if 'quick_time_filter' in config:
+            index = self.quick_time_filter.findText(config['quick_time_filter'])
+            if index >= 0:
+                self.quick_time_filter.setCurrentIndex(index)
+
+        if 'top_n' in config:
+            self.top_n_spin.setValue(config['top_n'])
+
+        if 'downsample' in config:
+            self.downsample_check.setChecked(config['downsample'])
+
+        # Applica current_config per il chart
+        if config.get('current_config'):
+            self.current_config = config['current_config']
             self._apply_chart_from_config(self.current_config)
+
+    # ========================
+    # FASE 1: METODI THROTTLING
+    # ========================
+
+    def _preprocess_datetime(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Converte colonne datetime una sola volta.
+        Risparmia tempo nei metodi di plot.
+        """
+        df = df.copy()
+
+        # Cerca colonne datetime comuni
+        datetime_cols = ['timestamp', 'time', 'datetime', 'date', 'created_at', 'updated_at']
+
+        for col in datetime_cols:
+            if col in df.columns:
+                if df[col].dtype == 'object' or str(df[col].dtype) == 'object':
+                    try:
+                        df[col] = pd.to_datetime(df[col], errors='coerce')
+                    except Exception as e:
+                        self.logger.debug(f"Could not convert {col} to datetime: {e}")
+
+        return df
+
+    def _on_debounce_timeout(self):
+        """
+        Chiamato quando il timer di debounce scade.
+        Esegue il rendering se non già in corso.
+        """
+        if self._is_rendering:
+            # Rendering in corso, segna come pending
+            self._pending_render = True
+            return
+
+        self._execute_render()
+
+    def _execute_render(self):
+        """
+        Esegue il rendering protetto dal flag _is_rendering.
+        """
+        if self.source_data.empty or not self.current_config:
+            return
+
+        # Imposta flag rendering
+        self._is_rendering = True
+        self._pending_render = False
+
+        try:
+            self._apply_chart_from_config(self.current_config)
+        except Exception as e:
+            self.logger.error(f"Error during render: {e}")
+            self.info_label.setText(f"Render error: {str(e)[:50]}")
+        finally:
+            self._is_rendering = False
+
+            # Se c'era un render pending, eseguilo dopo un breve delay
+            if self._pending_render:
+                QTimer.singleShot(50, self._execute_render)
+
+    def _on_quick_filter_changed(self):
+        """Callback quando cambiano i filtri rapidi (Fase 2)."""
+        if self.auto_update_checkbox.isChecked() and self.current_config:
+            self._debounce_timer.stop()
+            self._debounce_timer.start(self.DEBOUNCE_MS)
+
+    # ========================
+    # FASE 2: FILTRI ROLLING E TOP N
+    # ========================
+
+    def _find_timestamp_column(self, df: pd.DataFrame) -> Optional[str]:
+        """Trova la colonna timestamp nel DataFrame."""
+        candidates = ['timestamp', 'time', 'datetime', 'date', 'created_at']
+
+        for col in candidates:
+            if col in df.columns:
+                return col
+
+        # Cerca colonne di tipo datetime
+        for col in df.columns:
+            if pd.api.types.is_datetime64_any_dtype(df[col]):
+                return col
+
+        return None
+
+    def _apply_time_filter(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Applica filtro temporale rolling (Fase 2).
+        Riduce i dati "alla fonte" per alleggerire Matplotlib.
+        """
+        if df.empty:
+            return df
+
+        time_filter = self.quick_time_filter.currentText()
+        time_delta = self.TIME_FILTER_OPTIONS.get(time_filter)
+
+        if time_delta is None:
+            return df
+
+        # Trova colonna timestamp
+        timestamp_col = self._find_timestamp_column(df)
+
+        if not timestamp_col:
+            return df
+
+        result = df.copy()
+        now = pd.Timestamp.now()
+
+        if time_delta == 'today':
+            # Filtra per "oggi"
+            cutoff = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        else:
+            cutoff = now - time_delta
+
+        # Assicurati che la colonna sia datetime
+        if result[timestamp_col].dtype != 'datetime64[ns]':
+            result[timestamp_col] = pd.to_datetime(result[timestamp_col], errors='coerce')
+
+        result = result[result[timestamp_col] >= cutoff]
+
+        return result
+
+    def _apply_top_n_limit(self, df: pd.DataFrame, x_col: str, y_col: str, agg: str) -> pd.DataFrame:
+        """
+        Applica limitatore Top N per bar chart (Fase 2).
+        Dopo groupby, ordina e prende solo i primi N.
+        """
+        top_n = self.top_n_spin.value()
+
+        if top_n == 0 or df.empty:
+            return df
+
+        # Raggruppa e aggrega
+        if x_col in df.columns and y_col in df.columns:
+            grouped = df.groupby(x_col)[y_col].agg(agg).reset_index()
+            grouped.columns = [x_col, y_col]
+
+            # Ordina per valore Y decrescente e prendi Top N
+            grouped = grouped.sort_values(by=y_col, ascending=False).head(top_n)
+
+            return grouped
+
+        return df
+
+    # ========================
+    # FASE 3: DOWNSAMPLING
+    # ========================
+
+    def _downsample_data(self, df: pd.DataFrame, x_col: str, y_col: str) -> pd.DataFrame:
+        """
+        Downsampling intelligente per line chart e scatter (Fase 3).
+        Mantiene la forma del trend riducendo i punti.
+        """
+        if not self.downsample_check.isChecked():
+            return df
+
+        if len(df) <= self.MAX_POINTS_LINE_CHART:
+            return df
+
+        # Calcola fattore di campionamento
+        factor = len(df) // self.MAX_POINTS_LINE_CHART
+
+        if factor <= 1:
+            return df
+
+        # Campiona ogni N righe
+        result = df.iloc[::factor].copy()
+
+        self.logger.debug(f"Downsampled from {len(df)} to {len(result)} points (factor: {factor})")
+
+        return result
 
     def apply_chart(self):
         """Applica la configurazione chart"""
@@ -445,19 +826,31 @@ class ChartWidget(QWidget):
         }
 
     def _apply_chart_from_config(self, config: Dict[str, Any]):
-        """Applica chart usando configurazione salvata"""
+        """Applica chart usando configurazione salvata con ottimizzazioni."""
         try:
-            # Applica filtri
+            # ========================
+            # FASE 2: APPLICA FILTRI IN CASCATA
+            # ========================
+            # 1. Filtri avanzati (AND/OR)
             filtered_data = self._apply_filters_to_data(self.source_data)
 
+            # 2. Filtro temporale rolling
+            filtered_data = self._apply_time_filter(filtered_data)
+
             if filtered_data.empty:
-                QMessageBox.warning(self, "No Data", "Filters resulted in empty dataset")
-                self.clear_chart()
+                # Non mostrare warning popup per evitare flood
+                self.info_label.setText("No data after filtering")
+                self.figure.clear()
+                self.canvas.draw()
                 return
 
             # Clear figure
             self.figure.clear()
             ax = self.figure.add_subplot(111)
+
+            # Salva info per il label
+            original_count = len(self.source_data)
+            filtered_count = len(filtered_data)
 
             if config['mode'] == 'static':
                 self._plot_static(ax, filtered_data, config)
@@ -465,23 +858,39 @@ class ChartWidget(QWidget):
                 self._plot_time_evolution(ax, filtered_data, config)
 
             self.canvas.draw()
+            self._last_chart_mode = config['mode']
 
-            # Update info
-            filter_text = f" | Filtered: {len(filtered_data)} rows" if self.active_filter and self.active_filter.conditions else ""
-            self.info_label.setText(f"Chart applied | Mode: {config['mode']}{filter_text}")
+            # Update info con dettagli filtri
+            info_parts = [f"Mode: {config['mode']}"]
+
+            if filtered_count < original_count:
+                info_parts.append(f"Data: {filtered_count}/{original_count}")
+
+            time_filter = self.quick_time_filter.currentText()
+            if time_filter != 'All':
+                info_parts.append(f"Time: {time_filter}")
+
+            top_n = self.top_n_spin.value()
+            if top_n > 0:
+                info_parts.append(f"Top {top_n}")
+
+            self.info_label.setText(" | ".join(info_parts))
 
         except Exception as e:
-            QMessageBox.warning(self, "Chart Error", f"Error creating chart: {str(e)}")
+            self.logger.error(f"Chart error: {e}")
+            self.info_label.setText(f"Chart error: {str(e)[:60]}")
             import traceback
             traceback.print_exc()
 
     def _plot_static(self, ax, df: pd.DataFrame, config: Dict[str, Any]):
-        """Plot static snapshot"""
+        """Plot static snapshot con Top N e downsampling (Fase 2 e 3)."""
         x_col = config['x_column']
         y_col = config['y_column']
         group_by = config['group_by']
         agg = config['aggregation']
         chart_type = config['chart_type']
+
+        top_n = self.top_n_spin.value()
 
         if group_by:
             pivot = df.pivot_table(
@@ -492,29 +901,64 @@ class ChartWidget(QWidget):
                 fill_value=0
             )
 
+            # ========================
+            # FASE 2: APPLICA TOP N AL PIVOT
+            # ========================
+            if top_n > 0 and len(pivot) > top_n:
+                # Ordina per somma totale delle righe
+                row_sums = pivot.sum(axis=1)
+                top_indices = row_sums.nlargest(top_n).index
+                pivot = pivot.loc[top_indices]
+
             if chart_type == 'bar':
                 pivot.plot(kind='bar', ax=ax, width=0.7)
             elif chart_type == 'line':
-                pivot.plot(kind='line', ax=ax, marker='o')
+                # Fase 3: downsampling per line
+                if len(pivot) > self.MAX_POINTS_LINE_CHART and self.downsample_check.isChecked():
+                    factor = len(pivot) // self.MAX_POINTS_LINE_CHART
+                    pivot = pivot.iloc[::max(factor, 1)]
+                pivot.plot(kind='line', ax=ax, marker='o', markersize=3)
             elif chart_type == 'scatter':
+                # Fase 3: downsampling per scatter
+                if len(pivot) > self.MAX_POINTS_LINE_CHART and self.downsample_check.isChecked():
+                    factor = len(pivot) // self.MAX_POINTS_LINE_CHART
+                    pivot = pivot.iloc[::max(factor, 1)]
                 for col in pivot.columns:
-                    ax.scatter(pivot.index, pivot[col], label=col, s=50, alpha=0.6)
+                    ax.scatter(pivot.index, pivot[col], label=col, s=30, alpha=0.6)
         else:
             grouped = df.groupby(x_col)[y_col].agg(agg)
+
+            # ========================
+            # FASE 2: APPLICA TOP N AL GROUPED
+            # ========================
+            if top_n > 0 and len(grouped) > top_n:
+                grouped = grouped.nlargest(top_n)
 
             if chart_type == 'bar':
                 grouped.plot(kind='bar', ax=ax, width=0.7)
             elif chart_type == 'line':
-                grouped.plot(kind='line', ax=ax, marker='o')
+                # Fase 3: downsampling per line
+                if len(grouped) > self.MAX_POINTS_LINE_CHART and self.downsample_check.isChecked():
+                    factor = len(grouped) // self.MAX_POINTS_LINE_CHART
+                    grouped = grouped.iloc[::max(factor, 1)]
+                grouped.plot(kind='line', ax=ax, marker='o', markersize=3)
             elif chart_type == 'scatter':
-                ax.scatter(grouped.index, grouped.values, s=50, alpha=0.6)
+                # Fase 3: downsampling per scatter
+                if len(grouped) > self.MAX_POINTS_LINE_CHART and self.downsample_check.isChecked():
+                    factor = len(grouped) // self.MAX_POINTS_LINE_CHART
+                    grouped = grouped.iloc[::max(factor, 1)]
+                ax.scatter(grouped.index, grouped.values, s=30, alpha=0.6)
 
         ax.set_xlabel(x_col)
         ax.set_ylabel(f"{agg}({y_col})")
         ax.set_title(f"{agg.capitalize()} of {y_col} by {x_col}")
         ax.legend()
         ax.grid(True, alpha=0.3)
-        
+
+        # Rotazione etichette se troppe
+        if len(ax.get_xticklabels()) > 10:
+            ax.tick_params(axis='x', rotation=45)
+
         # Gestione safe di tight_layout
         try:
             self.figure.tight_layout(pad=1.5)
@@ -523,27 +967,44 @@ class ChartWidget(QWidget):
             self.figure.subplots_adjust(left=0.1, right=0.95, top=0.95, bottom=0.15)
 
     def _plot_time_evolution(self, ax, df: pd.DataFrame, config: Dict[str, Any]):
-        """Plot time evolution"""
+        """Plot time evolution con downsampling (Fase 3)."""
         time_col = config['time_column']
         metric_col = config['metric_column']
         operation = config['operation']
         group_by = config['group_by']
         window = config['window']
 
-        # Converti timestamp
+        # Converti timestamp (già preprocessato in set_data, ma verifica)
         try:
             if not pd.api.types.is_datetime64_any_dtype(df[time_col]):
                 df[time_col] = pd.to_datetime(df[time_col])
-        except:
+        except Exception:
             pass
 
         df = df.sort_values(time_col).copy()
+
+        # ========================
+        # FASE 3: DOWNSAMPLING INTELLIGENTE
+        # ========================
+        original_len = len(df)
+        if len(df) > self.MAX_POINTS_LINE_CHART and self.downsample_check.isChecked():
+            factor = len(df) // self.MAX_POINTS_LINE_CHART
+            df = df.iloc[::max(factor, 1)].copy()
+            self.logger.debug(f"Time evolution downsampled: {original_len} -> {len(df)} points")
 
         if group_by:
             all_times = df[time_col].unique()
             all_times = pd.Series(all_times).sort_values().values
 
-            for group_value in df[group_by].unique():
+            # Limita il numero di gruppi se troppi
+            unique_groups = df[group_by].unique()
+            top_n = self.top_n_spin.value()
+            if top_n > 0 and len(unique_groups) > top_n:
+                # Prendi i gruppi con più dati
+                group_counts = df[group_by].value_counts().head(top_n)
+                unique_groups = group_counts.index.tolist()
+
+            for group_value in unique_groups:
                 subset = df[df[group_by] == group_value].copy()
                 full_series = pd.Series(index=all_times, dtype=float)
 
@@ -554,10 +1015,12 @@ class ChartWidget(QWidget):
                     full_series[ts] = val
 
                 full_series = full_series.ffill()
-                ax.plot(full_series.index, full_series.values, label=str(group_value), linewidth=2)
+                line, = ax.plot(full_series.index, full_series.values, label=str(group_value), linewidth=1.5, marker='.', markersize=2)
+                self._line_objects[str(group_value)] = line
         else:
             y_values = self._apply_operation(df[metric_col], operation, window)
-            ax.plot(df[time_col], y_values, linewidth=2)
+            line, = ax.plot(df[time_col], y_values, linewidth=1.5, marker='.', markersize=2)
+            self._line_objects['main'] = line
 
         op_label = operation.replace('_', ' ').title()
         if operation.startswith('rolling'):
@@ -568,7 +1031,7 @@ class ChartWidget(QWidget):
         ax.set_title(f"{op_label} - {metric_col} over Time")
 
         if group_by:
-            ax.legend()
+            ax.legend(loc='upper left', fontsize='small')
 
         ax.grid(True, alpha=0.3)
 
@@ -615,8 +1078,10 @@ class ChartWidget(QWidget):
             return series
 
     def clear_chart(self):
-        """Pulisce il chart"""
+        """Pulisce il chart e resetta lo stato interno."""
         self.current_config = None
+        self._line_objects.clear()  # Reset riferimenti linee (Fase 3)
+        self._last_chart_mode = None
         self.figure.clear()
         self.canvas.draw()
         self.info_label.setText("Chart cleared")
@@ -642,7 +1107,7 @@ class ChartWidget(QWidget):
                 QMessageBox.warning(self, "Export Error", str(e))
 
     def get_config(self) -> dict:
-        """Salva configurazione corrente"""
+        """Salva configurazione corrente (include nuove impostazioni Fase 2-3)."""
         return {
             'mode': self.mode,
             'static_mode': self.static_radio.isChecked(),
@@ -660,11 +1125,35 @@ class ChartWidget(QWidget):
             'auto_update': self.auto_update_checkbox.isChecked(),
             'settings_visible': hasattr(self, 'settings_container') and self.settings_container.isVisible(),
             'current_config': self.current_config.copy() if self.current_config else None,
+            # Nuove impostazioni Fase 2-3
+            'quick_time_filter': self.quick_time_filter.currentText(),
+            'top_n': self.top_n_spin.value(),
+            'downsample': self.downsample_check.isChecked(),
         }
 
     def restore_config(self, config: dict):
-        """Ripristina configurazione salvata"""
+        """
+        Ripristina configurazione salvata.
+
+        Se i dati non sono ancora disponibili (combo box vuote),
+        salva la config come pending e la applica in set_data.
+        """
         try:
+            # Ripristina settings visibility subito (non dipende dai dati)
+            if 'settings_visible' in config and hasattr(self, 'settings_container'):
+                if config['settings_visible']:
+                    self.settings_container.show()
+                    self.toggle_settings_btn.setText("▼ Hide Settings")
+                else:
+                    self.settings_container.hide()
+                    self.toggle_settings_btn.setText("▶ Show Settings")
+
+            # Se non ci sono dati, salva config come pending
+            if self.source_data.empty:
+                self._pending_config = config.copy()
+                return
+
+            # Altrimenti applica subito
             if config.get('static_mode', True):
                 self.static_radio.setChecked(True)
                 self.mode = 'static'
@@ -723,20 +1212,23 @@ class ChartWidget(QWidget):
             if 'auto_update' in config:
                 self.auto_update_checkbox.setChecked(config['auto_update'])
 
-            if 'settings_visible' in config and hasattr(self, 'settings_container'):
-                if config['settings_visible']:
-                    self.settings_container.show()
-                    self.toggle_settings_btn.setText("▼ Hide Settings")
-                else:
-                    self.settings_container.hide()
-                    self.toggle_settings_btn.setText("▶ Show Settings")
+            # Quick filters (Fase 2-3)
+            if 'quick_time_filter' in config:
+                index = self.quick_time_filter.findText(config['quick_time_filter'])
+                if index >= 0:
+                    self.quick_time_filter.setCurrentIndex(index)
+
+            if 'top_n' in config:
+                self.top_n_spin.setValue(config['top_n'])
+
+            if 'downsample' in config:
+                self.downsample_check.setChecked(config['downsample'])
 
             if config.get('current_config'):
                 self.current_config = config['current_config']
-                if not self.source_data.empty:
-                    self._apply_chart_from_config(self.current_config)
+                self._apply_chart_from_config(self.current_config)
 
         except Exception as e:
-            print(f"Error restoring chart config: {e}")
+            self.logger.error(f"Error restoring chart config: {e}")
             import traceback
             traceback.print_exc()

@@ -24,6 +24,16 @@ from market_monitor.input_threads.redis import RedisStreamingThread
 from market_monitor.live_data_hub.real_time_data_hub import RTData
 
 
+class FlushFileHandler(logging.FileHandler):
+    """
+    Custom FileHandler that flushes immediately after each write.
+    This ensures logs are visible in real-time, not just when the script closes.
+    """
+    def emit(self, record):
+        super().emit(record)
+        self.flush()  # Flush immediately after each log
+
+
 class Builder:
 
     def __init__(self, config):
@@ -59,20 +69,57 @@ class Builder:
 
     def _setup_logging(self):
         log_level = self.config['logging'].get('log_level', 'DEBUG').upper()
-        log_dir = os.path.join("logging", self.config['logging']['log_name'])
+        log_name = self.config['logging']['log_name']
+        
+        # Create logs directory relative to project root
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        project_root = os.path.dirname(os.path.dirname(script_dir))
+        log_dir = os.path.join(project_root, "logs")
+        os.makedirs(log_dir, exist_ok=True)
+        
+        # Build full log file path
+        log_file = os.path.join(log_dir, log_name)
 
-        os.makedirs(os.path.dirname(log_dir), exist_ok=True)
-
-        logging.basicConfig(level=log_level,
-                            filename=log_dir,
-                            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-                            filemode='w')
-
+        # Remove any existing handlers to reset logging
+        root_logger = logging.getLogger()
+        for handler in root_logger.handlers[:]:
+            root_logger.removeHandler(handler)
+        
+        # Configure basic logging
+        logging.basicConfig(
+            level=log_level,
+            filename=log_file,
+            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+            filemode='w',
+            force=True  # Force reconfiguration even if already configured
+        )
+        
+        # Get root logger
         logger = logging.getLogger()
-
+        
+        # Add file handler explicitly (backup method)
+        file_handler = logging.FileHandler(log_file, mode='a')
+        file_handler.setLevel(log_level)
+        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        file_handler.setFormatter(formatter)
+        logger.addHandler(file_handler)
+        
+        # Add console handler
         console_handler = logging.StreamHandler()
         console_handler.setLevel(self.config['logging'].get('log_level_console', 'DEBUG'))
+        console_handler.setFormatter(formatter)
         logger.addHandler(console_handler)
+        
+        # Set the root logger level
+        logger.setLevel(log_level)
+        
+        # Log startup messages
+        logging.info(f"=" * 80)
+        logging.info(f"Logging initialized at: {log_file}")
+        logging.info(f"Log level: {log_level}")
+        logging.info(f"=" * 80)
+        
+        print(f"Logging initialized: {log_file}")  # Debug output to console
 
         return logger
 
@@ -85,6 +132,7 @@ class Builder:
         package_path = load_strategy_info["package_path"]
         module_name = load_strategy_info["module_name"]
         class_name = load_strategy_info["class_name"]
+        package_path = os.path.abspath(package_path)
         file_path = os.path.join(package_path, f"{module_name}.py")
 
         if not os.path.exists(file_path):

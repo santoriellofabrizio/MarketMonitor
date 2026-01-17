@@ -12,7 +12,6 @@ from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QKeySequence, QIcon
 from pathlib import Path
 
-
 from market_monitor.gui.implementations.PyQt5Dashboard.widgets.dashboard_state import DashboardStateError
 from market_monitor.gui.implementations.PyQt5Dashboard.detached_windows import DetachedChartWindow, DetachedFlowWindow, \
     DetachedPivotWindow
@@ -138,9 +137,9 @@ class TradeDashboardExtensions:
                 self.all_trades = pd.DataFrame()
                 self.current_filtered_data = pd.DataFrame()
                 self.logger.info(f"Cleared all_trades (was {old_shape}) before loading dashboard")
-                
+
                 metadata = self.dashboard_state.load_dashboard(dialog.selected_name, self)
-                
+
                 # DEBUG: Verifica se all_trades è stato ripopolato
                 if not self.all_trades.empty:
                     self.logger.warning(f"all_trades was repopulated during load! Shape: {self.all_trades.shape}")
@@ -149,7 +148,7 @@ class TradeDashboardExtensions:
                         self.logger.warning(f"Timestamp types after load: {ts_types.to_dict()}")
                 else:
                     self.logger.info("all_trades is empty after load (correct)")
-                
+
                 QMessageBox.information(
                     self, "Success",
                     f"Dashboard '{metadata['name']}' loaded successfully!"
@@ -180,14 +179,14 @@ class TradeDashboardExtensions:
                 self.all_trades = pd.DataFrame()
                 self.current_filtered_data = pd.DataFrame()
                 self.logger.info("Cleared old data before reset to default")
-                
+
                 self.dashboard_state.load_dashboard("_default", self)
-                
+
                 # Aggiorna se ci sono dati
                 if not self.all_trades.empty:
                     self.trade_table.update_data(self.all_trades)
                     self.logger.info(f"Refreshed table with {len(self.all_trades)} trades after reset to default")
-                
+
                 QMessageBox.information(self, "Success", "Dashboard reset to default!")
             except DashboardStateError:
                 QMessageBox.warning(self, "No Default", "No default dashboard found.")
@@ -268,14 +267,14 @@ class TradeDashboardExtensions:
             # Pulisci i dati vecchi prima di caricare il default
             self.all_trades = pd.DataFrame()
             self.current_filtered_data = pd.DataFrame()
-            
+
             self.dashboard_state.load_dashboard("_default", self)
-            
+
             # Aggiorna se ci sono dati
             if not self.all_trades.empty:
                 self.trade_table.update_data(self.all_trades)
                 self.logger.info(f"Refreshed table with {len(self.all_trades)} trades after loading default dashboard")
-            
+
             print("✅ Default dashboard loaded")
         except DashboardStateError as e:
             # Dashboard non trovata - normale per prima esecuzione
@@ -289,7 +288,6 @@ class TradeDashboardExtensions:
         except Exception as e:
             # Altro errore - log ma continua senza crashare
             print(f"⚠️  Unexpected error loading default dashboard: {e}")
-
 
     # Helper methods per detached windows (da aggiungere se non esistono)
     def _create_detached_pivot_internal(self):

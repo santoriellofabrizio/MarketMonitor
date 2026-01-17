@@ -1,0 +1,54 @@
+load_strategy_info:
+      package_path: C:\AFMachineLearning\Libraries\MarketMonitor\user_strategy\equity\LiveAnalysis
+      module_name: EtfEquityLiveAnalysis
+      class_name: EtfEquityLiveAnalysis
+
+
+market_monitor:
+
+  path_db: etc/input/EtfEquityDB.db
+  trade_manager:
+    show_my_trades: True
+    output_trade_columns: ["ticker","last_update","price","quantity","ctv","side","own_trade","spread_pl"]
+    min_ctv_to_show_trades: 5000
+    number_of_trades_to_show: 200
+
+
+  tasks:
+    update_HF:
+      activate: true
+      frequency: 2
+    update_LF:
+      activate: true
+      frequency: 60
+    trade:
+      activate: true
+      synchronous: false
+      frequency: 1
+    dynamic_params:
+      activate: false
+      dynamic_config_path: "configFolder/dynamicEquityQuoting.yaml"
+      frequency: 1
+
+
+bloomberg_data_distributor:
+  activate: true
+
+trade_distributor:
+  activate: true
+  path: C:\AFMachineLearning\Libraries\MarketMonitor\etc\marketrades.db
+#  path: "C:\\Users\\gbs09316\\Documents\\marketTradeFolder\\markettrades.db"
+
+redis_data_distributor:
+  activate: true
+  redis_params:
+    redis_host: 'localhost'
+    redis_port: 6379
+    redis_db: 0
+
+logging:
+  log_level: INFO
+  log_level_console: WARNING
+  log_name: LiveAnalysis.log
+
+

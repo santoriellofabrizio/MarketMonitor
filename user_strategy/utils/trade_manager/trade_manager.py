@@ -22,7 +22,7 @@ class TradeManager:
     # Configurabili via kwargs
     DEFAULT_MAX_TIME_TO_MATCH_SECONDS = 10.0
     DEFAULT_AUTO_SAVE_INTERVAL = 500
-    DEFAULT_MAX_CACHE_SIZE = 10000
+    DEFAULT_MAX_CACHE_SIZE = 1e9
 
     def __init__(
             self,
@@ -50,7 +50,7 @@ class TradeManager:
         # Config
         self.max_time_to_match = kwargs.get('max_time_to_match_side', self.DEFAULT_MAX_TIME_TO_MATCH_SECONDS)
         self.max_cache_size = kwargs.get("max_cache_size", self.DEFAULT_MAX_CACHE_SIZE)
-        self.trade_folder = trade_folder or Path.cwd() / "data" / "trades"
+        self.trade_folder = trade_folder or Path.cwd() / "etc" / "data" / "trades"
         self.use_timezone_aware = kwargs.get("use_timezone_aware", True)
 
 
@@ -58,6 +58,9 @@ class TradeManager:
         self._cache_lock = RLock()
         self._trades_df_cache: pd.DataFrame | None = None
         self._cache_valid = False
+
+        # Tracking dei trades inviati parzialmente (is_elaborated=False)
+        self._pending_partial_indexes: set[int] = set()
 
         # Persistenza
         self.engine = kwargs.get("engine", "pyarrow")
@@ -120,8 +123,6 @@ class TradeManager:
                                 )
                             )
 
-                    trade.is_elaborated = True
-
                 # Store trade
                 self.trade_storage.add_trade(trade)
                 processed.append(trade)
@@ -163,7 +164,7 @@ class TradeManager:
         if snapshot:
             snapshot_time, mid_prices = snapshot
             mid = mid_prices.get(trade.isin)
-            logging.debug(f"matched side: snapshot time: {snapshot_time}, trade_time: {trade.timestamp}")
+            logger.info(f"matched side: snapshot time: {snapshot_time}, trade_time: {trade.timestamp}")
             if mid is not None:
                 trade.side = "bid" if trade.price < mid else "ask"
 
@@ -171,14 +172,20 @@ class TradeManager:
     # QUERY METHODS (thread-safe cache)
     # ========================================================================
 
+    from datetime import datetime, timedelta
+
     def get_trades(
-            self, n_of_trades: int | None = None, use_cache: bool = True
+            self, n_seconds: int | None = None, n_of_trades: int | None = None, use_cache: bool = True
     ) -> pd.DataFrame:
-        """Get trades con cache thread-safe."""
+        """Get trades con cache thread-safe e filtro temporale opzionale."""
         with self._cache_lock:
-            # Cache hit
+            # 1. Gestione Cache: Se chiedi n_seconds, di solito conviene bypassare la cache
+            # o filtrarla dopo. Qui filtriamo il risultato finale per semplicità.
+
+            # Cache hit (solo se non stiamo filtrando per secondi o numero specifico)
             if (
                     n_of_trades is None
+                    and n_seconds is None
                     and use_cache
                     and self._cache_valid
                     and self._trades_df_cache is not None
@@ -189,16 +196,21 @@ class TradeManager:
             trades_obj_list = self.trade_storage.get_last_trades(n_of_trades)
             trades_df = self._convert_trades_obj_to_df(trades_obj_list)
 
-            # Aggiorna cache solo se dimensione ragionevole
-            if n_of_trades is None and len(trades_df) <= self.max_cache_size:
+            # Aggiorna cache (solo se è il dump completo)
+            if n_of_trades is None and n_seconds is None and len(trades_df) <= self.max_cache_size:
                 self._trades_df_cache = trades_df.copy()
                 self._cache_valid = True
-            elif n_of_trades is None:
-                logger.warning(
-                    f"Cache not updated: {len(trades_df)} trades exceed "
-                    f"max cache size {self.max_cache_size}"
-                )
 
+            # --- FILTRO PER N_SECONDS ---
+            if n_seconds is not None and not trades_df.empty:
+                # Assicurati che la colonna 'timestamp' sia in formato datetime
+                if not pd.api.types.is_datetime64_any_dtype(trades_df['timestamp']):
+                    trades_df['timestamp'] = pd.to_datetime(trades_df['timestamp'])
+
+                cutoff_time = datetime.datetime.now() - datetime.timedelta(seconds=n_seconds)
+                trades_df = trades_df.loc[trades_df['timestamp'] >= cutoff_time]
+
+            # Ordinamento finale
             return (
                 trades_df.sort_values("timestamp", ascending=False)
                 if not trades_df.empty
@@ -245,7 +257,7 @@ class TradeManager:
             min_ctv: float | None = None,
             columns: list[str] | None = None,
             only_my_trades: Optional[bool] = None,
-            start_time: Optional[datetime.datetime] = None,
+            start_time: Optional[datetime] = None,
     ) -> pd.DataFrame:
         """Get trades filtrati."""
         trades = self.get_trades()
@@ -274,6 +286,49 @@ class TradeManager:
             trades = trades.head(n)
 
         return trades
+
+    def get_trades_to_publish(self, processed_trades: pd.DataFrame) -> pd.DataFrame:
+        """
+        Ritorna i trades da pubblicare alla GUI.
+
+        Logica:
+        1. I trades appena processati vengono sempre inviati
+        2. Se un trade è parziale (is_elaborated=False), viene tracciato
+        3. I trades precedentemente parziali che ora sono elaborati vengono re-inviati
+        4. La GUI si occupa della deduplicazione
+
+        Args:
+            processed_trades: DataFrame dei trades appena processati da on_trade()
+
+        Returns:
+            DataFrame con i trades da pubblicare (nuovi + parziali ora elaborati)
+        """
+        with self._cache_lock:
+            trades_to_publish = []
+
+            # 1. Controlla i pending che sono diventati elaborati
+            newly_elaborated_indexes = set()
+            for idx in list(self._pending_partial_indexes):
+                trade = self.trade_storage.get_trades_by_index(idx)
+                if trade and trade.is_elaborated:
+                    trades_to_publish.append(trade)
+                    newly_elaborated_indexes.add(idx)
+
+            # Rimuovi dai pending quelli ora elaborati
+            self._pending_partial_indexes -= newly_elaborated_indexes
+
+            # 2. Aggiungi i nuovi trades processati e traccia i parziali
+            if not processed_trades.empty:
+                for _, row in processed_trades.iterrows():
+                    trade_idx = row.get('trade_index')
+                    if trade_idx is not None:
+                        trade = self.trade_storage.get_trades_by_index(int(trade_idx))
+                        if trade:
+                            trades_to_publish.append(trade)
+                            if not trade.is_elaborated:
+                                self._pending_partial_indexes.add(int(trade_idx))
+
+            return self._convert_trades_obj_to_df(trades_to_publish)
 
     # ========================================================================
     # PERSISTENZA (ottimizzata)
@@ -304,9 +359,29 @@ class TradeManager:
         try:
             # ✅ Leggi tutto, concatena, riscrivi (sempre funziona)
             if filepath.exists():
-                existing_df = pd.read_parquet(filepath, engine="pyarrow")
-                combined_df = pd.concat([existing_df, new_df], ignore_index=True)
+                try:
+                    existing_df = pd.read_parquet(filepath, engine="pyarrow")
+                except Exception as read_error:
+                    # File corrotto - backup e riparti da zero
+                    logger.warning(
+                        f"Parquet file corrupted ({read_error}). "
+                        f"Backing up and creating new file."
+                    )
+                    backup_path = filepath.with_stem(filepath.stem + "_corrupted_backup")
+                    try:
+                        filepath.rename(backup_path)
+                        logger.info(f"Corrupted file backed up to: {backup_path}")
+                    except Exception as backup_error:
+                        logger.error(f"Could not backup corrupted file: {backup_error}")
+                    
+                    existing_df = pd.DataFrame()  # Restart from empty
+                else:
+                    combined_df = pd.concat([existing_df, new_df], ignore_index=True)
             else:
+                combined_df = new_df
+
+            # Se non c'è existing_df (file corrotto), usa solo new_df
+            if 'combined_df' not in locals():
                 combined_df = new_df
 
             combined_df.to_parquet(

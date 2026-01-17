@@ -13,7 +13,7 @@ REGOLE ROUTING:
    - Path dal channel non usato per market
 
 3. StateStore (Nested Dict):
-   - Path dal channel → nested structure
+   - Path dal channel -> nested structure
    - Deep update automatico
 
 4. EventStore (Deque):
@@ -83,7 +83,7 @@ def build_nested_dict(path: List[str], value: Any) -> Dict:
     Esempio:
         path = ["portfolio", "cash"]
         value = 1000000
-        → {"portfolio": {"cash": 1000000}}
+        -> {"portfolio": {"cash": 1000000}}
     """
     if not path:
         return value if isinstance(value, dict) else {"__value__": value}
@@ -169,7 +169,7 @@ class RedisStreamingThread(threading.Thread):
                             f"❌ CONFLITTO: pattern '{pattern}' mappato a store multipli:\n"
                             f"   - '{existing_store}' (subscription: {existing_sub.id})\n"
                             f"   - '{store}' (subscription: {sub_id})\n"
-                            f"   → Ogni pattern può avere UN SOLO store!"
+                            f"   -> Ogni pattern può avere UN SOLO store!"
                         )
                     logger.debug(f"Subscription duplicata ignorata: {sub_id} su {pattern}")
                     continue
@@ -304,18 +304,18 @@ class RedisStreamingThread(threading.Thread):
 
         FORMATO ATTESO:
         1. Dict of dicts: {ticker: {field: value, ...}}
-        2. Dict of scalars: {ticker: value} → usa path come field name
+        2. Dict of scalars: {ticker: value} -> usa path come field name
         3. Supporta 1-level nesting: {ticker: {field_name: value}}
 
         ESEMPI:
         data = {"ISIN123": {"BID": 100, "ASK": 101}}
-        → rtdata.update("ISIN123", {"BID": 100, "ASK": 101})
+        -> rtdata.update("ISIN123", {"BID": 100, "ASK": 101})
 
         data = {"ISIN123": 100.5}, path=["nav"]
-        → rtdata.update("ISIN123", {"nav": 100.5})
+        -> rtdata.update("ISIN123", {"nav": 100.5})
 
         data = {"EUR": {"EONIA": 100.5}}, path=["EUR", "EONIA"]
-        → rtdata.update("EUR", {"EONIA": 100.5})  # 1-level nesting
+        -> rtdata.update("EUR", {"EONIA": 100.5})  # 1-level nesting
         """
         if not isinstance(data, dict):
             logger.warning(f"Market data must be dict, got {type(data)}")
@@ -333,7 +333,7 @@ class RedisStreamingThread(threading.Thread):
 
                 if isinstance(first_val, dict):
                     # Nested 1-level: {"EUR": {"EONIA": {"BID": 1.5}}}
-                    # → ticker="EUR", fields={"EONIA": {...}}
+                    # -> ticker="EUR", fields={"EONIA": {...}}
                     fields = value
                 else:
                     # Flat multi-field: {"ISIN123": {"BID": 100, "ASK": 101}}
@@ -368,7 +368,7 @@ class RedisStreamingThread(threading.Thread):
         FORMATO:
           path = ["portfolio", "cash"]
           data = 1000000
-          → StateStore: {"portfolio": {"cash": 1000000}}
+          -> StateStore: {"portfolio": {"cash": 1000000}}
         """
         if not path:
             logger.warning("State data requires path segments from channel")

@@ -1,0 +1,31 @@
+# Configurazione completa con tutte le metriche
+
+dashboard:
+  mode: redis
+  redis:
+    host: localhost
+    port: 6379
+    db: 0
+    channel: trades_df
+
+  
+  metrics:
+    enabled: true
+    items:       # Trade nostri
+    # Trade di mercato
+      - lagged_spread_pl_sum       # P&L totale (colorato verde/rosso)
+      - ctv_sum
+      - lagged_spread_pl_marginality
+      - my_lagged_spread_pl_sum
+      - my_ctv_sum
+      - my_lagged_spread_pl_marginality
+
+logging:
+  path: "logs/dashboard.log"
+  level: DEBUG
+
+app:
+  style: Fusion
+
+queue:
+  maxsize: 5000

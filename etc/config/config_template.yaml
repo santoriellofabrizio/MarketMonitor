@@ -1,0 +1,66 @@
+load_strategy_info:
+      package_path:
+      module_name:
+      class_name:
+
+market_monitor:
+  #**params
+  tasks:
+    update_HF:
+      activate: true
+      frequency: 0.5
+    update_LF:
+      activate: true
+      frequency: 60
+    data_storing:
+      activate: false
+      frequency: 600
+    trade:
+      activate: false
+      synchronous: false
+      frequency: 1
+    dynamic_params:
+      activate: false
+      dynamic_config_path:
+      frequency: 1
+
+
+
+bloomberg_data_distributor:
+  activate: true
+  #**params
+
+
+redis_data_distributor:
+  activate: true
+  #**params
+
+
+
+logging:
+  log_level: DEBUG
+  log_level_console: WARNING
+  log_name: PriceEngineEquity.log
+
+gui:
+  GuiName:
+    gui_type:
+    #**params
+
+
+oracle_connection:
+  environment:
+  user:
+  tns_name:
+  password:
+  schema:
+
+timescale_connection:
+  database:
+  port:
+  user:
+  password:
+  host:
+
+
+

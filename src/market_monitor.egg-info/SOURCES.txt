@@ -1,7 +1,5 @@
 README.md
 pyproject.toml
-src/__init__.py
-src/run_monitor.py
 src/market_monitor/__init__.py
 src/market_monitor/builder.py
 src/market_monitor.egg-info/PKG-INFO
@@ -10,6 +8,11 @@ src/market_monitor.egg-info/dependency_links.txt
 src/market_monitor.egg-info/entry_points.txt
 src/market_monitor.egg-info/requires.txt
 src/market_monitor.egg-info/top_level.txt
+src/market_monitor/entry/__init__.py
+src/market_monitor/entry/_base.py
+src/market_monitor/entry/run_dashboard.py
+src/market_monitor/entry/run_mock.py
+src/market_monitor/entry/run_strategy.py
 src/market_monitor/gui/__init__.py
 src/market_monitor/gui/implementations/GUI.py
 src/market_monitor/gui/implementations/__init__.py
@@ -20,7 +23,6 @@ src/market_monitor/gui/implementations/PyQt5Dashboard/common.py
 src/market_monitor/gui/implementations/PyQt5Dashboard/dashboard_extension.py
 src/market_monitor/gui/implementations/PyQt5Dashboard/detached_windows.py
 src/market_monitor/gui/implementations/PyQt5Dashboard/metrics_definition.py
-src/market_monitor/gui/implementations/PyQt5Dashboard/run_dashboard.py
 src/market_monitor/gui/implementations/PyQt5Dashboard/trade_dashboard.py
 src/market_monitor/gui/implementations/PyQt5Dashboard/worker_thread.py
 src/market_monitor/gui/implementations/PyQt5Dashboard/widgets/__init__.py
@@ -29,6 +31,7 @@ src/market_monitor/gui/implementations/PyQt5Dashboard/widgets/dashboard_state.py
 src/market_monitor/gui/implementations/PyQt5Dashboard/widgets/filter.py
 src/market_monitor/gui/implementations/PyQt5Dashboard/widgets/flow_monitor_widget.py
 src/market_monitor/gui/implementations/PyQt5Dashboard/widgets/pivot_table.py
+src/market_monitor/gui/implementations/PyQt5Dashboard/widgets/trade_history_window.py
 src/market_monitor/gui/implementations/PyQt5Dashboard/widgets/trade_table.py
 src/market_monitor/gui/threaded_GUI/GUIQueue.py
 src/market_monitor/gui/threaded_GUI/QueueDataSource.py
@@ -57,6 +60,10 @@ src/market_monitor/strategy/__init__.py
 src/market_monitor/strategy/StrategyUI/StrategyUI.py
 src/market_monitor/strategy/StrategyUI/StrategyUIAsync.py
 src/market_monitor/strategy/StrategyUI/__init__.py
+src/market_monitor/testing/__init__.py
+src/market_monitor/testing/mock_bloomberg.py
+src/market_monitor/testing/mock_market_trades_viewer.py
+src/market_monitor/testing/test_subscription_lifecycle.py
 src/market_monitor/utils/__init__.py
 src/market_monitor/utils/config_helpers.py
 src/market_monitor/utils/config_observer.py

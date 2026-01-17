@@ -9,7 +9,7 @@ from dateutil.utils import today
 from pandas.errors import PerformanceWarning
 from xbbg.blp import bdh, bdp
 
-from user_strategy.FixedIncomeETF import memoryFixedIncome
+from user_strategy.fixed_income import memoryFixedIncome
 from user_strategy.utils import CustomBDay
 from user_strategy.utils.InputParamsFI import InputParamsFI
 from user_strategy.utils.bloomberg_subscription_utils.OracleConnection import OracleConnection

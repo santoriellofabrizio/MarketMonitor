@@ -19,14 +19,44 @@ METRIC_DEFINITIONS = {
         "label": "Total Spread P&L",
         "compute": lambda df: df["spread_pl"].sum()
         if "spread_pl" in df.columns else 0.0,
-        "format": "${:,.2f}",
+        "format": "€{:,.2f}",
+        "colorize": True
+    },
+    "my_spread_pl_sum": {
+        "label": "My Total Spread P&L",
+        "compute": lambda df: df[df["own_trade"] == True]["spread_pl"].sum()
+        if "spread_pl" in df.columns else 0.0,
+        "format": "€{:,.2f}",
+        "colorize": True
+    },
+    "lagged_spread_pl_sum": {
+        "label": "Total Lagged Spread P&L",
+        "compute": lambda df: df["lagged_spread_pl"].sum()
+        if "lagged_spread_pl" in df.columns else 0.0,
+        "format": "€{:,.2f}",
+        "colorize": True
+    },
+
+    "my_lagged_spread_pl_sum": {
+        "label": "My Total Lagged Spread P&L",
+        "compute": lambda df: df[df["own_trade"] == True]["lagged_spread_pl"].sum()
+        if "lagged_spread_pl" in df.columns else 0.0,
+        "format": "€{:,.2f}",
+        "colorize": True
+    },
+
+    "my_ctv_sum": {
+        "label": "My Total ctv",
+        "compute": lambda df: df[df["own_trade"] == True]["ctv"].sum()
+        if "ctv" in df.columns else 0.0,
+        "format": "€{:,.2f}",
         "colorize": True
     },
     "spread_pl_mean": {
         "label": "Avg Spread P&L",
         "compute": lambda df: df["spread_pl"].mean()
         if "spread_pl" in df.columns else 0.0,
-        "format": "${:,.2f}"
+        "format": "€{:,.2f}"
     },
 
     # --- CTV ---
@@ -34,7 +64,7 @@ METRIC_DEFINITIONS = {
         "label": "Total CTV",
         "compute": lambda df: df["ctv"].sum()
         if "ctv" in df.columns else 0.0,
-        "format": "${:,.2f}"
+        "format": "€{:,.2f}"
     },
 
     # =========================
@@ -52,8 +82,8 @@ METRIC_DEFINITIONS = {
     "my_pl_marginality": {
         "label": "My PL Marginality",
         "compute": lambda df: (
-            df.loc[df["own_trade"] == True, "spread_pl"].sum() /
-            df.loc[df["own_trade"] == True, "ctv"].sum()
+            df.loc[df["own_trade"] == True]["spread_pl"].sum() /
+            df.loc[df["own_trade"] == True]["ctv"].sum()
             if {"spread_pl", "ctv", "own_trade"}.issubset(df.columns)
             and df.loc[df["own_trade"] == True, "ctv"].sum() != 0
             else 0.0
@@ -81,43 +111,43 @@ METRIC_DEFINITIONS = {
     },
 
     # =========================
-    # Marginality (lagged_pl)
+    # Marginality (lagged_spread_pl)
     # =========================
-    "lagged_pl_marginality": {
+    "lagged_spread_pl_marginality": {
         "label": "Lagged PL Marginality",
         "compute": lambda df: (
-            df["lagged_pl"].sum() / df["ctv"].sum()
-            if {"lagged_pl", "ctv"}.issubset(df.columns) and df["ctv"].sum() != 0
+            df["lagged_spread_pl"].sum() / df["ctv"].sum()
+            if {"lagged_spread_pl", "ctv"}.issubset(df.columns) and df["ctv"].sum() != 0
             else 0.0
         ),
         "format": "{:.4%}"
     },
-    "my_lagged_pl_marginality": {
+    "my_lagged_spread_pl_marginality": {
         "label": "My Lagged PL Marginality",
         "compute": lambda df: (
-            df.loc[df["own_trade"] == True, "lagged_pl"].sum() /
+            df.loc[df["own_trade"] == True, "lagged_spread_pl"].sum() /
             df.loc[df["own_trade"] == True, "ctv"].sum()
-            if {"lagged_pl", "ctv", "own_trade"}.issubset(df.columns)
+            if {"lagged_spread_pl", "ctv", "own_trade"}.issubset(df.columns)
             and df.loc[df["own_trade"] == True, "ctv"].sum() != 0
             else 0.0
         ),
         "format": "{:.4%}"
     },
-    "average_lagged_pl_marginality": {
+    "average_lagged_spread_pl_marginality": {
         "label": "Avg Lagged PL Marginality",
         "compute": lambda df: (
-            (df["lagged_pl"] / df["ctv"]).mean()
-            if {"lagged_pl", "ctv"}.issubset(df.columns)
+            (df["lagged_spread_pl"] / df["ctv"]).mean()
+            if {"lagged_spread_pl", "ctv"}.issubset(df.columns)
             else 0.0
         ),
         "format": "{:.4%}"
     },
-    "my_average_lagged_pl_marginality": {
+    "my_average_lagged_spread_pl_marginality": {
         "label": "My Avg Lagged PL Marginality",
         "compute": lambda df: (
-            (df.loc[df["own_trade"] == True, "lagged_pl"] /
+            (df.loc[df["own_trade"] == True, "lagged_spread_pl"] /
              df.loc[df["own_trade"] == True, "ctv"]).mean()
-            if {"lagged_pl", "ctv", "own_trade"}.issubset(df.columns)
+            if {"lagged_spread_pl", "ctv", "own_trade"}.issubset(df.columns)
             else 0.0
         ),
         "format": "{:.4%}"

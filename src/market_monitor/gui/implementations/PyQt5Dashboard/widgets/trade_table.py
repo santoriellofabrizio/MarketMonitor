@@ -253,7 +253,9 @@ class TradeTableWidget(QWidget):
     # TABLE RENDERING
     # ==========================================================
     def _refresh_view(self):
-        self.table.setRowCount(0)
+        """Reset completo - solo quando filtri cambiano"""
+        self.table.setRowCount(0)  # ✅ Pulisci TUTTO
+        self.table.setColumnCount(0)
         self.displayed_rows = 0
         self._load_more_rows()
 

@@ -35,6 +35,7 @@ from market_monitor.gui.implementations.PyQt5Dashboard.detached_windows import (
 )
 from market_monitor.gui.implementations.PyQt5Dashboard.widgets.dashboard_state import DashboardState
 from market_monitor.gui.implementations.PyQt5Dashboard.widgets.trade_table import TradeTableWidget
+from market_monitor.gui.implementations.PyQt5Dashboard.widgets.trade_history_window import TradeHistoryWindow
 from market_monitor.gui.implementations.PyQt5Dashboard.metrics_definition import METRIC_DEFINITIONS
 from market_monitor.gui.threaded_GUI.QueueDataSource import QueueDataSource
 from market_monitor.gui.implementations.PyQt5Dashboard.worker_thread import (
@@ -102,6 +103,7 @@ class TradeDashboard(BasePyQt5Dashboard, TradeDashboardExtensions):
         self.detached_pivots = []
         self.detached_charts = []
         self.detached_flows = []
+        self.trade_history_windows = []  # ✅ AGGIUNGI QUESTA RIGA
 
         super().__init__(
             datasource=datasource,
@@ -290,9 +292,35 @@ class TradeDashboard(BasePyQt5Dashboard, TradeDashboardExtensions):
         """Gestisce evento flow_detected."""
         flow_id = flow_data.get('flow_id', 'unknown')
         self.logger.info(f"Flow received: {flow_id}")
+        
+        # Assicura che flow_data abbia i tipi corretti per la GUI
+        # Converte trades a lista vuota se è None
+        if 'trades' not in flow_data or flow_data.get('trades') is None:
+            flow_data['trades'] = []
+        
+        # Converte valori numerici
+        for key in ['ctv', 'avg_interval', 'duration', 'consistency_score', 'avg_quantity', 'total_quantity', 'avg_price']:
+            if key in flow_data:
+                try:
+                    flow_data[key] = float(flow_data[key]) if flow_data[key] is not None else 0.0
+                except (ValueError, TypeError):
+                    flow_data[key] = 0.0
+        
+        # Assicura che side sia string
+        if 'side' in flow_data and flow_data['side'] is None:
+            flow_data['side'] = 'UNKNOWN'
 
         for flow_window in self.detached_flows:
             if not flow_window.isHidden():
+                # ✅ CONNESSIONE DINAMICA DEL SEGNALE
+                # Questo assicura che il segnale sia collegato anche per finestre pre-salvate
+                try:
+                    flow_window.flow_widget.flow_selected.disconnect()
+                except TypeError:
+                    # Se la connessione non esiste, disconnect() lancia TypeError
+                    pass
+                
+                flow_window.flow_widget.flow_selected.connect(self._show_trade_history)
                 flow_window.add_flow(flow_data)
 
     def _on_error(self, error_msg: str):
@@ -450,6 +478,9 @@ class TradeDashboard(BasePyQt5Dashboard, TradeDashboardExtensions):
             len(self.detached_flows) + 1,
             self
         )
+        # ✅ Collega il signal dei flow a _show_trade_history
+        window.flow_widget.flow_selected.connect(self._show_trade_history)
+        
         self.detached_flows.append(window)
         window.show()
         self.logger.info(
@@ -507,6 +538,78 @@ class TradeDashboard(BasePyQt5Dashboard, TradeDashboardExtensions):
         """Aggiorna una singola finestra Pivot."""
         if not window.isHidden():
             window.update_source_data(self.all_trades)
+
+    def _show_trade_history(self, flow_id: str):
+        """Mostra la storia dei trades per il ticker del flow."""
+        self.logger.info(f"=== _show_trade_history called ===")
+        self.logger.info(f"flow_id: {flow_id}")
+        self.logger.info(f"all_trades shape: {self.all_trades.shape}")
+        self.logger.debug(f"all_trades columns: {list(self.all_trades.columns)}")
+        
+        # Find the ticker from the flow_id
+        ticker = None
+        
+        for flow_window in self.detached_flows:
+            if flow_window.isHidden():
+                self.logger.debug(f"Flow window is hidden, skipping")
+                continue
+            
+            self.logger.debug(f"Searching in flow_window, flow_cards count: {len(flow_window.flow_widget.flow_cards)}")
+            
+            for card in flow_window.flow_widget.flow_cards.values():
+                self.logger.debug(f"Checking card with flow_id={card.flow_id}")
+                
+                if card.flow_id == flow_id:
+                    # Try multiple possible keys for ticker
+                    ticker = (
+                        card.flow_data.get('ticker') or 
+                        card.flow_data.get('instrument_id') or 
+                        card.flow_data.get('isin')
+                    )
+                    
+                    self.logger.info(f"Found flow {flow_id}, ticker={ticker}")
+                    self.logger.debug(f"flow_data keys: {list(card.flow_data.keys())}")
+                    break
+            
+            if ticker:
+                break
+        
+        if not ticker:
+            self.logger.warning(f"Could not find ticker for flow {flow_id}")
+            QMessageBox.warning(self, "Flow Not Found", f"Could not find ticker for flow {flow_id}")
+            return
+        
+        # Verify we have trade data
+        if self.all_trades.empty:
+            self.logger.warning("all_trades is empty - no data to display")
+            QMessageBox.warning(self, "No Data", "No trade data available yet")
+            return
+        
+        # Check if trades exist for this ticker
+        if 'ticker' not in self.all_trades.columns:
+            self.logger.error("'ticker' column not found in all_trades")
+            QMessageBox.warning(self, "Missing Data", "Trades do not have 'ticker' column")
+            return
+        
+        ticker_trades = self.all_trades[
+            self.all_trades['ticker'].str.upper() == ticker.upper()
+        ]
+        
+        if ticker_trades.empty:
+            self.logger.warning(f"No trades found for ticker {ticker}")
+            available_tickers = self.all_trades['ticker'].unique().tolist()
+            self.logger.debug(f"Available tickers: {available_tickers}")
+            QMessageBox.warning(self, "No Trades", f"No trades found for {ticker}")
+            return
+        
+        # Create and show Trade History window
+        self.logger.info(f"Opening Trade History for {ticker} ({len(ticker_trades)} trades)")
+        
+        history_window = TradeHistoryWindow(ticker, self.all_trades)
+        history_window.show()
+        
+        # Keep reference to prevent garbage collection
+        self.trade_history_windows.append(history_window)
 
     def closeEvent(self, event):
         """Gestisce chiusura dashboard."""

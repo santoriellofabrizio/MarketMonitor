@@ -268,7 +268,7 @@ class RedisPubSubThread(BaseDashboardThread):
             self.redis_client.ping()
 
             # Sottoscrivi canale
-            channel = self.redis_config.get('channel', 'trades')
+            channel = self.redis_config.get('channel', 'trades_df')
             self.pubsub = self.redis_client.pubsub()
             self.pubsub.subscribe(channel)
 
@@ -347,7 +347,7 @@ class RedisPubSubThread(BaseDashboardThread):
 
         AGGIORNAMENTO: Lavora con messaggi normalizzati.
         """
-        # Caso 1: Lista di messaggi → process batch
+        # Caso 1: Lista di messaggi -> process batch
         if isinstance(msg, list):
             data_frames = []
 

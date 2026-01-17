@@ -1,0 +1,4 @@
+price_engine_equity: C:\AFMachineLearning\Libraries\MarketMonitor\etc\config\configPriceEngineEquity.yaml
+price_engine_fi: C:\AFMachineLearning\Libraries\MarketMonitor\etc\config\configPriceEngineFI.yaml
+equity_analysis: C:\AFMachineLearning\Libraries\MarketMonitor\etc\config\configEquityLiveAnalysis.yaml
+fi_analysis: C:\AFMachineLearning\Libraries\MarketMonitor\etc\config\configFIAnalysis.yaml

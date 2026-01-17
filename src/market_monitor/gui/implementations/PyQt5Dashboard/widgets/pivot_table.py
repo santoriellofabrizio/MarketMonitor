@@ -1,5 +1,5 @@
 """
-Widget Pivot Table con filtri avanzati AND/OR e controllo decimali
+Widget Pivot Table con filtri avanzati AND/OR, controllo decimali e filtro rolling temporale.
 """
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QTableWidget,
                              QTableWidgetItem, QPushButton, QLabel, QComboBox,
@@ -8,6 +8,7 @@ from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QTableWidget,
 from PyQt5.QtCore import Qt, pyqtSignal, QPoint
 from PyQt5.QtGui import QColor, QCursor
 import pandas as pd
+from datetime import timedelta
 from typing import Optional, Dict, Any, List
 
 # Import sistema filtri avanzati
@@ -33,6 +34,7 @@ class PivotTableWidget(QWidget):
     Supporta:
     - Groupby e pivot
     - Filtri avanzati con AND/OR
+    - Filtro rolling temporale
     - Normalizzazione (rows/cols/all)
     - Controllo decimali per colonna
     - Configurazione persistente
@@ -42,6 +44,18 @@ class PivotTableWidget(QWidget):
 
     pivot_updated = pyqtSignal(pd.DataFrame)
 
+    # Opzioni filtro temporale rapido (stesso formato di ChartWidget)
+    TIME_FILTER_OPTIONS = {
+        'All': None,
+        '1 min': timedelta(minutes=1),
+        '5 min': timedelta(minutes=5),
+        '15 min': timedelta(minutes=15),
+        '30 min': timedelta(minutes=30),
+        '1 ora': timedelta(hours=1),
+        '4 ore': timedelta(hours=4),
+        'Oggi': 'today',
+    }
+
     def __init__(self, parent=None):
         super().__init__(parent)
 
@@ -49,10 +63,13 @@ class PivotTableWidget(QWidget):
         self.pivot_data = pd.DataFrame()
         self.current_config = None
         self.settings_visible = True
-        
+
         # Filtri avanzati e decimali
         self.column_decimals = {}
         self.active_filter: Optional[FilterGroup] = None
+
+        # Configurazione pending per restore dopo set_source_data
+        self._pending_config: Optional[Dict[str, Any]] = None
 
         self._setup_ui()
 
@@ -122,6 +139,20 @@ class PivotTableWidget(QWidget):
         self.active_filters_label.setStyleSheet("font-style: italic; color: #666; padding: 5px;")
         self.active_filters_label.setWordWrap(True)
         filter_layout.addWidget(self.active_filters_label)
+
+        # Filtro temporale rapido (rolling)
+        quick_filter_row = QHBoxLayout()
+
+        quick_filter_row.addWidget(QLabel("Time Filter:"))
+        self.quick_time_filter = QComboBox()
+        self.quick_time_filter.addItems(list(self.TIME_FILTER_OPTIONS.keys()))
+        self.quick_time_filter.setToolTip("Filtra i dati per finestra temporale rolling prima del pivot")
+        self.quick_time_filter.currentTextChanged.connect(self._on_quick_filter_changed)
+        self.quick_time_filter.setMaximumWidth(100)
+        quick_filter_row.addWidget(self.quick_time_filter)
+
+        quick_filter_row.addStretch()
+        filter_layout.addLayout(quick_filter_row)
 
         filter_group.setLayout(filter_layout)
         settings_layout.addWidget(filter_group)
@@ -380,12 +411,69 @@ class PivotTableWidget(QWidget):
             """)
 
     def _apply_filters_to_data(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Applica filtri al DataFrame"""
+        """Applica filtri avanzati al DataFrame"""
         if not self.active_filter or not self.active_filter.conditions:
             return df
 
         mask = self.active_filter.apply(df)
         return df[mask]
+
+    def _on_quick_filter_changed(self):
+        """Callback quando cambia il filtro temporale rapido."""
+        if self.current_config:
+            self._apply_pivot_from_config(self.current_config)
+
+    def _find_timestamp_column(self, df: pd.DataFrame) -> Optional[str]:
+        """Trova la colonna timestamp nel DataFrame."""
+        candidates = ['timestamp', 'time', 'datetime', 'date', 'created_at']
+
+        for col in candidates:
+            if col in df.columns:
+                return col
+
+        # Cerca colonne di tipo datetime
+        for col in df.columns:
+            if pd.api.types.is_datetime64_any_dtype(df[col]):
+                return col
+
+        return None
+
+    def _apply_time_filter(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Applica filtro temporale rolling.
+        Riduce i dati "alla fonte" per alleggerire il pivot.
+        """
+        if df.empty:
+            return df
+
+        time_filter = self.quick_time_filter.currentText()
+        time_delta = self.TIME_FILTER_OPTIONS.get(time_filter)
+
+        if time_delta is None:
+            return df
+
+        # Trova colonna timestamp
+        timestamp_col = self._find_timestamp_column(df)
+
+        if not timestamp_col:
+            return df
+
+        result = df.copy()
+        now = pd.Timestamp.now()
+
+        if time_delta == 'today':
+            # Filtra per "oggi"
+            cutoff = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        else:
+            cutoff = now - time_delta
+
+        # Assicurati che la colonna sia datetime
+        if result[timestamp_col].dtype != 'datetime64[ns]':
+            result[timestamp_col] = pd.to_datetime(result[timestamp_col], errors='coerce')
+
+        result = result[result[timestamp_col] >= cutoff]
+
+        return result
 
     def _on_normalize_changed(self, changed_checkbox):
         """Gestisce mutually exclusive checkboxes per normalize"""
@@ -405,10 +493,15 @@ class PivotTableWidget(QWidget):
         # Aggiorna combo box
         columns = ['None'] + list(df.columns)
 
-        # Salva selezione corrente
-        current_rows = self.rows_combo.currentText()
-        current_cols = self.cols_combo.currentText()
-        current_values = self.values_combo.currentText()
+        # Salva selezione corrente (o da pending config)
+        if self._pending_config:
+            current_rows = self._pending_config.get('rows', 'None')
+            current_cols = self._pending_config.get('cols', 'None')
+            current_values = self._pending_config.get('values', 'None')
+        else:
+            current_rows = self.rows_combo.currentText()
+            current_cols = self.cols_combo.currentText()
+            current_values = self.values_combo.currentText()
 
         # Aggiorna combo boxes
         self.rows_combo.clear()
@@ -430,8 +523,60 @@ class PivotTableWidget(QWidget):
         if current_values in numeric_cols:
             self.values_combo.setCurrentText(current_values)
 
-        # Ri-applica pivot se configurato
-        if self.current_config:
+        # Applica pending config se presente
+        if self._pending_config:
+            self._apply_pending_config()
+            self._pending_config = None
+        # Altrimenti ri-applica pivot se configurato
+        elif self.current_config:
+            self._apply_pivot_from_config(self.current_config)
+
+    def _apply_pending_config(self):
+        """Applica la configurazione pending dopo che le combo box sono state popolate."""
+        config = self._pending_config
+        if not config:
+            return
+
+        # Applica selezioni combo box
+        if 'rows' in config and config['rows']:
+            index = self.rows_combo.findText(config['rows'])
+            if index >= 0:
+                self.rows_combo.setCurrentIndex(index)
+
+        if 'cols' in config and config['cols']:
+            index = self.cols_combo.findText(config['cols'])
+            if index >= 0:
+                self.cols_combo.setCurrentIndex(index)
+
+        if 'values' in config and config['values']:
+            index = self.values_combo.findText(config['values'])
+            if index >= 0:
+                self.values_combo.setCurrentIndex(index)
+
+        if 'agg' in config and config['agg']:
+            index = self.agg_combo.findText(config['agg'])
+            if index >= 0:
+                self.agg_combo.setCurrentIndex(index)
+
+        # Applica normalize
+        if config.get('normalize_none', True):
+            self.normalize_none_radio.setChecked(True)
+        elif config.get('normalize_rows', False):
+            self.normalize_rows_radio.setChecked(True)
+        elif config.get('normalize_cols', False):
+            self.normalize_cols_radio.setChecked(True)
+        elif config.get('normalize_all', False):
+            self.normalize_all_radio.setChecked(True)
+
+        # Applica filtro temporale
+        if 'quick_time_filter' in config:
+            index = self.quick_time_filter.findText(config['quick_time_filter'])
+            if index >= 0:
+                self.quick_time_filter.setCurrentIndex(index)
+
+        # Applica current_config per il pivot
+        if config.get('current_config'):
+            self.current_config = config['current_config']
             self._apply_pivot_from_config(self.current_config)
 
     def apply_pivot(self):
@@ -475,7 +620,7 @@ class PivotTableWidget(QWidget):
         self._apply_pivot_from_config(self.current_config)
 
     def _apply_pivot_from_config(self, config: Dict[str, Any]):
-        """Applica pivot usando configurazione salvata"""
+        """Applica pivot usando configurazione salvata con filtri in cascata."""
         try:
             rows = config['rows']
             cols = config['cols']
@@ -483,11 +628,20 @@ class PivotTableWidget(QWidget):
             agg = config['agg']
             normalize = config.get('normalize', None)
 
-            # Applica filtri
+            # Applica filtri in cascata:
+            # 1. Filtri avanzati (AND/OR)
             filtered_data = self._apply_filters_to_data(self.source_data)
 
+            # 2. Filtro temporale rolling
+            filtered_data = self._apply_time_filter(filtered_data)
+
+            # Salva conteggi per info label
+            original_count = len(self.source_data)
+            filtered_count = len(filtered_data)
+
             if filtered_data.empty:
-                QMessageBox.warning(self, "No Data", "Filters resulted in empty dataset")
+                # Non mostrare warning popup per evitare flood durante auto-update
+                self.info_label.setText("No data after filtering")
                 self.pivot_data = pd.DataFrame()
                 self._populate_table()
                 return
@@ -530,13 +684,27 @@ class PivotTableWidget(QWidget):
             self._populate_table()
             self.pivot_updated.emit(self.pivot_data)
 
-            # Update info
-            norm_text = f" | Normalized: {normalize}" if normalize else ""
-            filter_text = f" | Filtered: {len(filtered_data)}" if self.active_filter and self.active_filter.conditions else ""
+            # Update info con dettagli filtri
+            info_parts = []
+
             config_str = f"{rows} x {cols if cols != 'None' else 'N/A'} - {agg}({values})"
-            self.info_label.setText(
-                f"Pivot: {config_str}{norm_text}{filter_text} | {len(self.pivot_data)} rows"
-            )
+            info_parts.append(f"Pivot: {config_str}")
+
+            if normalize:
+                info_parts.append(f"Norm: {normalize}")
+
+            # Mostra conteggio se filtrato
+            if filtered_count < original_count:
+                info_parts.append(f"Data: {filtered_count}/{original_count}")
+
+            # Mostra filtro temporale attivo
+            time_filter = self.quick_time_filter.currentText()
+            if time_filter != 'All':
+                info_parts.append(f"Time: {time_filter}")
+
+            info_parts.append(f"{len(self.pivot_data)} rows")
+
+            self.info_label.setText(" | ".join(info_parts))
 
         except Exception as e:
             QMessageBox.warning(self, "Pivot Error", f"Error creating pivot: {str(e)}")
@@ -726,7 +894,7 @@ class PivotTableWidget(QWidget):
         return self.pivot_data.copy() if not self.pivot_data.empty else pd.DataFrame()
 
     def get_config(self) -> dict:
-        """Salva configurazione corrente"""
+        """Salva configurazione corrente (include filtro temporale)."""
         return {
             'rows': self.rows_combo.currentText(),
             'cols': self.cols_combo.currentText(),
@@ -739,11 +907,38 @@ class PivotTableWidget(QWidget):
             'settings_visible': self.settings_visible,
             'current_config': self.current_config.copy() if self.current_config else None,
             'column_decimals': self.column_decimals.copy(),
+            # Filtro temporale rapido
+            'quick_time_filter': self.quick_time_filter.currentText(),
         }
 
     def restore_config(self, config: dict):
-        """Ripristina configurazione salvata"""
+        """
+        Ripristina configurazione salvata.
+
+        Se i dati non sono ancora disponibili (combo box vuote),
+        salva la config come pending e la applica in set_source_data.
+        """
         try:
+            # Salva column_decimals subito (non dipende dai dati)
+            if 'column_decimals' in config:
+                self.column_decimals = config['column_decimals'].copy()
+
+            # Ripristina settings visibility subito
+            if 'settings_visible' in config:
+                self.settings_visible = config['settings_visible']
+                if self.settings_visible:
+                    self.settings_container.show()
+                    self.toggle_settings_btn.setText("▼ Hide Settings")
+                else:
+                    self.settings_container.hide()
+                    self.toggle_settings_btn.setText("▶ Show Settings")
+
+            # Se non ci sono dati, salva config come pending
+            if self.source_data.empty:
+                self._pending_config = config.copy()
+                return
+
+            # Altrimenti applica subito
             if 'rows' in config and config['rows']:
                 index = self.rows_combo.findText(config['rows'])
                 if index >= 0:
@@ -773,22 +968,15 @@ class PivotTableWidget(QWidget):
             elif config.get('normalize_all', False):
                 self.normalize_all_radio.setChecked(True)
 
-            if 'column_decimals' in config:
-                self.column_decimals = config['column_decimals'].copy()
-
-            if 'settings_visible' in config:
-                self.settings_visible = config['settings_visible']
-                if self.settings_visible:
-                    self.settings_container.show()
-                    self.toggle_settings_btn.setText("▼ Hide Settings")
-                else:
-                    self.settings_container.hide()
-                    self.toggle_settings_btn.setText("▶ Show Settings")
+            # Ripristina filtro temporale rapido
+            if 'quick_time_filter' in config:
+                index = self.quick_time_filter.findText(config['quick_time_filter'])
+                if index >= 0:
+                    self.quick_time_filter.setCurrentIndex(index)
 
             if config.get('current_config'):
                 self.current_config = config['current_config']
-                if not self.source_data.empty:
-                    self._apply_pivot_from_config(self.current_config)
+                self._apply_pivot_from_config(self.current_config)
 
         except Exception as e:
             print(f"Error restoring pivot config: {e}")

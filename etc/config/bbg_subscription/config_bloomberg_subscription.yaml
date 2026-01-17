@@ -1,0 +1,419 @@
+#--------I seguenti strumenti sono TASSI, tenere la valuta a EUR evita che i valori streammati da BBG vengano corretti per valuta-------#
+
+ESTRON:
+  subscription: ESTRON Index
+  currency: EUR
+SOFRRATE:
+  subscription: SOFRRATE Index
+  currency: EUR
+SONIO/N:
+  subscription: SONIO/N Index
+  currency: EUR
+TONAR:
+  subscription: MUTKCALM Index
+  currency: EUR
+ESTR3M:
+  subscription: EESWEC Curncy
+  currency: EUR
+SOFR3M:
+  subscription: USOSFRC Curncy
+  currency: EUR
+
+#------------------------------#
+
+FGBS:
+  subscription: DUA COMDTY
+  currency: EUR
+FGBM:
+  subscription: OEA COMDTY
+  currency: EUR
+FGBL:
+  subscription: RXA COMDTY
+  currency: EUR
+FGBX:
+  subscription: UBA COMDTY
+  currency: EUR
+FOAT:
+  subscription: OATA COMDTY
+  currency: EUR
+FBTS:
+  subscription: BTSA COMDTY
+  currency: EUR
+FBTP:
+  subscription: IKA COMDTY
+  currency: EUR
+FBON:
+  subscription: KOAA COMDTY
+  currency: EUR
+"G ":
+  subscription: G A COMDTY
+  currency: GBP
+FV:
+  subscription: FVA Comdty
+  currency: USD
+TY:
+  subscription: TYA Comdty
+  currency: USD
+US:
+  subscription: USA Comdty
+  currency: USD
+WN:
+  subscription: WNA Comdty
+  currency: USD
+TU:
+  subscription: TUA Comdty
+  currency: USD
+JB:
+  subscription: JBA Comdty
+  currency: JPY
+ITRAXXMAIN:
+  subscription: ITRX EUR CDSI GEN 5Y SPRD Corp
+  currency: EUR
+ITRAXXXOVER:
+  subscription: ITRX XOVER CDSI GEN 5Y SPRD Corp
+  currency: EUR
+ITRAXXSNRFIN:
+  subscription: SNRFIN CDSI GEN 5Y SPRD Corp
+  currency: EUR
+ITRAXXSUBFIN:
+  subscription: SUBFIN CDSI GEN 5Y SPRD Corp
+  currency: EUR
+FESX:
+  subscription: VGA Index
+  currency: EUR
+CDXIG:
+  subscription: CDX IG CDSI GEN 5Y SPRD Corp
+  currency: USD
+CDXHY:
+  subscription: CDX HY CDSI GEN 5Y SPRD Corp
+  currency: USD
+CDXEM:
+  subscription: CDX EM CDSI GEN 5Y SPRD Corp
+  currency: USD
+ES:
+  subscription: ESA INDEX
+  currency: USD
+EUZCISWAP1:
+  subscription: EUSWI1 Curncy
+  currency: EUR
+EUZCISWAP2:
+  subscription: EUSWI2 Curncy
+  currency: EUR
+EUZCISWAP5:
+  subscription: EUSWI5 Curncy
+  currency: EUR
+EUZCISWAP10:
+  subscription: EUSWI10 Curncy
+  currency: EUR
+EUZCISWAP15:
+  subscription: EUSWI15 Curncy
+  currency: EUR
+EUZCISWAP20:
+  subscription: EUSWI20 Curncy
+  currency: EUR
+EUZCISWAP25:
+  subscription: EUSWI25 Curncy
+  currency: EUR
+EUZCISWAP30:
+  subscription: EUSWI30 Curncy
+  currency: EUR
+USZCISWAP1:
+  subscription: USSWIT1 Curncy
+  currency: USD
+USZCISWAP2:
+  subscription: USSWIT2 Curncy
+  currency: USD
+USZCISWAP5:
+  subscription: USSWIT5 Curncy
+  currency: USD
+USZCISWAP10:
+  subscription: USSWIT10 Curncy
+  currency: USD
+USZCISWAP15:
+  subscription: USSWIT15 Curncy
+  currency: USD
+USZCISWAP20:
+  subscription: USSWIT20 Curncy
+  currency: USD
+USZCISWAP25:
+  subscription: USSWIT25 Curncy
+  currency: USD
+USZCISWAP30:
+  subscription: USSWIT30 Curncy
+  currency: USD
+IE00B3VTN290:
+  subscription: SXRQ IM Equity
+  currency: EUR
+LU0643975161:
+  subscription: X03G IM Equity
+  currency: EUR
+LU0484969463:
+  subscription: XBAT IM Equity
+  currency: EUR
+FECX:
+  subscription: LXYA Index
+  currency: EUR
+FEHY:
+  subscription: AHWA Index
+  currency: EUR
+FEHY202606:
+  subscription: AHWA Index
+  currency: EUR
+
+FUIG:
+  subscription: BBEA Index
+  currency: USD
+FUHY:
+  subscription: BBLA Index
+  currency: USD
+FUEM:
+  subscription: XZSA Index
+  currency: USD
+FGBC:
+  subscription: XZRA Index
+  currency: GBP
+FECX202606:
+  subscription: LXYM6 Index
+  currency: EUR
+FUIG202606:
+  subscription: BBEM6 Index
+  currency: USD
+FUHY202606:
+  subscription: BBLM6 Index
+  currency: USD
+FUEM202606:
+  subscription: XZSM6 Index
+  currency: USD
+FGBC202606:
+  subscription: XZRM6 Index
+  currency: GBP
+FECX202603:
+  subscription: LXYH6 Index
+  currency: EUR
+FEHY202603:
+  subscription: AHWH6 Index
+  currency: EUR
+FUIG202603:
+  subscription: BBEH6 Index
+  currency: USD
+FUHY202603:
+  subscription: BBLH6 Index
+  currency: USD
+FUEM202603:
+  subscription: XZSH6 Index
+  currency: USD
+FGBC202603:
+  subscription: XZRH6 Index
+  currency: GBP
+FR001400SQV3:
+  subscription: ISCH FP Equity
+  currency: EUR
+FR001400SDP3:
+  subscription: ISRC FP Equity
+  currency: EUR
+FR001400SDQ1:
+  subscription: ISRD FP Equity
+  currency: EUR
+LU2872291278:
+  subscription: FM26 FP Equity
+  currency: EUR
+LU2872291435:
+  subscription: FM27 FP Equity
+  currency: EUR
+LU2872291781:
+  subscription: FM29 FP Equity
+  currency: EUR
+LU2780871310:
+  subscription: FM28 FP Equity
+  currency: EUR
+LU1407892592:
+  subscription: GILS FP Equity
+  currency: EUR
+LU2090062865:
+  subscription: C53D FP Equity
+  currency: EUR
+LU1681046857:
+  subscription: X1GD FP Equity
+  currency: EUR
+LU1686832194:
+  subscription: MTH FP Equity
+  currency: EUR
+LU1407893301:
+  subscription: GILI FP Equity
+  currency: EUR
+LU2697596828:
+  subscription: ACESD FP Equity
+  currency: EUR
+LU2697597719:
+  subscription: AGESD FP Equity
+  currency: EUR
+LU2533811910:
+  subscription: SRIUD FP Equity
+  currency: EUR
+LU3000546336:
+  subscription: USCBH FP Equity
+  currency: EUR
+LU2446383254:
+  subscription: SRI3C FP Equity
+  currency: EUR
+LU2742532745:
+  subscription: SRID7 FP Equity
+  currency: EUR
+LU2742533552:
+  subscription: GOD10 FP Equity
+  currency: EUR
+LU1953136287:
+  subscription: SRICD FP Equity
+  currency: EUR
+LU2446383338:
+  subscription: SRIC6 FP Equity
+  currency: EUR
+LU2365458731:
+  subscription: GSSBO FP Equity
+  currency: EUR
+IE000U99N3V1:
+  subscription: TI25 FP Equity
+  currency: EUR
+IE000I1D7D10:
+  subscription: DI27 FP Equity
+  currency: EUR
+IE00BKPSFD61:
+  subscription: CYEA FP Equity
+  currency: EUR
+IE00BCRY5Y77:
+  subscription: SDIG NA Equity
+  currency: EUR
+IE00BCLWRB83:
+  subscription: LQDH NA Equity
+  currency: EUR
+IE00BCRY6227:
+  subscription: ERND NA Equity
+  currency: EUR
+IE00B7LGZ558:
+  subscription: IFRB NA Equity
+  currency: EUR
+IE000BWITBP9:
+  subscription: 26ID FP Equity
+  currency: EUR
+IE0000UJ3480:
+  subscription: 28ID FP Equity
+  currency: EUR
+IE0000X2DXK3:
+  subscription: ID25 FP Equity
+  currency: EUR
+IE00BKT6VQ12:
+  subscription: CYBE NA Equity
+  currency: EUR
+IE00BKT6BH25:
+  subscription: IX5A NA Equity
+  currency: EUR
+IE00BKLC5874:
+  subscription: EHYD NA Equity
+  currency: EUR
+IE00BKT6FT27:
+  subscription: IGLE NA Equity
+  currency: EUR
+IE00BJK55B31:
+  subscription: DHYE NA Equity
+  currency: EUR
+IE00BKP5L409:
+  subscription: IMBE NA Equity
+  currency: EUR
+IE0006UGU3X3:
+  subscription: 27IT FP Equity
+  currency: EUR
+IE00076HZIP3:
+  subscription: 29IT FP Equity
+  currency: EUR
+IE000Y247W99:
+  subscription: 29ID FP Equity
+  currency: EUR
+IE000BZXJJ24:
+  subscription: 30ID FP Equity
+  currency: EUR
+IE000XRBP9E3:
+  subscription: IGBY NA Equity
+  currency: EUR
+IE000JEHORH6:
+  subscription: ICEH NA Equity
+  currency: EUR
+IE0002OP0LA0:
+  subscription: JNKA FP Equity
+  currency: EUR
+IE000O2QIHN4:
+  subscription: AGYU IM Equity
+  currency: EUR
+IE000PKN5N58:
+  subscription: ICLO IM Equity
+  currency: EUR
+
+IE00BFZPF546:
+  subscription: EMGA FP Equity
+  currency: EUR
+FR0013346681:
+  subscription: OBLI FP Equity
+  currency: EUR
+IE000D1DAPO5:
+  subscription: RCEG NA Equity
+  currency: EUR
+LU2993394241:
+  subscription: QEIG FP Equity
+  currency: EUR
+LU3025346910:
+  subscription: GE110 FP Equity
+  currency: EUR
+IE000UJSC3C9:
+  subscription: IX29 FP Equity
+  currency: EUR
+IE0003HV7CS6:
+  subscription: IX28 FP Equity
+  currency: EUR
+IE000O1FWAW6:
+  subscription: IG35 FP Equity
+  currency: EUR
+IE000Y9XFN19:
+  subscription: DI35 FP Equity
+  currency: EUR
+IE0008YWAFL1:
+  subscription: IU28 FP Equity
+  currency: EUR
+IE00094KNQN4:
+  subscription: IU29 FP Equity
+  currency: EUR
+IE00BK4W7N32:
+  subscription: SUOD NA Equity
+  currency: EUR
+IE00B6X2VY59:
+  subscription: IRCP NA Equity
+  currency: EUR
+NL0009690247:
+  subscription: TCBT NA Equity
+  currency: EUR
+NL0010273801:
+  subscription: TAT NA Equity
+  currency: EUR
+NL0009690254:
+  subscription: TGBT NA Equity
+  currency: EUR
+
+
+
+BEHLTREU Index:
+  subscription: BEHLTREU Index
+  currency: EUR
+LHVLTRUU Index:
+  subscription: LHVLTRUU Index
+  currency: USD
+RECMTREU Index:
+  subscription: RECMTREU Index
+  currency: EUR
+LUACTRUU Index:
+  subscription: LUACTRUU Index
+  currency: USD
+I38156US Index:
+  subscription: I38156US Index
+  currency: USD
+I35357GB Index:
+  subscription: I35357GB Index
+  currency: GBP
+
