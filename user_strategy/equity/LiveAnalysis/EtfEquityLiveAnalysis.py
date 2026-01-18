@@ -4,7 +4,7 @@ from collections import deque
 from datetime import datetime
 import datetime as dt
 
-
+import numpy as np
 import pandas as pd
 from sfm_dataprovider.interface.bshdata import BshData
 
@@ -32,7 +32,8 @@ class EtfEquityLiveAnalysis(StrategyUI):
         self.API = BshData(config_path=r"C:\AFMachineLearning\Libraries\BshDataProvider\config\bshdata_config.yaml")
 
         self.all_isin_ETFP = self.API.general.get_etp_isins(underlying="EQUITY", segments="IM")
-
+        self.clusters = {isin: np.random.choice(["EU", "BRASIL", "WORLD", "JAPAN", "CHINA"])
+                         for isin in self.all_isin_ETFP}
         self.isin_to_ticker = self.API.info.get_etp_fields(isin=self.all_isin_ETFP[:1000], fields="TICKER")["TICKER"].to_dict()
         self.isin_to_ticker.update(self.API.info.get_etp_fields(isin=self.all_isin_ETFP[1000:], fields="TICKER")["TICKER"].to_dict())
         self.ticker_to_isin = {ticker: isin for isin, ticker in self.isin_to_ticker.items()}
@@ -74,11 +75,12 @@ class EtfEquityLiveAnalysis(StrategyUI):
     def on_start_strategy(self):
 
         last_trades = self.trade_manager.get_trades()
-        self.publish_trades_on_dashboard(last_trades)
+        if not last_trades.empty:
+            last_trades["cluster"] = last_trades["isin"].map(self.clusters)
+            self.publish_trades_on_dashboard(last_trades)
 
-        self.trade_dashboard_messaging.export_message(channel="trades_df",
-                                                      value=last_trades.drop(["is_elaborated"],
-                                                                             errors='ignore'),
+            self.trade_dashboard_messaging.export_message(channel="trades_df",
+                                                      value=last_trades,
                                                       date_format='iso',
                                                       orient="records")
 
@@ -115,6 +117,8 @@ class EtfEquityLiveAnalysis(StrategyUI):
 
         # Invia trades: nuovi parziali + parziali precedenti ora elaborati
         trades_to_publish = self.trade_manager.get_trades_to_publish(processed_new)
+        trades_to_publish["cluster"] = trades_to_publish[("isin"
+                                                          "")].map(self.clusters)
         self.publish_trades_on_dashboard(trades_to_publish)
 
         self.trade_dashboard_messaging.export_message(channel="trades_df_excel",

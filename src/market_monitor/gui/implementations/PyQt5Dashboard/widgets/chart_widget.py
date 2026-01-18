@@ -158,8 +158,14 @@ class ChartWidget(QWidget):
         self.quick_time_filter.setMaximumWidth(100)
         quick_filter_row.addWidget(self.quick_time_filter)
 
-        # Limitatore Top N (per bar chart)
-        quick_filter_row.addWidget(QLabel("Top N:"))
+        # Limitatore Top/Worst N (per bar chart)
+        self.top_worst_combo = QComboBox()
+        self.top_worst_combo.addItems(['Top', 'Worst'])
+        self.top_worst_combo.setToolTip("Top = valori più alti, Worst = valori più bassi")
+        self.top_worst_combo.currentTextChanged.connect(self._on_quick_filter_changed)
+        self.top_worst_combo.setMaximumWidth(70)
+        quick_filter_row.addWidget(self.top_worst_combo)
+
         self.top_n_spin = QSpinBox()
         self.top_n_spin.setRange(0, 500)
         self.top_n_spin.setValue(0)  # 0 = no limit
@@ -584,6 +590,11 @@ class ChartWidget(QWidget):
             if index >= 0:
                 self.quick_time_filter.setCurrentIndex(index)
 
+        if 'top_worst' in config:
+            index = self.top_worst_combo.findText(config['top_worst'])
+            if index >= 0:
+                self.top_worst_combo.setCurrentIndex(index)
+
         if 'top_n' in config:
             self.top_n_spin.setValue(config['top_n'])
 
@@ -718,10 +729,11 @@ class ChartWidget(QWidget):
 
     def _apply_top_n_limit(self, df: pd.DataFrame, x_col: str, y_col: str, agg: str) -> pd.DataFrame:
         """
-        Applica limitatore Top N per bar chart (Fase 2).
-        Dopo groupby, ordina e prende solo i primi N.
+        Applica limitatore Top/Worst N per bar chart (Fase 2).
+        Dopo groupby, ordina e prende solo i primi/ultimi N.
         """
         top_n = self.top_n_spin.value()
+        is_worst = self.top_worst_combo.currentText() == 'Worst'
 
         if top_n == 0 or df.empty:
             return df
@@ -731,8 +743,8 @@ class ChartWidget(QWidget):
             grouped = df.groupby(x_col)[y_col].agg(agg).reset_index()
             grouped.columns = [x_col, y_col]
 
-            # Ordina per valore Y decrescente e prendi Top N
-            grouped = grouped.sort_values(by=y_col, ascending=False).head(top_n)
+            # Ordina per valore Y (ascending per Worst, descending per Top)
+            grouped = grouped.sort_values(by=y_col, ascending=is_worst).head(top_n)
 
             return grouped
 
@@ -872,7 +884,8 @@ class ChartWidget(QWidget):
 
             top_n = self.top_n_spin.value()
             if top_n > 0:
-                info_parts.append(f"Top {top_n}")
+                top_worst = self.top_worst_combo.currentText()
+                info_parts.append(f"{top_worst} {top_n}")
 
             self.info_label.setText(" | ".join(info_parts))
 
@@ -891,6 +904,7 @@ class ChartWidget(QWidget):
         chart_type = config['chart_type']
 
         top_n = self.top_n_spin.value()
+        is_worst = self.top_worst_combo.currentText() == 'Worst'
 
         if group_by:
             pivot = df.pivot_table(
@@ -902,12 +916,15 @@ class ChartWidget(QWidget):
             )
 
             # ========================
-            # FASE 2: APPLICA TOP N AL PIVOT
+            # FASE 2: APPLICA TOP/WORST N AL PIVOT
             # ========================
             if top_n > 0 and len(pivot) > top_n:
                 # Ordina per somma totale delle righe
                 row_sums = pivot.sum(axis=1)
-                top_indices = row_sums.nlargest(top_n).index
+                if is_worst:
+                    top_indices = row_sums.nsmallest(top_n).index
+                else:
+                    top_indices = row_sums.nlargest(top_n).index
                 pivot = pivot.loc[top_indices]
 
             if chart_type == 'bar':
@@ -929,10 +946,13 @@ class ChartWidget(QWidget):
             grouped = df.groupby(x_col)[y_col].agg(agg)
 
             # ========================
-            # FASE 2: APPLICA TOP N AL GROUPED
+            # FASE 2: APPLICA TOP/WORST N AL GROUPED
             # ========================
             if top_n > 0 and len(grouped) > top_n:
-                grouped = grouped.nlargest(top_n)
+                if is_worst:
+                    grouped = grouped.nsmallest(top_n)
+                else:
+                    grouped = grouped.nlargest(top_n)
 
             if chart_type == 'bar':
                 grouped.plot(kind='bar', ax=ax, width=0.7)
@@ -1127,6 +1147,7 @@ class ChartWidget(QWidget):
             'current_config': self.current_config.copy() if self.current_config else None,
             # Nuove impostazioni Fase 2-3
             'quick_time_filter': self.quick_time_filter.currentText(),
+            'top_worst': self.top_worst_combo.currentText(),
             'top_n': self.top_n_spin.value(),
             'downsample': self.downsample_check.isChecked(),
         }
@@ -1217,6 +1238,11 @@ class ChartWidget(QWidget):
                 index = self.quick_time_filter.findText(config['quick_time_filter'])
                 if index >= 0:
                     self.quick_time_filter.setCurrentIndex(index)
+
+            if 'top_worst' in config:
+                index = self.top_worst_combo.findText(config['top_worst'])
+                if index >= 0:
+                    self.top_worst_combo.setCurrentIndex(index)
 
             if 'top_n' in config:
                 self.top_n_spin.setValue(config['top_n'])

@@ -8,7 +8,7 @@ import pandas as pd
 from user_strategy.utils.pricing_models.AggregationFunctions import forecast_aggregation
 from user_strategy.utils.InputParams import InputParams
 from market_monitor.live_data_hub.real_time_data_hub import EUR_SYNONYM
-from user_strategy.utils.enums import ISIN_TO_TICKER, TICKER_TO_ISIN
+from user_strategy.utils.enums import ISIN_TO_TICKER
 
 logger = logging.getLogger()
 
@@ -71,7 +71,6 @@ class InputParamsQuoting(InputParams):
             self.r2_cluster = value.iloc[:, 0]
             value.drop(value.columns[0], axis=1, inplace=True)
 
-        value.rename(index=TICKER_TO_ISIN, columns=TICKER_TO_ISIN, inplace=True)
         value = value.loc[value.sum(axis=1) != 0, value.sum() != 0]
 
         if dismissed := [m for m in DISMISSED_ETFS if m in value.columns]:
@@ -112,50 +111,6 @@ class InputParamsQuoting(InputParams):
     @beta_cluster_index.getter
     def beta_cluster_index(self):
         return self._beta_cluster_index
-
-    @property
-    def currency_exposure(self):
-        return self._currency_exposure
-
-    @currency_exposure.setter
-    def currency_exposure(self, value: pd.DataFrame):
-        if not isinstance(value, pd.DataFrame):
-            logger.warning("currency_exposure must be a pandas DataFrame")
-            return
-        for isin in self.isins:
-            if isin not in value.index:
-                value.loc[isin] = 0
-        for eur in EUR_SYNONYM: value.drop(eur, inplace=True, axis=1, errors='ignore')
-        for c in ["currency_hedged", "CURRENCY_HEDGED", "CURRENCY_HEDGED_INDICATOR", "currency_hedged_indicator"]:
-            if c in value.columns:
-                self.currency_hedged = value[c]
-                value.drop(c, inplace=True, axis=1, errors='ignore')
-        invalid_rows_hed = value.loc[self.currency_hedged[self.currency_hedged == "Y"].index].sum(axis=1) == 0
-        invalid_rows_unhed = value.loc[self.currency_hedged[self.currency_hedged == "N"].index].sum(axis=1) != 0
-        if invalid_rows_hed.any():
-            logger.warning(f"Hedged isin with no currency exposure:\n"
-                           + '\n'.join(invalid_rows_hed[invalid_rows_hed].index))
-
-        if invalid_rows_unhed.any():
-            logger.warning(f"Unhedged isin with  currency exposure:\n"
-                           + '\n'.join(invalid_rows_hed[invalid_rows_unhed].index))
-
-        value.columns = [c.replace("EUR", "") for c in value.columns]
-        value = value.loc[:, value.abs().sum() > 0]
-        self._currency_exposure = value.loc[self.isins]
-
-    @property
-    def currency_hedged(self):
-        return self._currency_hedged
-
-    @currency_hedged.setter
-    def currency_hedged(self, value: pd.Series):
-        if not isinstance(value, pd.Series):
-            value = value[value.columns[0]]
-        for isin in self.isins:
-            if isin not in value.index:
-                value.loc[isin] = 0
-        self._currency_hedged = value[self.isins]
 
     def set_forecast_aggregation_func(self, kwargs):
 
@@ -232,7 +187,6 @@ class InputParamsQuoting(InputParams):
             self.r2_index_cluster = value.iloc[:, 0]
             value.drop(value.columns[0], axis=1, inplace=True)
 
-        value.rename(index=TICKER_TO_ISIN, columns=TICKER_TO_ISIN, inplace=True)
         value = value.loc[value.sum(axis=1) != 0, value.sum() != 0]
 
         if dismissed := [m for m in DISMISSED_ETFS if m in value.columns]:
@@ -266,24 +220,29 @@ class InputParamsQuoting(InputParams):
 
         # Connessione al database
         conn = sqlite3.connect(db_path)
-        for table_name in ["BETA_CLUSTER","BETA_CLUSTER_INDEX"]:
+        # Mapping: nome tabella DB -> nome attributo classe
+        table_mapping = {
+            "beta_large_cluster": "beta_cluster",
+            "beta_index_cluster": "beta_cluster_index"
+        }
+        for table_name, attr_name in table_mapping.items():
             query = f"""
                             SELECT *
                             FROM {table_name}
-                            WHERE (ETF, DATETIME) IN (
-                                SELECT ETF, MAX(DATETIME)
+                            WHERE (ISIN, DATETIME) IN (
+                                SELECT ISIN, MAX(DATETIME)
                                 FROM {table_name}
-                                GROUP BY ETF
+                                GROUP BY ISIN
                             )
                             """
 
             # Caricamento dei dati in un DataFrame
             df = pd.read_sql(query, conn)
-            beta_matrix = df.pivot_table(index='ETF', columns='DRIVER', values='BETA', aggfunc='sum').fillna(0)
-            r2 = df[["ETF","R2"]].set_index("ETF").drop_duplicates()
+            beta_matrix = df.pivot_table(index='ISIN', columns='DRIVER', values='BETA', aggfunc='sum').fillna(0)
+            # r2 = df[["ISIN","R2"]].set_index("ISIN").drop_duplicates()
             # beta_matrix["R2"] = r2["R2"]
             # beta_matrix.insert(0, 'R2', beta_matrix.pop('R2'))  #put R2 as first column
-            setattr(self, table_name.lower(), beta_matrix)
+            setattr(self, attr_name, beta_matrix)
         for table_name in ["TerManual"]:
             query = f"""
                             SELECT *

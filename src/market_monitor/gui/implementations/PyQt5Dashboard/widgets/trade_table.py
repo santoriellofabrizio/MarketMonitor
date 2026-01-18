@@ -11,11 +11,52 @@ from PyQt5.QtGui import QColor, QCursor
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
     QLabel, QPushButton, QGroupBox, QHeaderView, QSpinBox, QCheckBox,
-    QMenu, QAction, QWidgetAction
+    QMenu, QAction, QWidgetAction, QScrollArea, QFrame
 )
 
 from market_monitor.gui.implementations.PyQt5Dashboard.common import safe_concat
 from market_monitor.gui.implementations.PyQt5Dashboard.widgets.filter import AdvancedFilterDialog, FilterGroup
+
+
+class NumericTableWidgetItem(QTableWidgetItem):
+    """
+    QTableWidgetItem che supporta sorting numerico.
+    Memorizza il valore originale e sovrascrive __lt__ per confronto corretto.
+    """
+
+    def __init__(self, display_text: str, sort_value=None):
+        super().__init__(display_text)
+        self._sort_value = sort_value
+
+    def __lt__(self, other):
+        if not isinstance(other, NumericTableWidgetItem):
+            return super().__lt__(other)
+
+        # Se entrambi hanno valori numerici, confronta numericamente
+        self_val = self._sort_value
+        other_val = other._sort_value
+
+        # Gestisci None/NaN come minori di tutto
+        self_is_none = self_val is None or (isinstance(self_val, float) and pd.isna(self_val))
+        other_is_none = other_val is None or (isinstance(other_val, float) and pd.isna(other_val))
+
+        if self_is_none and other_is_none:
+            return False
+        if self_is_none:
+            return True  # None va in fondo
+        if other_is_none:
+            return False
+
+        # Confronto numerico se entrambi sono numeri
+        if isinstance(self_val, (int, float)) and isinstance(other_val, (int, float)):
+            return self_val < other_val
+
+        # Confronto datetime
+        if isinstance(self_val, (pd.Timestamp, datetime.datetime)) and isinstance(other_val, (pd.Timestamp, datetime.datetime)):
+            return self_val < other_val
+
+        # Fallback a confronto stringa
+        return self.text() < other.text()
 
 
 class TradeTableWidget(QWidget):
@@ -59,6 +100,8 @@ class TradeTableWidget(QWidget):
 
         # ---- Filters ----
         self.active_filter: Optional[FilterGroup] = None
+        # Filtri per valori colonna: {col_name: set di valori esclusi}
+        self._column_value_filters: dict[str, set] = {}
 
         # ---- Infinite scroll ----
         self.displayed_rows = 0
@@ -114,6 +157,8 @@ class TradeTableWidget(QWidget):
         header.customContextMenuRequested.connect(
             self._show_header_context_menu
         )
+        # Doppio click per filtro valori
+        header.sectionDoubleClicked.connect(self._show_column_filter_menu)
 
         self.table.verticalScrollBar().valueChanged.connect(
             self._on_scroll
@@ -161,6 +206,165 @@ class TradeTableWidget(QWidget):
 
         menu.exec_(QCursor.pos())
 
+    def _show_column_filter_menu(self, col_index: int):
+        """Mostra menu con checkbox per filtrare i valori della colonna."""
+        if col_index < 0 or self.all_data.empty:
+            return
+
+        header_item = self.table.horizontalHeaderItem(col_index)
+        if not header_item:
+            return
+
+        col_name = header_item.text()
+        if col_name not in self.all_data.columns:
+            return
+
+        # Ottieni valori unici (usa all_data per avere tutti i valori possibili)
+        unique_values = self.all_data[col_name].dropna().unique()
+
+        # Limita a 100 valori per performance
+        if len(unique_values) > 100:
+            unique_values = unique_values[:100]
+
+        # Ordina i valori
+        try:
+            unique_values = sorted(unique_values)
+        except TypeError:
+            unique_values = sorted(unique_values, key=str)
+
+        # Valori attualmente esclusi (copia per stato temporaneo)
+        excluded = self._column_value_filters.get(col_name, set()).copy()
+        # Stato temporaneo per questo menu
+        temp_excluded = [excluded]  # Lista per permettere modifica nella closure
+
+        # Crea menu
+        menu = QMenu(self)
+        menu.setMinimumWidth(200)
+
+        # Titolo
+        title = QAction(f"🔍 Filter: {col_name}", self)
+        title.setEnabled(False)
+        menu.addAction(title)
+        menu.addSeparator()
+
+        # Select All / Unselect All (usando QPushButton per non chiudere il menu)
+        btn_container = QWidget()
+        btn_layout = QHBoxLayout(btn_container)
+        btn_layout.setContentsMargins(5, 2, 5, 2)
+        btn_layout.setSpacing(5)
+
+        select_all_btn = QPushButton("✓ Select All")
+        select_all_btn.clicked.connect(
+            lambda: self._filter_select_all_temp(checkboxes, temp_excluded)
+        )
+        btn_layout.addWidget(select_all_btn)
+
+        unselect_all_btn = QPushButton("✗ Unselect All")
+        unselect_all_btn.clicked.connect(
+            lambda: self._filter_unselect_all_temp(unique_values, checkboxes, temp_excluded)
+        )
+        btn_layout.addWidget(unselect_all_btn)
+
+        btn_action = QWidgetAction(self)
+        btn_action.setDefaultWidget(btn_container)
+        menu.addAction(btn_action)
+
+        menu.addSeparator()
+
+        # Container scrollabile per checkbox
+        scroll_widget = QWidget()
+        scroll_layout = QVBoxLayout(scroll_widget)
+        scroll_layout.setContentsMargins(5, 5, 5, 5)
+        scroll_layout.setSpacing(2)
+
+        checkboxes = []
+        for val in unique_values:
+            display_text = str(val) if not pd.isna(val) else "(empty)"
+            cb = QCheckBox(display_text)
+            cb.setChecked(val not in temp_excluded[0])
+            cb.stateChanged.connect(
+                lambda state, v=val: self._on_filter_checkbox_temp(v, state, temp_excluded)
+            )
+            scroll_layout.addWidget(cb)
+            checkboxes.append((val, cb))
+
+        # Scroll area
+        scroll_area = QScrollArea()
+        scroll_area.setWidget(scroll_widget)
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setMaximumHeight(300)
+        scroll_area.setFrameShape(QFrame.NoFrame)
+
+        scroll_action = QWidgetAction(self)
+        scroll_action.setDefaultWidget(scroll_area)
+        menu.addAction(scroll_action)
+
+        menu.addSeparator()
+
+        # Bottone Filter per applicare
+        filter_btn = QPushButton("Filter")
+        filter_btn.clicked.connect(
+            lambda: self._apply_column_filter(col_name, temp_excluded[0], menu)
+        )
+        filter_action = QWidgetAction(self)
+        filter_action.setDefaultWidget(filter_btn)
+        menu.addAction(filter_action)
+
+        # Mostra menu alla posizione dell'header
+        header = self.table.horizontalHeader()
+        pos = header.mapToGlobal(QPoint(header.sectionPosition(col_index), header.height()))
+        menu.exec_(pos)
+
+    def _on_filter_checkbox_temp(self, value, state: int, temp_excluded: list):
+        """Aggiorna stato temporaneo (non applica ancora il filtro)."""
+        if state == Qt.Checked:
+            temp_excluded[0].discard(value)
+        else:
+            temp_excluded[0].add(value)
+
+    def _filter_select_all_temp(self, checkboxes, temp_excluded: list):
+        """Seleziona tutti (stato temporaneo)."""
+        temp_excluded[0].clear()
+        for val, cb in checkboxes:
+            cb.blockSignals(True)
+            cb.setChecked(True)
+            cb.blockSignals(False)
+
+    def _filter_unselect_all_temp(self, values, checkboxes, temp_excluded: list):
+        """Deseleziona tutti (stato temporaneo)."""
+        temp_excluded[0] = set(values)
+        for val, cb in checkboxes:
+            cb.blockSignals(True)
+            cb.setChecked(False)
+            cb.blockSignals(False)
+
+    def _apply_column_filter(self, col_name: str, excluded: set, menu: QMenu):
+        """Applica il filtro colonna e chiude il menu."""
+        if excluded:
+            self._column_value_filters[col_name] = excluded.copy()
+        elif col_name in self._column_value_filters:
+            del self._column_value_filters[col_name]
+
+        self._apply_filters()
+        self._update_filter_info()
+        menu.close()
+
+    def _update_filter_info(self):
+        """Aggiorna label info filtri."""
+        filters_active = []
+
+        if self.active_filter and self.active_filter.conditions:
+            filters_active.append("Advanced")
+
+        for col_name, excluded in self._column_value_filters.items():
+            if excluded:
+                filters_active.append(f"{col_name}({len(excluded)})")
+
+        if filters_active:
+            self.filter_info_label.setText(f"Filters: {', '.join(filters_active)}")
+        else:
+            self.filter_info_label.setText("No filters active")
+
     # ==========================================================
     # FILTERS
     # ==========================================================
@@ -181,7 +385,9 @@ class TradeTableWidget(QWidget):
 
     def _clear_all_filters(self):
         self.active_filter = None
+        self._column_value_filters.clear()
         self._apply_filters()
+        self._update_filter_info()
 
     def _apply_filters(self):
         if self.all_data.empty:
@@ -189,19 +395,20 @@ class TradeTableWidget(QWidget):
             self._refresh_view()
             return
 
+        # 1. Applica filtro avanzato (se presente)
         if not self.active_filter or not self.active_filter.conditions:
             self.filtered_data = self.all_data.copy()
         else:
             try:
                 mask = self.active_filter.apply(self.all_data)
-                
+
                 # Assicuriamoci che mask sia una Series con gli stessi indici
                 if isinstance(mask, pd.Series):
                     # Reindex per garantire corrispondenza con all_data
                     mask = mask.reindex(self.all_data.index, fill_value=False)
-                
+
                 self.filtered_data = self.all_data[mask]
-                
+
             except Exception as e:
                 # Mostra errore all'utente invece di crashare
                 from PyQt5.QtWidgets import QMessageBox
@@ -218,6 +425,14 @@ class TradeTableWidget(QWidget):
                 # Reset al filtro precedente (nessun filtro)
                 self.active_filter = None
                 self.filtered_data = self.all_data.copy()
+
+        # 2. Applica filtri per valori colonna (checkbox)
+        if self._column_value_filters:
+            for col_name, excluded_values in self._column_value_filters.items():
+                if col_name in self.filtered_data.columns and excluded_values:
+                    self.filtered_data = self.filtered_data[
+                        ~self.filtered_data[col_name].isin(excluded_values)
+                    ]
 
         self.displayed_rows = 0
         self._refresh_view()
@@ -301,7 +516,8 @@ class TradeTableWidget(QWidget):
 
             for j, val in enumerate(row):
                 text = self._format_value(df.columns[j], val)
-                item = QTableWidgetItem(text)
+                # Usa NumericTableWidgetItem per sorting numerico corretto
+                item = NumericTableWidgetItem(text, sort_value=val)
                 item.setTextAlignment(Qt.AlignCenter)
 
                 if row_color:
