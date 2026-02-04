@@ -175,6 +175,7 @@ FGBC:
 FECX202606:
   subscription: LXYM6 Index
   currency: EUR
+
 FUIG202606:
   subscription: BBEM6 Index
   currency: USD
@@ -334,6 +335,10 @@ IE000BZXJJ24:
 IE000XRBP9E3:
   subscription: IGBY NA Equity
   currency: EUR
+IE00BPVLQD13:
+  subscription: XDNY IM EQUITY
+  currency: EUR
+
 IE000JEHORH6:
   subscription: ICEH NA Equity
   currency: EUR

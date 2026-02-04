@@ -1,0 +1,27 @@
+timescale_connection:
+  db_name: aidb
+  port: 5432
+  host: timescaledb.af.pro
+  user: aivwr
+  password: 63903918ce20c5d534c3eb551202d4ea
+
+oracle_connection:
+  environment: PROD
+  user: AF_QUANTLIB
+  tns_name: ORABOH
+  password: b18289f251b94f0e1a819df7c7a0fb2e9fabf457ba67b5bbf584478db8c8c17e
+  schema: AF_DATAMART_DBA
+
+
+client:
+  activate_oracle: True
+  activate_timescale: True
+  activate_bloomberg: True
+
+api:
+  log_level: INFO
+  log_file: logs/bshapi.log
+  log_level_file: INFO
+  autocomplete: True
+  cache: True
+  cache_path: cache

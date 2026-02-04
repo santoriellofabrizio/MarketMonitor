@@ -41,6 +41,8 @@ class AbstractTrade:
 
         # Se timestamp è naive, assumilo UTC
         ts = self.timestamp
+        if isinstance(ts, int):
+            ts = datetime.datetime.fromtimestamp(ts/ 1_000_000_000)
         return (now - ts).total_seconds()
 
 

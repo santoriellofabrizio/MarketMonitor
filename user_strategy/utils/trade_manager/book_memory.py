@@ -70,6 +70,9 @@ class BookStorage:
         Returns:
             Tuple (timestamp, mid_prices) o None se non trovato
         """
+        if isinstance(timestamp, int):
+            timestamp = datetime.fromtimestamp(timestamp/ 1_000_000_000)
+
         for ts, mid_prices in reversed(self._storage):
             if ts <= timestamp:
                 return (ts, mid_prices)

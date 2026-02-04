@@ -17,8 +17,8 @@ logger = logging.getLogger(__name__)
 
 
 class TradeType(Enum):
-    MARKET = 1
-    OWN = 2
+    OWN = 1
+    MARKET = 2
 
 
 class MyEventHandler(FileSystemEventHandler):

@@ -296,6 +296,7 @@ class TimeZeroPLManager(threading.Thread):
         trade_price = trade.price
         qty = trade.quantity
         side = trade.side
+        multiplier = getattr(trade, "price_multiplier", 1)
 
         # Validazione trade
         if trade_price is None or trade_price <= 0:
@@ -327,7 +328,7 @@ class TimeZeroPLManager(threading.Thread):
             return None
 
         # Calcolo PL
-        pl = (price - trade_price) * qty * side_multiplier
+        pl = (price - trade_price) * qty * side_multiplier * multiplier
 
         logger.debug(
             f"[CALC_PL] Calcolo completato | "

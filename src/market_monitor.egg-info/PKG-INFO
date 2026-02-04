@@ -5,8 +5,14 @@ Summary: Market monitor project developed by Sella Financial Markets
 Requires-Python: >=3.11
 Description-Content-Type: text/markdown
 Requires-Dist: aiosqlite>=0.20.0
+Requires-Dist: attrs>=25.4.0
+Requires-Dist: authlib>=1.6.5
 Requires-Dist: blpapi>=3.24.6
-Requires-Dist: bsh-data-provider>=1.1
+Requires-Dist: cachetools>=5.3.0
+Requires-Dist: certifi>=2026.1.4
+Requires-Dist: confluent-kafka>=2.13.0
+Requires-Dist: fastavro>=1.12.1
+Requires-Dist: httpx>=0.28.1
 Requires-Dist: joblib>=1.3.0
 Requires-Dist: matplotlib>=3.9.0
 Requires-Dist: openpyxl>=3.1.2
@@ -16,12 +22,10 @@ Requires-Dist: questionary>=2.0.0
 Requires-Dist: redis>=6.2.0
 Requires-Dist: ruamel-yaml>=0.18.6
 Requires-Dist: scipy>=1.16.0
-Requires-Dist: sfm-pcf-db-library>=1.0.72038
-Requires-Dist: sfm-return-adjustment-lib>=1.0.75641
-Requires-Dist: sfm-timescaledb-queries>=1.0.72117
+Requires-Dist: sfm-data-provider>=1.2.76738
+Requires-Dist: sfm-datalibrary>=1.0.76723
 Requires-Dist: tqdm>=4.64.0
 Requires-Dist: watchdog>=2.2.1
-Requires-Dist: xbbg>=0.7.7
 Requires-Dist: xlwings>=0.31.4
 
 # MarketMonitor

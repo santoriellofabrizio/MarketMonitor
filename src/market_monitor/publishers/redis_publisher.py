@@ -167,7 +167,7 @@ class DataSerializer:
     @staticmethod
     def serialize(value: Any, flat_values: bool = False) -> Optional[str]:
         """
-        Serializza un valore normalizzato in JSON.
+        Serializza un valore normalizzato in JSON con controllo dimensione per Excel RTD.
 
         Args:
             value: Valore normalizzato da serializzare
@@ -179,13 +179,31 @@ class DataSerializer:
         if value is None:
             return None
 
+        EXCEL_RTD_LIMIT = 32767  # Limite massimo caratteri per cella/stringa RTD
+
         try:
             if isinstance(value, str):
-                # Stringhe già serializzate o plain text
-                return value
+                serialized_value = value
             else:
-                # Tutto il resto: serializza come JSON
-                return json.dumps(value, default=str)
+                # Serializza come JSON
+                serialized_value = json.dumps(value, default=str)
+
+            # --- DEBUG SIZE CHECK ---
+            val_len = len(serialized_value)
+            if val_len > EXCEL_RTD_LIMIT:
+                logger.warning(
+                    f"CRITICAL SIZE WARNING: L'update ({val_len} chars) supera il limite "
+                    f"di Excel RTD ({EXCEL_RTD_LIMIT}). Il dato verrà troncato o causerà errori in VBA."
+                )
+            elif val_len > EXCEL_RTD_LIMIT * 0.9:
+                # Alert preventivo al 90% della capacità
+                logger.info(
+                    f"Size Warning: L'update sta raggiungendo il limite di Excel: {val_len} chars."
+                )
+            # ------------------------
+
+            return serialized_value
+
         except Exception as e:
             logger.error(f"Errore serializzazione: {e}")
             return None

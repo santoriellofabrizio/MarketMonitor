@@ -21,6 +21,7 @@ from market_monitor.input_threads.trade import TradeThread
 from market_monitor.input_threads.bloomberg import BloombergStreamingThread
 from market_monitor.input_threads.excel import ExcelStreamingThread
 from market_monitor.input_threads.redis import RedisStreamingThread
+from market_monitor.input_threads.kafka import KafkaStreamingThread
 from market_monitor.live_data_hub.real_time_data_hub import RTData
 
 
@@ -62,6 +63,8 @@ class Builder:
             self._setup_excel_distributor(threads, user_strategy)
         if self.config.get("redis_data_distributor", {}).get("activate", False):
             self._setup_redis_distributor(threads, user_strategy)
+        if self.config.get("kafka_data_distributor", {}).get("activate", False):
+            self._setup_kafka_distributor(threads, user_strategy)
 
         self._setup_gui(threads, user_strategy)
 
@@ -230,6 +233,13 @@ class Builder:
         redis_distributor_thread = RedisStreamingThread(**self.config["redis_data_distributor"]["redis_params"])
         redis_distributor_thread.set_real_time_data(monitor.market_data)
         threads.append(redis_distributor_thread)
+
+    def _setup_kafka_distributor(self, threads, monitor):
+        """Setup Kafka streaming thread per dati real-time da DUMA/Binance."""
+
+        kafka_params = self.config.get("kafka_data_distributor", {}).get("kafka_params", {})
+        kafka_thread = KafkaStreamingThread(real_time_data=monitor.market_data, **kafka_params)
+        threads.append(kafka_thread)
 
     def _setup_gui(self, threads, monitor):
         gui = None

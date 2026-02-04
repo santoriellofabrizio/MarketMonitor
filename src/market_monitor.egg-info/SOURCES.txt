@@ -43,6 +43,7 @@ src/market_monitor/gui/threaded_GUI/__init__.py
 src/market_monitor/input_threads/__init__.py
 src/market_monitor/input_threads/bloomberg.py
 src/market_monitor/input_threads/excel.py
+src/market_monitor/input_threads/kafka.py
 src/market_monitor/input_threads/redis.py
 src/market_monitor/input_threads/trade.py
 src/market_monitor/input_threads/event_handler/BBGEventHandler.py

@@ -155,6 +155,130 @@ class RedisSubscription(LiveSubscription):
                 f"event_type can only be used with store='events'. "
                 f"Got store='{self.store}' with event_type='{self.event_type}'"
             )
+
+
+@dataclass
+class KafkaSubscription(LiveSubscription):
+    """
+    Kafka subscription per dati di mercato real-time (DUMA, Binance, etc.).
+    
+    I messaggi Kafka sono in formato Avro e contengono dati per TUTTI gli strumenti.
+    Il filtraggio avviene client-side tramite symbol_filter.
+    
+    Attributes:
+        id: Identificatore univoco (es. ISIN o ticker)
+        topic: Topic Kafka (es. "COALESCENT_DUMA.ETFP.BookBest")
+        symbol_filter: Valore per filtrare i messaggi (es. ISIN "IE00B4L5Y983")
+        symbol_field: Path del campo nel messaggio per il filtro (es. "instrument.isin")
+        store: Target store - "market", "state", "events", "blob"
+        fields_mapping: Mapping target_field -> source_path (supporta nested paths)
+        
+    Example:
+        >>> sub = KafkaSubscription(
+        ...     id="IWDA",
+        ...     topic="COALESCENT_DUMA.ETFP.BookBest",
+        ...     symbol_filter="IE00B4L5Y983",
+        ...     symbol_field="instrument.isin",
+        ...     store="market",
+        ...     fields_mapping={
+        ...         "BID": "bidBestLevel.price",
+        ...         "ASK": "askBestLevel.price",
+        ...         "BID_SIZE": "bidBestLevel.quantity",
+        ...         "ASK_SIZE": "askBestLevel.quantity"
+        ...     }
+        ... )
+    """
+    id: str = ""
+    topic: str = ""
+    symbol_filter: Optional[str] = None  # Valore da matchare (es. ISIN)
+    symbol_field: str = "instrument.isin"  # Path nel messaggio per il match
+    store: str = "market"
+    fields_mapping: Dict[str, str] = dataclass_field(default_factory=dict)
+    
+    def __post_init__(self):
+        self.source = "kafka"
+        if not self.topic:
+            raise ValueError("topic is required for Kafka subscriptions")
+        if not self.id:
+            self.id = f"kafka_{self.topic.replace('.', '_')}"
+            if self.symbol_filter:
+                self.id += f"_{self.symbol_filter}"
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary with Kafka-specific fields"""
+        base = super().to_dict()
+        base.update({
+            "id": self.id,
+            "topic": self.topic,
+            "symbol_filter": self.symbol_filter,
+            "symbol_field": self.symbol_field,
+            "store": self.store,
+            "fields_mapping": self.fields_mapping
+        })
+        return base
+    
+    def matches(self, message: Dict[str, Any]) -> bool:
+        """
+        Verifica se il messaggio matcha il filtro della subscription.
+        
+        Args:
+            message: Messaggio Kafka deserializzato
+            
+        Returns:
+            True se il messaggio passa il filtro
+        """
+        if not self.symbol_filter:
+            return True  # Nessun filtro, accetta tutto
+        
+        # Estrai il valore dal path (es. "instrument.isin")
+        value = self._get_nested_value(message, self.symbol_field)
+        return value == self.symbol_filter
+    
+    def extract_fields(self, message: Dict[str, Any]) -> Dict[str, float]:
+        """
+        Estrae i campi dal messaggio usando fields_mapping.
+        
+        Supporta nested paths come "bidBestLevel.price".
+        
+        Args:
+            message: Messaggio Kafka deserializzato
+            
+        Returns:
+            Dict con i campi estratti (target_field -> value)
+        """
+        result = {}
+        
+        for target_field, source_path in self.fields_mapping.items():
+            value = self._get_nested_value(message, source_path)
+            if value is not None:
+                try:
+                    result[target_field] = float(value)
+                except (ValueError, TypeError):
+                    pass  # Skip non-numeric values
+        
+        return result
+    
+    @staticmethod
+    def _get_nested_value(data: Dict[str, Any], path: str) -> Any:
+        """
+        Estrae un valore da un dict nested usando un path dot-separated.
+        
+        Args:
+            data: Dict sorgente
+            path: Path tipo "bidBestLevel.price"
+            
+        Returns:
+            Valore trovato o None
+        """
+        value = data
+        for key in path.split('.'):
+            if isinstance(value, dict) and key in value:
+                value = value[key]
+            else:
+                return None
+        return value
+
+
 @dataclass
 class SubscriptionGroup:
     """
@@ -209,9 +333,9 @@ class LiveSubscriptionManager:
     """
 
     def __init__(self):
-        # New: Live subscriptions by source
+        # Live subscriptions by source (bloomberg, redis, kafka + data stores)
         self._live_subscriptions: Dict[str, Dict[str, LiveSubscription]] = {
-            source: {} for source in [v.lower() for v in DataStore.__members__]
+            source: {} for source in [v.lower() for v in ["bloomberg", "redis", "kafka"]]
         }
 
         # Subscription groups (e.g., "equities", "currencies", "indices")
@@ -277,7 +401,6 @@ class LiveSubscriptionManager:
     def fail_subscription(self, id: str, source: str, error: str):
         """Move subscription to failed (from pending or active)"""
         source = source.lower()
-
         # Try pending first
         sub = self._pending_subscriptions.get(source, {}).pop(id, None)
 
@@ -287,6 +410,12 @@ class LiveSubscriptionManager:
 
         if sub:
             sub.mark_failed(error)
+            
+            # Ensure failed subscription is tracked in _live_subscriptions
+            if source not in self._live_subscriptions:
+                self._live_subscriptions[source] = {}
+            self._live_subscriptions[source][id] = sub
+            
             self._logger.warning(f"Subscription {id} failed: {error}")
             return True
 

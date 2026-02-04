@@ -1,20 +1,21 @@
 load_strategy_info:
-      package_path: C:\AFMachineLearning\Libraries\MarketMonitor\user_strategy\equity\LiveAnalysis
-      module_name: EtfEquityLiveAnalysis
-      class_name: EtfEquityLiveAnalysis
+      package_path: C:\AFMachineLearning\Libraries\MarketMonitor\user_strategy\corporate
+      module_name: CBTradeAnalysis
+      class_name: CBTradeAnalysis
+
+timescale_connection:
+  host: timescaledb.af.pro
+  database: aidb
+  port: 5432
+  user: aivwr
+  password: 63903918ce20c5d534c3eb551202d4ea
 
 
 market_monitor:
 
-  path_db: etc/input/EtfEquityDB.db
-  bloomberg_subscription_config_path: C:\AFMachineLearning\Libraries\MarketMonitor\etc\config\bbg_subscription\config_bloomberg_subscription.yaml
-  price_source: "bloomberg"
-  min_ctv_trades_excel: 20000
   trade_manager:
     show_my_trades: True
-    output_trade_columns: ["ticker","last_update","price","quantity","ctv","side","own_trade","spread_pl"]
-    min_ctv_to_show_trades: 5000
-    number_of_trades_to_show: 200
+    output_trade_columns: ["isin","last_update","price","quantity","ctv","side","own_trade","spread_pl"]
 
 
   tasks:
@@ -26,7 +27,7 @@ market_monitor:
       frequency: 60
     trade:
       activate: true
-      synchronous: true
+      synchronous: false
       frequency: 1
     dynamic_params:
       activate: false
@@ -35,9 +36,7 @@ market_monitor:
 
 
 bloomberg_data_distributor:
-  activate: true
-  interval: 1
-
+  activate: false
 
 kafka_data_distributor:
   activate: true
@@ -46,14 +45,12 @@ kafka_data_distributor:
     schema_registry_url: "http://aftstserver51.af.tst:8081"
     start_mode: "latest"  # oppure "earliest"
 
-
 trade_distributor:
-  activate: false
-#  path: C:\AFMachineLearning\Libraries\MarketMonitor\etc\marketrades.db
-  path: "C:\\Users\\gbs09316\\Documents\\marketTradeFolder\\markettrades.db"
+  activate: true
+  path: "C:\\Program Files\\Banca Sella Holding\\Market Trades Viewer DB\\markettrades.db"
 
 redis_data_distributor:
-  activate: true
+  activate: false
   redis_params:
     redis_host: 'localhost'
     redis_port: 6379

@@ -158,9 +158,9 @@ class DBManager:
 
 if __name__ == '__main__':
     db_manager = DBManager('C:\AFMachineLearning\Projects\Trading\FxdIncomeEtfAnalysis')
-    # res = db_manager.add_data(model_name='Instruments', isin='LU2098180271', exchange='ETF Plus', trading_currency='EUR', fund_currency='JPY', ticker='JT13E')
-    # res = db_manager.delete_data(model_name='Instruments', ticker='C73')
+    # res = price_db_manager.add_data(model_name='Instruments', isin='LU2098180271', exchange='ETF Plus', trading_currency='EUR', fund_currency='JPY', ticker='JT13E')
+    # res = price_db_manager.delete_data(model_name='Instruments', ticker='C73')
     res = db_manager.read_data(model_name='Brothers', cluster=187)
     # print(get_table_columns(model_name='YTMMapping'))
-    # res = db_manager.add_data_from_excel(model_name='YTMMapping', file_path='C:\AFMachineLearning\Projects\Trading\MarketMonitorFI\InstrumentDbManager\ETF_FI_Instruments\excel_file.xlsx')
+    # res = price_db_manager.add_data_from_excel(model_name='YTMMapping', file_path='C:\AFMachineLearning\Projects\Trading\MarketMonitorFI\InstrumentDbManager\ETF_FI_Instruments\excel_file.xlsx')
     print(res)

@@ -5,6 +5,7 @@ import pandas as pd
 
 from market_monitor.live_data_hub.live_subscription import (
     BloombergSubscription,
+    KafkaSubscription,
     LiveSubscription,
     LiveSubscriptionManager,
     RedisSubscription,
@@ -119,6 +120,59 @@ class SubscriptionService:
         self._manager.add_subscription(redis_sub, group=group)
         return redis_sub
 
+    def subscribe_kafka(
+        self,
+        id: str,
+        topic: str,
+        symbol_filter: Optional[str] = None,
+        symbol_field: str = "instrument.isin",
+        store: str = "market",
+        fields_mapping: Optional[Dict[str, str]] = None,
+        group: Optional[str] = None,
+    ) -> KafkaSubscription:
+        """
+        Subscribe to Kafka topic for real-time market data (DUMA, Binance, etc.).
+        
+        I messaggi Kafka contengono dati per TUTTI gli strumenti del topic.
+        Il filtraggio avviene client-side tramite symbol_filter.
+        
+        Args:
+            id: Identificatore univoco (es. ticker "IWDA" o ISIN)
+            topic: Topic Kafka (es. "COALESCENT_DUMA.ETFP.BookBest")
+            symbol_filter: Valore per filtrare i messaggi (es. ISIN "IE00B4L5Y983")
+            symbol_field: Path del campo nel messaggio per il filtro (default: "instrument.isin")
+            store: Target store - "market", "state", "events", "blob" (default: "market")
+            fields_mapping: Mapping target_field -> source_path (supporta nested paths)
+            group: Optional group name
+            
+        Returns:
+            KafkaSubscription instance
+            
+        Example:
+            >>> svc.subscribe_kafka(
+            ...     id="IWDA",
+            ...     topic="COALESCENT_DUMA.ETFP.BookBest",
+            ...     symbol_filter="IE00B4L5Y983",
+            ...     fields_mapping={
+            ...         "BID": "bidBestLevel.price",
+            ...         "ASK": "askBestLevel.price",
+            ...         "BID_SIZE": "bidBestLevel.quantity",
+            ...         "ASK_SIZE": "askBestLevel.quantity"
+            ...     }
+            ... )
+        """
+        kafka_sub = KafkaSubscription(
+            id=id,
+            topic=topic,
+            symbol_filter=symbol_filter,
+            symbol_field=symbol_field,
+            store=store,
+            fields_mapping=fields_mapping or {},
+        )
+        self._manager.add_subscription(kafka_sub, group=group)
+        self._logger.info(f"Kafka subscription added: {kafka_sub}")
+        return kafka_sub
+
     def unsubscribe(self, id: str, source: str) -> bool:
         return self._manager.mark_for_unsubscribe(id, source)
 
@@ -155,6 +209,25 @@ class SubscriptionService:
                 return {ticker: sub}
             return None
         return self._manager.get_subscriptions_by_source("redis")
+
+    def get_kafka_subscription(
+        self, ticker: Optional[str] = None
+    ) -> Optional[Dict[str, KafkaSubscription]]:
+        """Get Kafka subscriptions."""
+        if ticker:
+            sub = self._manager.get_subscription(ticker, "kafka")
+            if isinstance(sub, KafkaSubscription):
+                return {ticker: sub}
+            return None
+        return self._manager.get_subscriptions_by_source("kafka")
+
+    def get_kafka_subscriptions_by_topic(self, topic: str) -> List[KafkaSubscription]:
+        """Get all Kafka subscriptions for a specific topic."""
+        all_kafka = self._manager.get_subscriptions_by_source("kafka")
+        return [
+            sub for sub in all_kafka.values()
+            if isinstance(sub, KafkaSubscription) and sub.topic == topic
+        ]
 
     def get_pending_subscriptions(self, source: Optional[str] = None) -> Dict[str, LiveSubscription]:
         return self._manager.get_pending_subscriptions(source)

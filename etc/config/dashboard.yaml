@@ -23,6 +23,7 @@ dashboard:
 logging:
   path: "logs/dashboard.log"
   level: DEBUG
+  log_name: dashboard
 
 app:
   style: Fusion

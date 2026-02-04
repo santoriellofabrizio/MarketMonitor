@@ -273,19 +273,27 @@ class TimeSeriesPublisher(RedisPublisher):
         """Costruisce chiave TimeSeries: ts:{identifier}:{field}"""
         return f"{self.TS_KEY_PREFIX}:{identifier}:{field.lower()}"
 
-    def _normalize_timestamp(self, timestamp: Optional[Union[datetime, int, float]] = None) -> int:
+    @staticmethod
+    def _normalize_timestamp(timestamp: Optional[Union[datetime, int, float]] = None) -> int:
         """Normalizza timestamp a millisecondi Unix."""
         if timestamp is None:
             return int(time.time() * 1000)
         elif isinstance(timestamp, datetime):
             return int(timestamp.timestamp() * 1000)
-        elif isinstance(timestamp, float):
-            # Assume seconds se < 1e12, altrimenti millisecondi
-            if timestamp < 1e12:
-                return int(timestamp * 1000)
-            return int(timestamp)
         else:
-            return int(timestamp)
+            # Converti a numero
+            ts = float(timestamp)
+            # Se il valore è ragionevole per secondi (tra 2001 e 2286), assume secondi
+            # Altrimenti assume millisecondi
+            if 1e9 < ts < 1e10:  # Circa tra 2001 e 2286 in secondi
+                return int(ts * 1000)
+            elif 1e12 < ts < 1e13:  # Circa tra 2001 e 2286 in millisecondi
+                return int(ts)
+            else:
+                # Fallback: assume secondi se < 1e12
+                if ts < 1e12:
+                    return int(ts * 1000)
+                return int(ts)
 
     def _ensure_timeseries_exists(
         self,
