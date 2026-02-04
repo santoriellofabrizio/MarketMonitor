@@ -89,6 +89,12 @@ hiddenimports = [
     'joblib',
     'aiosqlite',
 
+    # ⬇️ AGGIUNGI NUOVE DIPENDENZE QUI ⬇️
+    # Esempio:
+    # 'requests',
+    # 'sqlalchemy',
+    # 'pydantic',
+
     # PyQt5 (se usato)
     'PyQt5.QtCore',
     'PyQt5.QtWidgets',
