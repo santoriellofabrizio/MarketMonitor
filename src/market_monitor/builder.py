@@ -123,6 +123,46 @@ class Builder:
 
         return logger
 
+    def _find_user_strategy_root(self, package_path):
+        """
+        Trova la directory root che contiene user_strategy.
+
+        Args:
+            package_path: Path assoluto alla strategia (es. /path/to/MarketMonitor/user_strategy/equity/LiveAnalysis)
+
+        Returns:
+            Path alla root del progetto (es. /path/to/MarketMonitor) o None se non trovato
+        """
+        current_path = os.path.abspath(package_path)
+
+        # Risali il path finché trovi una directory chiamata "user_strategy"
+        while current_path and current_path != os.path.dirname(current_path):
+            # Se la directory corrente si chiama "user_strategy"
+            if os.path.basename(current_path) == "user_strategy":
+                # Ritorna il parent (la root del progetto)
+                project_root = os.path.dirname(current_path)
+                logging.debug(f"user_strategy root trovata: {project_root}")
+                return project_root
+
+            # Risali di un livello
+            current_path = os.path.dirname(current_path)
+
+        # Se non troviamo "user_strategy" nel path, proviamo a vedere se esiste una sottocartella
+        # user_strategy nella stessa directory del package_path
+        search_path = os.path.abspath(package_path)
+        for _ in range(5):  # Massimo 5 livelli di risalita
+            potential_user_strategy = os.path.join(search_path, "user_strategy")
+            if os.path.isdir(potential_user_strategy):
+                logging.debug(f"user_strategy trovata in: {search_path}")
+                return search_path
+            parent = os.path.dirname(search_path)
+            if parent == search_path:  # Siamo alla root del filesystem
+                break
+            search_path = parent
+
+        logging.warning(f"user_strategy root non trovata a partire da: {package_path}")
+        return None
+
     def _load_strategy_from_metadata(self):
         """
         Carica dinamicamente una classe da un file specifico senza
@@ -142,8 +182,16 @@ class Builder:
             spec = util.spec_from_file_location(module_name, file_path)
             module = importlib.util.module_from_spec(spec)
 
+            # Aggiungi il package_path specifico della strategia
             if package_path not in sys.path:
                 sys.path.insert(0, package_path)
+
+            # IMPORTANTE: Aggiungi anche la root che contiene user_strategy
+            # per permettere import tipo: from user_strategy.utils.trade_manager import TradeManager
+            user_strategy_root = self._find_user_strategy_root(package_path)
+            if user_strategy_root and user_strategy_root not in sys.path:
+                sys.path.insert(0, user_strategy_root)
+                logging.info(f"Aggiunto user_strategy root al sys.path: {user_strategy_root}")
 
             spec.loader.exec_module(module)
             strategy_class = getattr(module, class_name)

@@ -107,3 +107,59 @@ class MyStrategy(StrategyUI):
 ```
 
 Con una configurazione YAML che punta a `MyStrategy`, `run_monitor` inizializzerà il book, avvierà i thread di input dati, raccoglierà i trade e manterrà la persistenza tramite `TradeManager`.
+
+---
+
+## Deployment
+
+MarketMonitor offre diverse modalità di deployment per adattarsi a scenari diversi.
+
+### Deployment Ibrido (Consigliato per distribuzione)
+
+Crea un **eseguibile standalone** con strategie modificabili esternamente:
+
+- ✅ Non richiede Python sul computer target
+- ✅ Strategie modificabili senza ricompilare
+- ✅ Deployment semplificato (zip + unzip)
+
+**Build:**
+```bash
+# Linux/Mac
+./build_hybrid.sh
+
+# Windows
+build_hybrid.bat
+```
+
+**Risultato:**
+```
+deployment/run-strategy/
+├── run-strategy.exe           # Eseguibile standalone
+├── user_strategy/             # Strategie .py (modificabili!)
+└── etc/config/                # Configurazioni
+```
+
+**Vedi [DEPLOYMENT_HYBRID.md](DEPLOYMENT_HYBRID.md) per istruzioni complete.**
+
+### Installazione standard (Sviluppo)
+
+Per sviluppo locale o deployment con Python disponibile:
+
+```bash
+# Installazione editable
+pip install -e .
+
+# Esegui strategia
+run-strategy my_config
+```
+
+### Docker (Produzione)
+
+Per deployment containerizzato:
+
+```bash
+docker build -t market-monitor .
+docker run market-monitor run-strategy my_config
+```
+
+---

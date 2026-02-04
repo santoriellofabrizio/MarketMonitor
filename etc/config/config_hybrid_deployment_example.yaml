@@ -1,0 +1,116 @@
+# ============================================================================
+# Config esempio per DEPLOYMENT IBRIDO con PyInstaller
+# ============================================================================
+#
+# Questo config usa PATH RELATIVI per funzionare con l'eseguibile PyInstaller.
+#
+# STRUTTURA DEPLOYMENT:
+#   C:\Deployment\
+#   ├── run-strategy.exe        # Eseguibile PyInstaller
+#   ├── _internal/              # Librerie bundled
+#   ├── user_strategy/          # Strategie .py (copiate esternamente)
+#   │   ├── equity/
+#   │   ├── fixed_income/
+#   │   ├── test_strategy/
+#   │   └── utils/
+#   └── etc/
+#       └── config/
+#           └── my_config.yaml  # Questo file
+#
+# USO:
+#   run-strategy.exe etc/config/my_config.yaml
+#   oppure
+#   run-strategy.exe my_config  (se copiato in etc/config/)
+#
+# ============================================================================
+
+# STRATEGIA DA CARICARE
+# Usa path relativi: ./user_strategy/... o user_strategy/...
+load_strategy_info:
+  # Path relativo alla strategia (accanto all'exe)
+  package_path: ./user_strategy/test_strategy
+
+  # Nome del file Python (senza .py)
+  module_name: SimplePriceMonitorStrategy
+
+  # Nome della classe dentro il file
+  class_name: SimplePriceMonitorStrategy
+
+
+# CONFIGURAZIONE MARKET MONITOR
+market_monitor:
+  # Parametri specifici della strategia (variano per ogni strategia)
+
+  # Task scheduling
+  tasks:
+    update_HF:
+      activate: true
+      frequency: 1.0
+    update_LF:
+      activate: true
+      frequency: 60
+    data_storing:
+      activate: false
+      frequency: 600
+    trade:
+      activate: false
+      synchronous: false
+      frequency: 1
+    dynamic_params:
+      activate: false
+      dynamic_config_path: ""
+      frequency: 1
+
+
+# DATA SOURCES
+bloomberg_data_distributor:
+  activate: false
+  # bloomberg_params:
+  #   # parametri bloomberg se serve
+
+redis_data_distributor:
+  activate: true
+  redis_params:
+    redis_host: 'localhost'
+    redis_port: 6379
+    redis_db: 0
+
+excel_data_distributor:
+  activate: false
+  # excel_params:
+  #   excel_path: "./data/market_data.xlsx"
+
+trade_distributor:
+  activate: false
+  # path: "./etc/marketrades.db"
+
+
+# LOGGING
+logging:
+  log_level: INFO
+  log_level_console: WARNING
+  log_name: market_monitor_hybrid.log
+
+
+# GUI (opzionale)
+gui:
+  MainGUI:
+    gui_type: GUIDummy
+    # gui_type: TradeThreadGUITkinter  # Se vuoi GUI grafica
+    # window_title: "MarketMonitor - Hybrid Deployment"
+
+
+# DATABASE CONNECTIONS (opzionale)
+# oracle_connection:
+#   environment: PROD
+#   user: your_user
+#   tns_name: your_tns
+#   password: your_password
+#   schema: your_schema
+
+# timescale_connection:
+#   database: market_data
+#   port: 5432
+#   user: your_user
+#   password: your_password
+#   host: localhost

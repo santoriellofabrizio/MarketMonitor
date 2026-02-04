@@ -1,14 +1,48 @@
 # -*- mode: python ; coding: utf-8 -*-
 """
-PyInstaller spec file per run-strategy
+PyInstaller spec file per run-strategy - APPROCCIO IBRIDO
 
-Uso:
-    pyinstaller run_strategy.spec
+Questo file crea un eseguibile standalone con SOLO il core di MarketMonitor.
+Le strategie user_strategy sono caricate come file .py esterni.
 
-Questo file gestisce correttamente:
-- Import dinamici di user_strategy
-- Configurazioni YAML
-- Dipendenze native (Bloomberg, PyQt5, etc.)
+============================================================================
+APPROCCIO IBRIDO: EXE + Strategie Esterne
+============================================================================
+
+1. BUILD (su computer di sviluppo):
+   pyinstaller run_strategy.spec
+
+2. DEPLOYMENT (su computer target):
+   - Copia dist/run-strategy/ (eseguibile + librerie)
+   - Copia user_strategy/ (strategie come .py)
+   - Copia etc/config/ (configurazioni)
+
+3. STRUTTURA FINALE:
+   C:\Deployment\
+   ├── run-strategy.exe           # Eseguibile bundled
+   ├── _internal/                 # Librerie Python
+   ├── user_strategy/             # Strategie .py (ESTERNE)
+   │   ├── equity/
+   │   ├── fixed_income/
+   │   └── utils/
+   └── etc/config/
+       └── my_config.yaml
+
+4. CONFIGURAZIONE:
+   Nel file YAML, usa path relativi:
+
+   load_strategy_info:
+     package_path: ./user_strategy/equity/LiveAnalysis
+     module_name: EquityLiveAnalysisStrategy
+     class_name: EquityLiveAnalysisStrategy
+
+============================================================================
+
+Vantaggi:
+- ✅ EXE standalone (no Python richiesto)
+- ✅ Strategie modificabili senza ricompilare
+- ✅ File più piccolo (~100-200MB invece di 500MB)
+- ✅ Facile aggiornamento strategie (copia nuovi .py)
 """
 
 import os
@@ -17,45 +51,12 @@ from pathlib import Path
 
 # Path del progetto
 project_root = Path(SPECPATH)
-user_strategy_path = project_root / "user_strategy"
 
 # ============================================================================
-# 1. Raccolta automatica di tutti i moduli user_strategy
-# ============================================================================
-def collect_user_strategy_modules(base_path):
-    """Trova tutti i moduli Python in user_strategy per hidden imports."""
-    modules = []
-    for root, dirs, files in os.walk(base_path):
-        # Salta __pycache__
-        dirs[:] = [d for d in dirs if d != '__pycache__']
-
-        for file in files:
-            if file.endswith('.py') and file != '__init__.py':
-                # Converti path in module name
-                rel_path = Path(root).relative_to(project_root)
-                module_name = str(rel_path / file[:-3]).replace(os.sep, '.')
-                modules.append(module_name)
-
-    return modules
-
-user_strategy_modules = collect_user_strategy_modules(user_strategy_path)
-
-print("=" * 80)
-print("MODULI USER_STRATEGY RILEVATI:")
-print("=" * 80)
-for mod in sorted(user_strategy_modules):
-    print(f"  - {mod}")
-print(f"\nTotale: {len(user_strategy_modules)} moduli")
-print("=" * 80)
-
-# ============================================================================
-# 2. Hidden imports (moduli non rilevati automaticamente)
+# 1. Hidden imports - SOLO market_monitor core
 # ============================================================================
 hiddenimports = [
-    # User strategy modules (caricati dinamicamente)
-    *user_strategy_modules,
-
-    # Market monitor core
+    # Market monitor core (NO user_strategy!)
     'market_monitor.strategy.StrategyUI.StrategyUI',
     'market_monitor.strategy.StrategyUI.StrategyUIAsync',
     'market_monitor.publishers.redis_publisher',
@@ -65,8 +66,15 @@ hiddenimports = [
     'market_monitor.input_threads.redis',
     'market_monitor.input_threads.trade',
     'market_monitor.input_threads.excel',
+    'market_monitor.gui.implementations.GUI',
+    'market_monitor.gui.threaded_GUI.GUIQueue',
+    'market_monitor.gui.threaded_GUI.QueueDataSource',
+    'market_monitor.gui.threaded_GUI.ThreadGUIExcel',
+    'market_monitor.gui.threaded_GUI.TradeThreadGUITkinter',
+    'market_monitor.input_threads.event_handler.BBGEventHandler',
+    'market_monitor.builder',
 
-    # Librerie esterne che potrebbero non essere rilevate
+    # Librerie esterne essenziali
     'pandas',
     'numpy',
     'redis',
@@ -81,37 +89,38 @@ hiddenimports = [
     'joblib',
     'aiosqlite',
 
-    # PyQt5
+    # PyQt5 (se usato)
     'PyQt5.QtCore',
     'PyQt5.QtWidgets',
     'PyQt5.QtGui',
 
-    # Bloomberg (se disponibile)
+    # Bloomberg (se disponibile - opzionale)
     'blpapi',
     'xbbg',
+
+    # Dipendenze interne Sella
+    'sfm_dbconnections',
+    'sfm_dbconnections.DbConnectionParameters',
 ]
 
 # ============================================================================
-# 3. Data files (configurazioni, user_strategy come moduli)
+# 2. Data files - SOLO configurazioni (NO user_strategy!)
 # ============================================================================
 datas = [
-    # Configurazioni YAML
+    # Configurazioni YAML template
     (str(project_root / 'etc' / 'config'), 'etc/config'),
 
-    # User strategy come source files (per caricamento dinamico)
-    (str(user_strategy_path), 'user_strategy'),
-
-    # README se serve
-    # (str(project_root / 'README.md'), '.'),
+    # NOTE: user_strategy NON è inclusa!
+    # Le strategie saranno caricate come file .py esterni
 ]
 
 # ============================================================================
-# 4. Binaries e librerie native
+# 3. Binaries e librerie native
 # ============================================================================
 binaries = []
 
 # ============================================================================
-# 5. Analysis - Analisi dell'entrypoint
+# 4. Analysis - Analisi dell'entrypoint
 # ============================================================================
 a = Analysis(
     [str(project_root / 'src' / 'market_monitor' / 'entry' / 'run_strategy.py')],
@@ -122,14 +131,18 @@ a = Analysis(
     binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,
-    hookspath=[str(project_root / 'pyinstaller_hooks')],  # Hook personalizzati
+    hookspath=[],  # No custom hooks needed
     hooksconfig={},
     runtime_hooks=[],
     excludes=[
         # Escludi moduli inutili per ridurre dimensione
-        'tkinter',  # se non usi Tkinter
-        # 'IPython',
-        # 'notebook',
+        'tkinter',
+        'IPython',
+        'notebook',
+        'jupyter',
+        'sphinx',
+        'pytest',
+        'setuptools',
     ],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
@@ -138,12 +151,12 @@ a = Analysis(
 )
 
 # ============================================================================
-# 6. PYZ - Archivio Python compresso
+# 5. PYZ - Archivio Python compresso
 # ============================================================================
 pyz = PYZ(a.pure, a.zipped_data, cipher=None)
 
 # ============================================================================
-# 7. EXE - Eseguibile finale
+# 6. EXE - Eseguibile finale
 # ============================================================================
 exe = EXE(
     pyz,
@@ -165,7 +178,7 @@ exe = EXE(
 )
 
 # ============================================================================
-# 8. COLLECT - Raccolta di tutti i file in una directory
+# 7. COLLECT - Raccolta di tutti i file in una directory
 # ============================================================================
 coll = COLLECT(
     exe,
@@ -179,8 +192,13 @@ coll = COLLECT(
 )
 
 print("\n" + "=" * 80)
-print("✅ Spec file configurato correttamente!")
+print("✅ HYBRID BUILD: MarketMonitor Core + External Strategies")
 print("=" * 80)
 print(f"Output: dist/run-strategy/")
-print(f"Eseguibile: dist/run-strategy/run-strategy{'exe' if sys.platform == 'win32' else ''}")
+print(f"Eseguibile: dist/run-strategy/run-strategy{'.exe' if sys.platform == 'win32' else ''}")
+print("\n📦 DEPLOYMENT STEPS:")
+print("  1. Copia dist/run-strategy/ sul computer target")
+print("  2. Copia user_strategy/ (strategie .py) accanto all'exe")
+print("  3. Copia etc/config/ con le configurazioni")
+print("  4. Usa path relativi nei config YAML (es: ./user_strategy/equity/LiveAnalysis)")
 print("=" * 80)
