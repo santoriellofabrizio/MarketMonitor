@@ -5,15 +5,7 @@ from datetime import datetime
 import datetime as dt
 
 import pandas as pd
-<<<<<<< .mine
 from sfm_data_provider.interface.bshdata import BshData
-||||||| .r76736
-from sfm_dataprovider.interface.bshdata import BshData
-from sfm_dbconnections.DbConnection import DbConnection
-=======
-from sfm_data_provider.interface.bshdata import BshData
-from sfm_dbconnections.DbConnection import DbConnection
->>>>>>> .r76790
 
 from market_monitor.publishers.redis_publisher import RedisMessaging
 from market_monitor.strategy.strategy_ui.StrategyUI import StrategyUI

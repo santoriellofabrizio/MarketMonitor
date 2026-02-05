@@ -4,13 +4,12 @@ from typing import Optional, Tuple, Union
 import pandas as pd
 from dateutil.utils import today
 
-from market_monitor.strategy.StrategyUI.StrategyUI import StrategyUI
+from market_monitor.strategy.strategy_ui.StrategyUI import StrategyUI
 from user_strategy.utils import CustomBDay
 from user_strategy.utils.pricing_models.DataFetching.PricesProviderFI import PricesProviderFI
 from user_strategy.utils.pricing_models.NAVBasisCalculator import NAVBasisCalculator
 from user_strategy.utils.InputParamsFI import InputParamsFI
 from user_strategy.utils.pricing_models.PricingModel import ClusterPricingModel, DriverPricingModel
-from user_strategy.utils.trade_manager import trade_manager
 from user_strategy.utils.bloomberg_subscription_utils.OracleConnection import OracleConnection
 from user_strategy.utils.bloomberg_subscription_utils.SubscriptionManager import SubscriptionManager
 

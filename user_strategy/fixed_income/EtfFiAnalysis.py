@@ -1,15 +1,15 @@
 import datetime as dt
 from collections import deque
-from typing import Optional, Tuple, Union
+from typing import Optional
 import pandas as pd
 from dateutil.utils import today
 
 from market_monitor.publishers.redis_publisher import RedisMessaging
-from market_monitor.strategy.StrategyUI.StrategyUI import StrategyUI
+from market_monitor.strategy.strategy_ui.StrategyUI import StrategyUI
 from user_strategy.utils import CustomBDay
 from user_strategy.utils.InputParamsFIAnalysis import InputParamsFIAnalysis
-from user_strategy.utils.trade_manager.book_memory import BookStorage
-from user_strategy.utils.trade_manager.trade_manager import TradeManager
+from market_monitor.strategy.common.trade_manager.book_memory import BookStorage
+from market_monitor.strategy.common.trade_manager import TradeManager
 
 
 class FIAnalysis(StrategyUI):

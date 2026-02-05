@@ -6,7 +6,7 @@ import xlwings as xw
 
 from market_monitor.publishers.GUIRedis import GUIRedis
 from market_monitor.gui.HeartBeat.HeartBeatAbstract import HeartBeatDuma
-from market_monitor.strategy.StrategyUI.StrategyUI import StrategyUI
+from market_monitor.strategy.strategy_ui.StrategyUI import StrategyUI
 
 
 class QuotingCheck(StrategyUI):

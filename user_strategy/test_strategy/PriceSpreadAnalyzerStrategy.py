@@ -4,7 +4,7 @@ from typing import Dict
 import numpy as np
 import pandas as pd
 
-from market_monitor.strategy.StrategyUI.StrategyUI import StrategyUI
+from market_monitor.strategy.strategy_ui.StrategyUI import StrategyUI
 from user_strategy.StrategyRegister import register_strategy
 
 

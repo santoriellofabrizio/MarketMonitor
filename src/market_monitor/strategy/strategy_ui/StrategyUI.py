@@ -3,7 +3,7 @@ from typing import Optional, Union
 import pandas as pd
 
 from market_monitor.gui.implementations.GUI import GUI
-from market_monitor.strategy.StrategyUI.StrategyUIAsync import StrategyUIAsync
+from market_monitor.strategy.strategy_ui.StrategyUIAsync import StrategyUIAsync
 
 
 

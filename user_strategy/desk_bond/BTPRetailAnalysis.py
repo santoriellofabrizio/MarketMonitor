@@ -20,7 +20,7 @@ from sfm_quantlib.Pricers.Model import Model
 from sfm_quantlib.InstrumentsConnections.InstrumentFactory import InstrumentFactory
 
 from market_monitor.publishers.redis_publisher import RedisPublisher, RedisMessaging
-from market_monitor.strategy.StrategyUI.StrategyUI import StrategyUI
+from market_monitor.strategy.strategy_ui.StrategyUI import StrategyUI
 
 
 class BTPRetailAnalysis(StrategyUI):

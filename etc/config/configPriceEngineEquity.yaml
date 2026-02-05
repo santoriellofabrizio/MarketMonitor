@@ -1,6 +1,6 @@
 load_strategy_info:
-      package_path: C:\AFMachineLearning\Libraries\MarketMonitor\user_strategy\equity\LiveQuoting
-      module_name: EtfEquityPriceEngine
+      package_path: C:\AFMachineLearning\Libraries\MarketMonitor\user_strategy
+      module_name: \equity\LiveQuoting\EtfEquityPriceEngine
       class_name: EtfEquityPriceEngine
 
 market_monitor:

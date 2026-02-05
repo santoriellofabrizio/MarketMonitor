@@ -11,7 +11,7 @@ from sfm_quantlib.Dates.Calendar.CalendarFactory import CalendarFactory
 from sfm_quantlib.Dates.Calendars import Calendars
 from sfm_quantlib.Dates.TimeUnit import TimeUnit
 from sfm_quantlib.FinancialUtilities.BusinessDayConvention import BusinessDayConvention
-from market_monitor.strategy.StrategyUI.StrategyUI import StrategyUI
+from market_monitor.strategy.strategy_ui.StrategyUI import StrategyUI
 
 
 class BTPTradesAnalysis(StrategyUI):

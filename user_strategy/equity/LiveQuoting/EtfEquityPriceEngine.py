@@ -23,7 +23,7 @@ from sfm_data_provider.interface.bshdata import BshData
 
 from market_monitor.gui.implementations.GUI import GUI
 from market_monitor.publishers.redis_publisher import RedisMessaging
-from market_monitor.strategy.StrategyUI.StrategyUI import StrategyUI
+from market_monitor.strategy.strategy_ui.StrategyUI import StrategyUI
 from user_strategy.equity.LiveQuoting.InputParamsQuoting import InputParamsQuoting
 
 from user_strategy.utils.pricing_models.AggregationFunctions import ForecastAggregator, TrimmedMean
@@ -55,8 +55,11 @@ class EtfEquityPriceEngine(StrategyUI):
         self.reference_tick_size = self.API.info.get_etp_fields(isin=isins_etf_equity,
                                                                 fields=["REFERENCE_TICK_SIZE"],
                                                                 source="bloomberg")["REFERENCE_TICK_SIZE"].to_dict()
-
-        self.timeseries_publisher = TimeSeriesPublisher()
+        try:
+            self.timeseries_publisher = TimeSeriesPublisher()
+        except Exception as e:
+            self.timeseries_publisher = None
+            self.logger.warning("redis TS not connected,", e)
 
         with sqlite3.connect(DB_ANAGRPHIC_PATH) as conn:
             self.isin_to_ticker = pd.read_sql(
@@ -372,35 +375,35 @@ class EtfEquityPriceEngine(StrategyUI):
         if datetime.today().time() < time(17, 30):
             self.get_mid()
 
-        self.calculate_cluster_theoretical_price()
+            self.calculate_cluster_theoretical_price()
 
-        # 2. PREPARAZIONE SERIE NORMALIZZATE (una sola volta)
-        normalized_prices = {
-            'live_idx': self.round_series_to_tick(
-                self.theoretical_live_index_cluster_price,
-                self.reference_tick_size
-            ),
-            'live_clust': self.round_series_to_tick(
-                self.theoretical_live_cluster_price.fillna(0),
-                self.reference_tick_size
-            ),
-            'intraday': self.round_series_to_tick(
-                self.theoretical_intraday_prices.fillna(0),
-                self.reference_tick_size
-            ),
-            'mid': self.round_series_to_tick(
-                self.mid_eur.fillna(0),
-                self.reference_tick_size
-            )
-        }
+            # 2. PREPARAZIONE SERIE NORMALIZZATE (una sola volta)
+            normalized_prices = {
+                'live_idx': self.round_series_to_tick(
+                    self.theoretical_live_index_cluster_price,
+                    self.reference_tick_size
+                ),
+                'live_clust': self.round_series_to_tick(
+                    self.theoretical_live_cluster_price.fillna(0),
+                    self.reference_tick_size
+                ),
+                'intraday': self.round_series_to_tick(
+                    self.theoretical_intraday_prices.fillna(0),
+                    self.reference_tick_size
+                ),
+                'mid': self.round_series_to_tick(
+                    self.mid_eur.fillna(0),
+                    self.reference_tick_size
+                )
+            }
 
-        # 3. EXPORT ALLE GUI (pipeline Redis)
-        self._export_normalized_prices_to_gui(normalized_prices)
+            # 3. EXPORT ALLE GUI (pipeline Redis)
+            self._export_normalized_prices_to_gui(normalized_prices)
 
-        # 4. STORAGE - Solo se è passato il tempo minimo
-        current_time = datetime.now()
-        if (current_time - self.last_storage_time).total_seconds() > 2:
-            self._publish_to_storage(normalized_prices, current_time)
+            # 4. STORAGE - Solo se è passato il tempo minimo
+            current_time = datetime.now()
+            if (current_time - self.last_storage_time).total_seconds() > 2 and self.timeseries_publisher is not None:
+                self._publish_to_storage(normalized_prices, current_time)
 
     def _export_normalized_prices_to_gui(self, normalized_prices: Dict[str, any]):
         """
@@ -449,7 +452,7 @@ class EtfEquityPriceEngine(StrategyUI):
         price_series = [
             self.theoretical_live_index_cluster_price,
             self.theoretical_live_cluster_price,
-            self.theoretical_intraday_prices
+            self.theoretical_intraday_prices,
         ]
 
         for series in price_series:

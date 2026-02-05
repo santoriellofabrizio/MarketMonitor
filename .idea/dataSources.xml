@@ -8,5 +8,12 @@
       <jdbc-url>jdbc:sqlite:V:/EquityETF/etf_equity_anagraphic_db.sqlite</jdbc-url>
       <working-dir>$ProjectFileDir$</working-dir>
     </data-source>
+    <data-source source="LOCAL" name="markettrades.db" uuid="fdf67e14-96c6-40b0-aa92-0175ad84675b">
+      <driver-ref>sqlite.xerial</driver-ref>
+      <synchronize>true</synchronize>
+      <jdbc-driver>org.sqlite.JDBC</jdbc-driver>
+      <jdbc-url>jdbc:sqlite:$USER_HOME$/Documents/marketTradeFolder/markettrades.db</jdbc-url>
+      <working-dir>$ProjectFileDir$</working-dir>
+    </data-source>
   </component>
 </project>

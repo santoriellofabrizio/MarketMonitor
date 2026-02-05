@@ -2,7 +2,7 @@ import datetime
 import logging
 import threading
 import pandas as pd
-from user_strategy.utils.trade_manager.trade_templates import AbstractTrade, TradeStorage
+from market_monitor.strategy.common.trade_manager.trade_templates import AbstractTrade, TradeStorage
 
 logger = logging.getLogger(__name__)
 

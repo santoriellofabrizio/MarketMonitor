@@ -48,7 +48,7 @@ kafka_data_distributor:
 
 
 trade_distributor:
-  activate: false
+  activate: true
 #  path: C:\AFMachineLearning\Libraries\MarketMonitor\etc\marketrades.db
   path: "C:\\Users\\gbs09316\\Documents\\marketTradeFolder\\markettrades.db"
 

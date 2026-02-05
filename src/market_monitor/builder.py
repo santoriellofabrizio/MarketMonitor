@@ -30,6 +30,7 @@ class FlushFileHandler(logging.FileHandler):
     Custom FileHandler that flushes immediately after each write.
     This ensures logs are visible in real-time, not just when the script closes.
     """
+
     def emit(self, record):
         super().emit(record)
         self.flush()  # Flush immediately after each log
@@ -73,13 +74,13 @@ class Builder:
     def _setup_logging(self):
         log_level = self.config['logging'].get('log_level', 'DEBUG').upper()
         log_name = self.config['logging']['log_name']
-        
+
         # Create logs directory relative to project root
         script_dir = os.path.dirname(os.path.abspath(__file__))
         project_root = os.path.dirname(os.path.dirname(script_dir))
         log_dir = os.path.join(project_root, "logs")
         os.makedirs(log_dir, exist_ok=True)
-        
+
         # Build full log file path
         log_file = os.path.join(log_dir, log_name)
 
@@ -87,7 +88,7 @@ class Builder:
         root_logger = logging.getLogger()
         for handler in root_logger.handlers[:]:
             root_logger.removeHandler(handler)
-        
+
         # Configure basic logging
         logging.basicConfig(
             level=log_level,
@@ -96,32 +97,32 @@ class Builder:
             filemode='w',
             force=True  # Force reconfiguration even if already configured
         )
-        
+
         # Get root logger
         logger = logging.getLogger()
-        
+
         # Add file handler explicitly (backup method)
         file_handler = logging.FileHandler(log_file, mode='a')
         file_handler.setLevel(log_level)
         formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
         file_handler.setFormatter(formatter)
         logger.addHandler(file_handler)
-        
+
         # Add console handler
         console_handler = logging.StreamHandler()
         console_handler.setLevel(self.config['logging'].get('log_level_console', 'DEBUG'))
         console_handler.setFormatter(formatter)
         logger.addHandler(console_handler)
-        
+
         # Set the root logger level
         logger.setLevel(log_level)
-        
+
         # Log startup messages
         logging.info(f"=" * 80)
         logging.info(f"Logging initialized at: {log_file}")
         logging.info(f"Log level: {log_level}")
         logging.info(f"=" * 80)
-        
+
         print(f"Logging initialized: {log_file}")  # Debug output to console
 
         return logger
@@ -175,27 +176,29 @@ class Builder:
         package_path = load_strategy_info["package_path"]
         module_name = load_strategy_info["module_name"]
         class_name = load_strategy_info["class_name"]
+
         package_path = os.path.abspath(package_path)
+
+        # Aggiungi package_path a sys.path
+        if package_path not in sys.path:
+            sys.path.insert(0, package_path)
+
+        # Normalizza il module_name (rimuovi backslash iniziali)
+        module_name = module_name.lstrip('\\/')
+
+        # Costruisci il percorso completo del file
         file_path = os.path.join(package_path, f"{module_name}.py")
+        file_path = os.path.abspath(file_path)
 
         if not os.path.exists(file_path):
             raise FileNotFoundError(f"File non trovato: {file_path}")
 
         try:
-            spec = util.spec_from_file_location(module_name, file_path)
+            # Estrai solo il nome del file (senza path)
+            module_filename = os.path.basename(module_name)
+
+            spec = util.spec_from_file_location(module_filename, file_path)
             module = importlib.util.module_from_spec(spec)
-
-            # Aggiungi il package_path specifico della strategia
-            if package_path not in sys.path:
-                sys.path.insert(0, package_path)
-
-            # IMPORTANTE: Aggiungi anche la root che contiene user_strategy
-            # per permettere import tipo: from user_strategy.utils.trade_manager import TradeManager
-            user_strategy_root = self._find_user_strategy_root(package_path)
-            if user_strategy_root and user_strategy_root not in sys.path:
-                sys.path.insert(0, user_strategy_root)
-                logging.info(f"Aggiunto user_strategy root al sys.path: {user_strategy_root}")
-
             spec.loader.exec_module(module)
             strategy_class = getattr(module, class_name)
 
@@ -207,7 +210,7 @@ class Builder:
             raise
 
     def _set_real_time_data(self, monitor, lock):
-        market_data = RTData(lock, **self.config.get("market_data_distributor", {}).get("book_params",{}))
+        market_data = RTData(lock, **self.config.get("market_data_distributor", {}).get("book_params", {}))
         monitor.set_market_data(market_data)
 
     def _setup_trade_distributor(self, threads, monitor, lock, logger):
@@ -220,8 +223,9 @@ class Builder:
     def _setup_bloomberg_distributor(self, threads, monitor):
         market_data = monitor.market_data
         event_handler = BBGEventHandler(market_data)
-        bloomberg_distributor_thread = BloombergStreamingThread(event_handler, **self.config["bloomberg_data_distributor"].get(
-                                                                                        "bloomberg_params", {}))
+        bloomberg_distributor_thread = BloombergStreamingThread(event_handler,
+                                                                **self.config["bloomberg_data_distributor"].get(
+                                                                    "bloomberg_params", {}))
         threads.append(bloomberg_distributor_thread)
 
     def _setup_excel_distributor(self, threads, monitor):

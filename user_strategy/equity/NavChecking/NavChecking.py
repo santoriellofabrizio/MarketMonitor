@@ -7,7 +7,7 @@ import pandas as pd
 from market_monitor.data_storage.NAVDataStorage import NAVDataStorage
 
 from market_monitor.gui.implementations.GUI import GUI
-from market_monitor.strategy.StrategyUI.StrategyUI import StrategyUI
+from market_monitor.strategy.strategy_ui.StrategyUI import StrategyUI
 from user_strategy.equity.utils.DataProcessors.PCFControls import PCFControls
 from user_strategy.equity.utils.DataProcessors.PCFProcessor import PCFProcessor
 from user_strategy.equity.utils.DataProcessors.StockSelector import StockSelector

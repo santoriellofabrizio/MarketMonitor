@@ -71,9 +71,9 @@ Ogni callback è chiamata dal runtime asincrono di `StrategyUIAsync`, che raccog
 ### Esempio minimo di strategia
 
 ```python
-from market_monitor.strategy.StrategyUI.StrategyUI import StrategyUI
-from user_strategy.utils.trade_manager.book_memory import BookStorage
-from user_strategy.utils.trade_manager.trade_manager import TradeManager
+from market_monitor.strategy.strategy_ui.StrategyUI import StrategyUI
+from market_monitor.strategy.common.trade_manager.book_memory import BookStorage
+from market_monitor.strategy.common.trade_manager import TradeManager
 
 
 class MyStrategy(StrategyUI):

@@ -10,8 +10,8 @@ from threading import RLock
 
 import pandas as pd
 
-from user_strategy.utils.trade_manager.time_zero_pl import TimeZeroPLManager
-from user_strategy.utils.trade_manager.trade_templates import TradeStorage, TradeFactory, Trade, MyTrade
+from market_monitor.strategy.common.trade_manager.time_zero_pl import TimeZeroPLManager
+from market_monitor.strategy.common.trade_manager.trade_templates import TradeStorage, TradeFactory, Trade, MyTrade
 
 logger = logging.getLogger(__name__)
 
@@ -172,7 +172,7 @@ class TradeManager:
     # QUERY METHODS (thread-safe cache)
     # ========================================================================
 
-    from datetime import datetime, timedelta
+    from datetime import datetime
 
     def get_trades(
             self, n_seconds: int | None = None, n_of_trades: int | None = None, use_cache: bool = True

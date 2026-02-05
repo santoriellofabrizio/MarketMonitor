@@ -10,7 +10,7 @@ import pandas as pd
 
 from market_monitor.publishers.base import MessageType
 from market_monitor.publishers.redis_publisher import RedisMessaging
-from market_monitor.strategy.StrategyUI.StrategyUI import StrategyUI
+from market_monitor.strategy.strategy_ui.StrategyUI import StrategyUI
 
 logger = logging.getLogger(__name__)
 

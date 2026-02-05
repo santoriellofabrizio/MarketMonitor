@@ -10,7 +10,7 @@ import datetime as dt
 from core.holidays.holiday_manager import HolidayManager
 from interface.bshdata import BshData
 from market_monitor.publishers.redis_publisher import RedisMessaging
-from market_monitor.strategy.StrategyUI.StrategyUI import StrategyUI
+from market_monitor.strategy.strategy_ui.StrategyUI import StrategyUI
 from user_strategy.utils import CustomBDay
 from user_strategy.utils.pricing_models.DataFetching.PricesProviderFI import PricesProviderFI
 from user_strategy.utils.InputParamsFIQuoting import InputParamsFIQuoting
