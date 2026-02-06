@@ -170,6 +170,7 @@ class EtfEquityPriceEngine(StrategyUI):
                                              start=start_intraday,
                                              end=end,
                                              frequency="15m",
+                                             source='bloomberg',
                                              fallbacks=[{"source": "bloomberg", "market": "IM"}])
             .between_time("10:00", "17:00"), name="etf_intraday")
 
@@ -254,7 +255,7 @@ class EtfEquityPriceEngine(StrategyUI):
 
         # Publish returns
         static_return = self.adjuster.get_clean_returns()
-        for i in self.return_to_publish:
+         for i in self.return_to_publish:
             self.gui_redis.export_static_data(**{f"market:return_{i}":
                                                      (static_return.iloc[-i].astype(float) * 100).round(4)})
 
@@ -593,7 +594,7 @@ class EtfEquityPriceEngine(StrategyUI):
         intraday_returns.sort_index(ascending=False, inplace=True)
         intraday_returns.index = intraday_returns.index.strftime('%Y-%m-%dT%H:%M:%S')
 
-        self.gui_redis.export_static_data(df_big=intraday_returns.to_json())
+        self.gui_redis.export_static_data(df_big=intraday_returns.T.to_json())
 
     def get_mid(self) -> pd.Series:
         """
