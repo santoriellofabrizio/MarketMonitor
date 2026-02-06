@@ -42,7 +42,7 @@ class EtfEquityPriceEngine(StrategyUI):
         super().__init__(**kwargs)
 
         self.number_of_days_intraday = kwargs.get("number_of_days_intraday", 3)
-        self.API = BshData(config_path=r"C:\AFMachineLearning\Libraries\BshDataProvider\config\bshdata_config.yaml")
+        self.API = BshData(config_path=r"C:\AFMachineLearning\Libraries\MarketMonitor\etc\config\bshdata_config.yaml")
 
         self.failed_isin = []
 
@@ -153,15 +153,16 @@ class EtfEquityPriceEngine(StrategyUI):
                                                         start=start,
                                                         end=end,
                                                         snapshot_time=snapshot_time,
-                                                        fallbacks=[{"source": "bloomberg", "market": "IM"}]).reindex(
-            days)
+                                                        fallbacks=[{"source": "bloomberg",
+                                                                    "market": "IM"}]).reindex(days)
 
         self.fx_prices_intraday = self.filter_outliers(
             self.API.market.get_intraday_fx(id=self.currencies,
                                             start=start_intraday,
                                             end=end,
                                             frequency="15m",
-                                            fallbacks=[{"source": "bloomberg"}])
+                                            fallbacks=[{"source": "bloomberg",
+                                                        "market": "IM"}])
             .between_time("10:00", "17:00"))
 
         self.etf_prices_intraday = self.filter_outliers(

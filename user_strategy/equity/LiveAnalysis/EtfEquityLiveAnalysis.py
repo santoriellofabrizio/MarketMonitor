@@ -24,7 +24,7 @@ class EtfEquityLiveAnalysis(StrategyUI):
         self.min_ctv_trades_excel = kwargs.get("min_ctv_trades_excel", 20000)
         self.price_source = kwargs.get("price_source", "kafka")
 
-        self.API = BshData(config_path=r"C:\AFMachineLearning\Libraries\BshDataProvider\config\bshdata_config.yaml")
+        self.API = BshData(config_path=r"C:\AFMachineLearning\Libraries\MarketMonitor\etc\config\bshdata_config.yaml")
 
         self.all_isin_ETFP = self.API.general.get(fields=["etp_isins"],
                                                   segments=["IM"],
