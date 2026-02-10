@@ -518,7 +518,7 @@
         {
           "refId": "A",
           "datasource": { "type": "frser-sqlite-datasource", "uid": "${DS_SQLITE}" },
-          "rawQueryText": "SELECT DRIVER as \"Driver\", ROUND(BETA, 4) as \"Beta\" FROM beta_large_cluster WHERE ISIN = '${isin}' AND ABS(BETA) > 0.0001 AND DATETIME = (SELECT MAX(DATETIME) FROM beta_large_cluster WHERE ISIN = '${isin}') ORDER BY ABS(BETA) DESC",
+          "rawQueryText": "SELECT COALESCE(t.TICKER, b.DRIVER) as \"Driver\", ROUND(b.BETA, 4) as \"Beta\" FROM beta_large_cluster b LEFT JOIN VW_ISIN_TICKER t ON b.DRIVER = t.ISIN WHERE b.ISIN = '${isin}' AND ABS(b.BETA) > 0.0001 AND b.DATETIME = (SELECT MAX(DATETIME) FROM beta_large_cluster WHERE ISIN = '${isin}') ORDER BY ABS(b.BETA) DESC",
           "queryType": "table",
           "timeColumns": []
         }
@@ -563,7 +563,7 @@
         {
           "refId": "A",
           "datasource": { "type": "frser-sqlite-datasource", "uid": "${DS_SQLITE}" },
-          "rawQueryText": "SELECT DRIVER as \"metric\", ROUND(BETA, 4) as \"value\" FROM beta_large_cluster WHERE ISIN = '${isin}' AND ABS(BETA) > 0.0001 AND DATETIME = (SELECT MAX(DATETIME) FROM beta_large_cluster WHERE ISIN = '${isin}') ORDER BY BETA DESC",
+          "rawQueryText": "SELECT COALESCE(t.TICKER, b.DRIVER) as \"metric\", ROUND(b.BETA, 4) as \"value\" FROM beta_large_cluster b LEFT JOIN VW_ISIN_TICKER t ON b.DRIVER = t.ISIN WHERE b.ISIN = '${isin}' AND ABS(b.BETA) > 0.0001 AND b.DATETIME = (SELECT MAX(DATETIME) FROM beta_large_cluster WHERE ISIN = '${isin}') ORDER BY b.BETA DESC",
           "queryType": "table",
           "timeColumns": []
         }
