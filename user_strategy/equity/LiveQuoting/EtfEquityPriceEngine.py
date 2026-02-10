@@ -559,7 +559,9 @@ class EtfEquityPriceEngine(StrategyUI):
         try:
             with self.timeseries_publisher.ts_batch() as batch:
                 for isin, field_name, value in all_data:
-                    batch.add(isin, field_name, value, timestamp=current_time)
+                    ticker = self.isin_to_ticker.get(isin, isin)
+                    batch.add(isin, field_name, value, timestamp=current_time,
+                              labels={"ticker": ticker})
             logger.debug(f"Batch published {len(all_data)} values")
         except Exception as e:
             logger.error(f"Batch publishing failed, TimeSeries skipped: {e}", exc_info=True)

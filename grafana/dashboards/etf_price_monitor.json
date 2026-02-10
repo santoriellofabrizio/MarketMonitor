@@ -650,7 +650,7 @@
           "datasource": { "type": "redis-datasource", "uid": "${DS_REDIS}" },
           "command": "ts.mrange",
           "filter": "identifier=(${driver:csv}) field=${field}",
-          "legend": "${identifier}"
+          "legend": "${ticker}"
         }
       ]
     },
