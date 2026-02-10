@@ -95,6 +95,43 @@
         "hide": 0,
         "options": [],
         "current": {}
+      },
+      {
+        "name": "driver",
+        "type": "query",
+        "label": "Driver ETF",
+        "datasource": {
+          "type": "frser-sqlite-datasource",
+          "uid": "${DS_SQLITE}"
+        },
+        "query": "SELECT COALESCE(t.TICKER, b.DRIVER) as __text, b.DRIVER as __value FROM beta_large_cluster b LEFT JOIN VW_ISIN_TICKER t ON b.DRIVER = t.ISIN WHERE b.ISIN = '${isin}' AND ABS(b.BETA) > 0.0001 AND b.DATETIME = (SELECT MAX(DATETIME) FROM beta_large_cluster WHERE ISIN = '${isin}') ORDER BY ABS(b.BETA) DESC",
+        "sort": 0,
+        "multi": true,
+        "includeAll": true,
+        "allValue": "",
+        "refresh": 2,
+        "hide": 0,
+        "options": [],
+        "current": {}
+      },
+      {
+        "name": "field",
+        "type": "custom",
+        "label": "Campo",
+        "query": "Mid : mid,Index Cluster : live_idx,Cluster : live_clust,Intraday : intraday,Index Mis % : live_idx_mis,Cluster Mis % : live_clust_mis,Intraday Mis % : intraday_mis",
+        "multi": false,
+        "includeAll": false,
+        "hide": 0,
+        "options": [
+          { "text": "Mid",              "value": "mid",           "selected": false },
+          { "text": "Index Cluster",    "value": "live_idx",      "selected": false },
+          { "text": "Cluster",          "value": "live_clust",    "selected": false },
+          { "text": "Intraday",         "value": "intraday",      "selected": false },
+          { "text": "Index Mis %",      "value": "live_idx_mis",  "selected": false },
+          { "text": "Cluster Mis %",    "value": "live_clust_mis","selected": true  },
+          { "text": "Intraday Mis %",   "value": "intraday_mis",  "selected": false }
+        ],
+        "current": { "text": "Cluster Mis %", "value": "live_clust_mis" }
       }
     ]
   },
@@ -566,6 +603,54 @@
           "rawQueryText": "SELECT COALESCE(t.TICKER, b.DRIVER) as \"metric\", ROUND(b.BETA, 4) as \"value\" FROM beta_large_cluster b LEFT JOIN VW_ISIN_TICKER t ON b.DRIVER = t.ISIN WHERE b.ISIN = '${isin}' AND ABS(b.BETA) > 0.0001 AND b.DATETIME = (SELECT MAX(DATETIME) FROM beta_large_cluster WHERE ISIN = '${isin}') ORDER BY b.BETA DESC",
           "queryType": "table",
           "timeColumns": []
+        }
+      ]
+    },
+    {
+      "id": 15,
+      "type": "row",
+      "title": "Serie temporale driver — ${isin:text}",
+      "collapsed": false,
+      "gridPos": { "x": 0, "y": 42, "w": 24, "h": 1 },
+      "panels": []
+    },
+    {
+      "id": 16,
+      "type": "timeseries",
+      "title": "${field:text} — driver di ${isin:text}",
+      "description": "Seleziona i driver dal dropdown 'Driver ETF' e il campo da 'Campo'",
+      "gridPos": { "x": 0, "y": 43, "w": 24, "h": 12 },
+      "datasource": { "type": "redis-datasource", "uid": "${DS_REDIS}" },
+      "options": {
+        "tooltip": { "mode": "multi", "sort": "desc" },
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": ["lastNotNull", "min", "max", "mean"]
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 5,
+          "custom": {
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "pointSize": 3,
+            "showPoints": "never",
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "redis-datasource", "uid": "${DS_REDIS}" },
+          "command": "ts.mrange",
+          "filter": "identifier=(${driver:csv}) field=${field}",
+          "legend": "${identifier}"
         }
       ]
     },
