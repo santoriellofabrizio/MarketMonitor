@@ -1,0 +1,12 @@
+apiVersion: 1
+
+datasources:
+  - name: anagraphic_db
+    type: frser-sqlite-datasource
+    uid: sqlite-anagraphic
+    access: proxy
+    # Percorso al file SQLite — adattare se il path differisce
+    jsonData:
+      path: "V:/EquityETF/etf_equity_anagraphic_db.sqlite"
+    isDefault: false
+    editable: true

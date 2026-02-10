@@ -7,6 +7,14 @@
       "type": "datasource",
       "pluginId": "redis-datasource",
       "pluginName": "Redis"
+    },
+    {
+      "name": "DS_SQLITE",
+      "label": "anagraphic_db",
+      "description": "SQLite anagraphic database (VW_ISIN_TICKER, beta_large_cluster)",
+      "type": "datasource",
+      "pluginId": "frser-sqlite-datasource",
+      "pluginName": "SQLite"
     }
   ],
   "__requires": [
@@ -21,6 +29,12 @@
       "id": "redis-datasource",
       "name": "Redis",
       "version": "2.0.0"
+    },
+    {
+      "type": "datasource",
+      "id": "frser-sqlite-datasource",
+      "name": "SQLite",
+      "version": "1.0.0"
     },
     {
       "type": "panel",
@@ -39,15 +53,21 @@
       "id": "table",
       "name": "Table",
       "version": ""
+    },
+    {
+      "type": "panel",
+      "id": "bargauge",
+      "name": "Bar gauge",
+      "version": ""
     }
   ],
-  "uid": "etf-price-monitor-v1",
+  "uid": "etf-price-monitor-v2",
   "title": "ETF Price Monitor",
-  "description": "Monitoring live di mid, prezzi teorici e misalignment per ETF equity",
+  "description": "Monitoring live di mid, prezzi teorici, misalignment e beta per ETF equity",
   "tags": ["etf", "equities", "redis-ts", "live"],
   "timezone": "browser",
   "schemaVersion": 38,
-  "version": 1,
+  "version": 2,
   "refresh": "30s",
   "time": {
     "from": "now-1h",
@@ -62,14 +82,13 @@
       {
         "name": "isin",
         "type": "query",
-        "label": "ISIN",
+        "label": "ETF",
         "datasource": {
-          "type": "redis-datasource",
-          "uid": "${DS_REDIS}"
+          "type": "frser-sqlite-datasource",
+          "uid": "${DS_SQLITE}"
         },
-        "query": "KEYS ts:*:mid",
-        "regex": "/ts:(.+?):mid/",
-        "sort": 1,
+        "query": "SELECT TICKER as __text, ISIN as __value FROM VW_ISIN_TICKER ORDER BY TICKER",
+        "sort": 0,
         "multi": false,
         "includeAll": false,
         "refresh": 1,
@@ -83,7 +102,7 @@
     {
       "id": 1,
       "type": "row",
-      "title": "Valori Correnti — $isin",
+      "title": "Valori Correnti — ${isin:text}",
       "collapsed": false,
       "gridPos": { "x": 0, "y": 0, "w": 24, "h": 1 },
       "panels": []
@@ -152,8 +171,7 @@
               { "color": "orange", "value":  0.005  },
               { "color": "red",    "value":  0.01   }
             ]
-          },
-          "mappings": []
+          }
         },
         "overrides": []
       },
@@ -262,7 +280,7 @@
     {
       "id": 7,
       "type": "timeseries",
-      "title": "Mid vs Prezzi Teorici — $isin",
+      "title": "Mid vs Prezzi Teorici — ${isin:text}",
       "gridPos": { "x": 0, "y": 8, "w": 24, "h": 10 },
       "datasource": { "type": "redis-datasource", "uid": "${DS_REDIS}" },
       "options": {
@@ -355,7 +373,7 @@
     {
       "id": 9,
       "type": "timeseries",
-      "title": "Misalignment % — $isin",
+      "title": "Misalignment % — ${isin:text}",
       "description": "Scarto % del prezzo teorico rispetto al mid. Verde = allineato (±20bps), Arancione = ±50bps, Rosso = >100bps",
       "gridPos": { "x": 0, "y": 19, "w": 24, "h": 10 },
       "datasource": { "type": "redis-datasource", "uid": "${DS_REDIS}" },
@@ -436,15 +454,133 @@
     {
       "id": 10,
       "type": "row",
+      "title": "Beta — ${isin:text}",
+      "collapsed": false,
+      "gridPos": { "x": 0, "y": 29, "w": 24, "h": 1 },
+      "panels": []
+    },
+    {
+      "id": 11,
+      "type": "table",
+      "title": "Beta drivers (ultimo aggiornamento)",
+      "description": "Drivers con beta ≠ 0 per l'ISIN selezionato, snapshot più recente",
+      "gridPos": { "x": 0, "y": 30, "w": 10, "h": 12 },
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "${DS_SQLITE}" },
+      "options": {
+        "footer": { "show": false },
+        "showHeader": true,
+        "sortBy": [{ "desc": true, "displayName": "Beta" }],
+        "cellHeight": "sm"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": { "type": "auto" },
+            "inspect": false
+          }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "Beta" },
+            "properties": [
+              { "id": "unit", "value": "none" },
+              { "id": "decimals", "value": 4 },
+              {
+                "id": "custom.cellOptions",
+                "value": { "type": "color-background", "mode": "basic" }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    { "color": "red",         "value": null   },
+                    { "color": "light-red",   "value": -0.5   },
+                    { "color": "light-green", "value": -0.1   },
+                    { "color": "green",       "value":  0.1   },
+                    { "color": "light-green", "value":  0.5   },
+                    { "color": "red",         "value":  1.0   }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Driver" },
+            "properties": [
+              { "id": "custom.width", "value": 180 }
+            ]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "frser-sqlite-datasource", "uid": "${DS_SQLITE}" },
+          "rawQueryText": "SELECT DRIVER as \"Driver\", ROUND(BETA, 4) as \"Beta\" FROM beta_large_cluster WHERE ISIN = '${isin}' AND ABS(BETA) > 0.0001 AND DATETIME = (SELECT MAX(DATETIME) FROM beta_large_cluster WHERE ISIN = '${isin}') ORDER BY ABS(BETA) DESC",
+          "queryType": "table",
+          "timeColumns": []
+        }
+      ]
+    },
+    {
+      "id": 12,
+      "type": "bargauge",
+      "title": "Beta per driver — ${isin:text}",
+      "description": "Magnitudine e segno dei beta (snapshot più recente)",
+      "gridPos": { "x": 10, "y": 30, "w": 14, "h": 12 },
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "${DS_SQLITE}" },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "orientation": "horizontal",
+        "displayMode": "gradient",
+        "valueMode": "color",
+        "showUnfilled": true,
+        "minVizWidth": 0,
+        "minVizHeight": 10,
+        "namePlacement": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 4,
+          "min": -1,
+          "max": 1,
+          "color": { "mode": "continuous-BlPu" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red",   "value": null  },
+              { "color": "green", "value":  0.0  }
+            ]
+          },
+          "mappings": []
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "frser-sqlite-datasource", "uid": "${DS_SQLITE}" },
+          "rawQueryText": "SELECT DRIVER as \"metric\", ROUND(BETA, 4) as \"value\" FROM beta_large_cluster WHERE ISIN = '${isin}' AND ABS(BETA) > 0.0001 AND DATETIME = (SELECT MAX(DATETIME) FROM beta_large_cluster WHERE ISIN = '${isin}') ORDER BY BETA DESC",
+          "queryType": "table",
+          "timeColumns": []
+        }
+      ]
+    },
+    {
+      "id": 13,
+      "type": "row",
       "title": "Overview tutti gli ISIN",
       "collapsed": true,
-      "gridPos": { "x": 0, "y": 29, "w": 24, "h": 1 },
+      "gridPos": { "x": 0, "y": 42, "w": 24, "h": 1 },
       "panels": [
         {
-          "id": 11,
+          "id": 14,
           "type": "table",
           "title": "Misalignment corrente — tutti gli ISIN (Cluster)",
-          "gridPos": { "x": 0, "y": 30, "w": 24, "h": 12 },
+          "gridPos": { "x": 0, "y": 43, "w": 24, "h": 12 },
           "datasource": { "type": "redis-datasource", "uid": "${DS_REDIS}" },
           "options": {
             "footer": { "show": false },
