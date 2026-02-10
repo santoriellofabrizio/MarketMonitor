@@ -168,8 +168,6 @@ class Flow:
 class FlowDetector:
     """
     Detects coordinated trading flows in market data.
-
-    OPTIMIZED with index-based lookup: 270x faster than sequential scan.
     """
 
     def __init__(

@@ -102,6 +102,7 @@ class EtfEquityPriceEngine(StrategyUI):
         beta_cluster = self.input_params.beta_cluster
         beta_cluster_index = self.input_params.beta_cluster_index
 
+        # ✅ Crea una nuova lista filtrata invece di modificare durante iterazione
         self.etfs = list({
             *self.input_params.beta_cluster.index,
             *self.input_params.beta_cluster.columns,
@@ -109,10 +110,22 @@ class EtfEquityPriceEngine(StrategyUI):
             *self.input_params.beta_cluster_index.columns,
         })
 
+        isin_list = kwargs.get("isin_list", [])
+        valid_etfs = []
         for etf in self.etfs:
+            # Skip se non in isin_list (se specificato)
+            if isin_list and etf not in isin_list:
+                continue
+
+            # Skip se non ACTV
             if self.active_isin.get(etf, "NOT_PRESENT") != "ACTV":
                 logger.warning(f"{etf} ({self.ticker_to_isin.get(etf)}) is not ACTV.")
-                self.etfs.remove(etf)
+                continue
+
+            valid_etfs.append(etf)
+
+        self.etfs = sorted(valid_etfs)
+
 
         for attr in ['beta_cluster', 'beta_cluster_index']:
             df = getattr(self.input_params, attr)
@@ -120,6 +133,7 @@ class EtfEquityPriceEngine(StrategyUI):
             df_filtered = df.loc[df.index.intersection(self.etfs), df.columns.intersection(self.etfs)]
             # Rinormalizza dividendo per la nuova somma
             setattr(self.input_params, attr, df_filtered.div(df_filtered.sum(axis=1), axis=0).fillna(0))
+
 
         self.instruments = list({
             *self.etfs,
@@ -135,10 +149,10 @@ class EtfEquityPriceEngine(StrategyUI):
         self.last_storage_time = datetime.now()
 
         fx_composition = self.API.info.get_fx_composition(self.etfs, fx_fxfwrd="fx",
-                                                          reference_date=date(2025, 12, 18))
+                                                          reference_date=date(2026, 2, 9))
 
         fx_forward = self.API.info.get_fx_composition(self.etfs, fx_fxfwrd="fxfwrd",
-                                                      reference_date=date(2025, 12, 18))
+                                                      reference_date=date(2026, 2, 9))
 
         for isin, isin_proxy in kwargs.get("fx_mapping", {}).items():
             fx_composition.loc[isin] = fx_composition.loc[isin_proxy]
@@ -147,22 +161,24 @@ class EtfEquityPriceEngine(StrategyUI):
                                                             start=start,
                                                             end=end,
                                                             snapshot_time=snapshot_time,
-                                                            fallbacks=[{"source": "bloomberg"}]).reindex(days)
+                                                            fallbacks=[{"source": "bloomberg"}],
+                                                            ).reindex(days)
 
         self.etf_prices = self.API.market.get_daily_etf(id=self.etfs,
                                                         start=start,
                                                         end=end,
                                                         snapshot_time=snapshot_time,
+                                                        timeout=10,
                                                         fallbacks=[{"source": "bloomberg",
-                                                                    "market": "IM"}]).reindex(days)
+                                                                    "market": mkt} for mkt in
+                                                                   ["IM", "FP", "NA"]]).reindex(days)
 
         self.fx_prices_intraday = self.filter_outliers(
             self.API.market.get_intraday_fx(id=self.currencies,
                                             start=start_intraday,
                                             end=end,
                                             frequency="15m",
-                                            fallbacks=[{"source": "bloomberg",
-                                                        "market": "IM"}])
+                                            fallbacks=[{"source": "bloomberg"}])
             .between_time("10:00", "17:00"))
 
         self.etf_prices_intraday = self.filter_outliers(
@@ -170,8 +186,9 @@ class EtfEquityPriceEngine(StrategyUI):
                                              start=start_intraday,
                                              end=end,
                                              frequency="15m",
-                                             source='bloomberg',
-                                             fallbacks=[{"source": "bloomberg", "market": "IM"}])
+                                             source='timescale',
+                                             fallbacks=[{"source": "bloomberg",
+                                                         "market": mkt} for mkt in ["IM", "FP", "NA"]])
             .between_time("10:00", "17:00"), name="etf_intraday")
 
         self.etf_prices = self.etf_prices.interpolate("time")
@@ -255,7 +272,7 @@ class EtfEquityPriceEngine(StrategyUI):
 
         # Publish returns
         static_return = self.adjuster.get_clean_returns()
-         for i in self.return_to_publish:
+        for i in self.return_to_publish:
             self.gui_redis.export_static_data(**{f"market:return_{i}":
                                                      (static_return.iloc[-i].astype(float) * 100).round(4)})
 
@@ -705,8 +722,8 @@ class EtfEquityPriceEngine(StrategyUI):
         # this first line is used for the brothers matrix, in order to make it comparable with the clusters matrix
         cluster_betas = cluster_betas.sort_index(axis=1)
         cluster_betas = cluster_betas.sort_index(axis=0)
-        for label in cluster_betas.index:
-            cluster_betas.loc[label, label] = 0
+        for etf in cluster_betas.index:
+            cluster_betas.loc[etf, etf] = 0
         # with the first series we define which is the threshold for a betas to be considered
         cluster_threshold: pd.Series = threshold / (cluster_betas != 0).sum(axis=1)
         # here we count only the beta which are above the threshold
