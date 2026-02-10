@@ -1,0 +1,489 @@
+{
+  "__inputs": [
+    {
+      "name": "DS_REDIS",
+      "label": "Redis-TimeSeries",
+      "description": "Redis Stack datasource su porta 6380",
+      "type": "datasource",
+      "pluginId": "redis-datasource",
+      "pluginName": "Redis"
+    }
+  ],
+  "__requires": [
+    {
+      "type": "grafana",
+      "id": "grafana",
+      "name": "Grafana",
+      "version": "9.0.0"
+    },
+    {
+      "type": "datasource",
+      "id": "redis-datasource",
+      "name": "Redis",
+      "version": "2.0.0"
+    },
+    {
+      "type": "panel",
+      "id": "timeseries",
+      "name": "Time series",
+      "version": ""
+    },
+    {
+      "type": "panel",
+      "id": "stat",
+      "name": "Stat",
+      "version": ""
+    },
+    {
+      "type": "panel",
+      "id": "table",
+      "name": "Table",
+      "version": ""
+    }
+  ],
+  "uid": "etf-price-monitor-v1",
+  "title": "ETF Price Monitor",
+  "description": "Monitoring live di mid, prezzi teorici e misalignment per ETF equity",
+  "tags": ["etf", "equities", "redis-ts", "live"],
+  "timezone": "browser",
+  "schemaVersion": 38,
+  "version": 1,
+  "refresh": "30s",
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "timepicker": {
+    "refresh_intervals": ["5s", "10s", "30s", "1m", "5m"],
+    "time_options": ["5m", "15m", "1h", "3h", "6h", "12h", "24h"]
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "isin",
+        "type": "query",
+        "label": "ISIN",
+        "datasource": {
+          "type": "redis-datasource",
+          "uid": "${DS_REDIS}"
+        },
+        "query": "KEYS ts:*:mid",
+        "regex": "/ts:(.+?):mid/",
+        "sort": 1,
+        "multi": false,
+        "includeAll": false,
+        "refresh": 1,
+        "hide": 0,
+        "options": [],
+        "current": {}
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "row",
+      "title": "Valori Correnti — $isin",
+      "collapsed": false,
+      "gridPos": { "x": 0, "y": 0, "w": 24, "h": 1 },
+      "panels": []
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Mid Price (EUR)",
+      "gridPos": { "x": 0, "y": 1, "w": 6, "h": 6 },
+      "datasource": { "type": "redis-datasource", "uid": "${DS_REDIS}" },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyEUR",
+          "decimals": 5,
+          "color": { "mode": "fixed", "fixedColor": "blue" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{ "color": "blue", "value": null }]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "redis-datasource", "uid": "${DS_REDIS}" },
+          "command": "ts.get",
+          "keyName": "ts:${isin}:mid",
+          "legend": "Mid"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Misalignment — Index Cluster",
+      "gridPos": { "x": 6, "y": 1, "w": 6, "h": 6 },
+      "datasource": { "type": "redis-datasource", "uid": "${DS_REDIS}" },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "decimals": 4,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red",    "value": null    },
+              { "color": "orange", "value": -0.005  },
+              { "color": "green",  "value": -0.002  },
+              { "color": "green",  "value":  0.002  },
+              { "color": "orange", "value":  0.005  },
+              { "color": "red",    "value":  0.01   }
+            ]
+          },
+          "mappings": []
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "redis-datasource", "uid": "${DS_REDIS}" },
+          "command": "ts.get",
+          "keyName": "ts:${isin}:live_idx_mis",
+          "legend": "Index Mis"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Misalignment — Cluster",
+      "gridPos": { "x": 12, "y": 1, "w": 6, "h": 6 },
+      "datasource": { "type": "redis-datasource", "uid": "${DS_REDIS}" },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "decimals": 4,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red",    "value": null    },
+              { "color": "orange", "value": -0.005  },
+              { "color": "green",  "value": -0.002  },
+              { "color": "green",  "value":  0.002  },
+              { "color": "orange", "value":  0.005  },
+              { "color": "red",    "value":  0.01   }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "redis-datasource", "uid": "${DS_REDIS}" },
+          "command": "ts.get",
+          "keyName": "ts:${isin}:live_clust_mis",
+          "legend": "Cluster Mis"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Misalignment — Intraday",
+      "gridPos": { "x": 18, "y": 1, "w": 6, "h": 6 },
+      "datasource": { "type": "redis-datasource", "uid": "${DS_REDIS}" },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "decimals": 4,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red",    "value": null    },
+              { "color": "orange", "value": -0.005  },
+              { "color": "green",  "value": -0.002  },
+              { "color": "green",  "value":  0.002  },
+              { "color": "orange", "value":  0.005  },
+              { "color": "red",    "value":  0.01   }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "redis-datasource", "uid": "${DS_REDIS}" },
+          "command": "ts.get",
+          "keyName": "ts:${isin}:intraday_mis",
+          "legend": "Intraday Mis"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "row",
+      "title": "Prezzi nel Tempo",
+      "collapsed": false,
+      "gridPos": { "x": 0, "y": 7, "w": 24, "h": 1 },
+      "panels": []
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Mid vs Prezzi Teorici — $isin",
+      "gridPos": { "x": 0, "y": 8, "w": 24, "h": 10 },
+      "datasource": { "type": "redis-datasource", "uid": "${DS_REDIS}" },
+      "options": {
+        "tooltip": { "mode": "multi", "sort": "none" },
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "min", "max"] }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 5,
+          "custom": {
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "fillOpacity": 5,
+            "pointSize": 3,
+            "showPoints": "never",
+            "spanNulls": false
+          }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "Mid" },
+            "properties": [
+              { "id": "custom.lineWidth", "value": 3 },
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "#1F60C4" } }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Index Cluster" },
+            "properties": [
+              { "id": "custom.lineStyle", "value": { "dash": [8, 4], "fill": "dash" } },
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "#E0B400" } }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Cluster" },
+            "properties": [
+              { "id": "custom.lineStyle", "value": { "dash": [8, 4], "fill": "dash" } },
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "#37872D" } }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Intraday" },
+            "properties": [
+              { "id": "custom.lineStyle", "value": { "dash": [4, 4], "fill": "dash" } },
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "#C4162A" } }
+            ]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "redis-datasource", "uid": "${DS_REDIS}" },
+          "command": "ts.range",
+          "keyName": "ts:${isin}:mid",
+          "legend": "Mid"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "redis-datasource", "uid": "${DS_REDIS}" },
+          "command": "ts.range",
+          "keyName": "ts:${isin}:live_idx",
+          "legend": "Index Cluster"
+        },
+        {
+          "refId": "C",
+          "datasource": { "type": "redis-datasource", "uid": "${DS_REDIS}" },
+          "command": "ts.range",
+          "keyName": "ts:${isin}:live_clust",
+          "legend": "Cluster"
+        },
+        {
+          "refId": "D",
+          "datasource": { "type": "redis-datasource", "uid": "${DS_REDIS}" },
+          "command": "ts.range",
+          "keyName": "ts:${isin}:intraday",
+          "legend": "Intraday"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "row",
+      "title": "Misalignment nel Tempo",
+      "collapsed": false,
+      "gridPos": { "x": 0, "y": 18, "w": 24, "h": 1 },
+      "panels": []
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "Misalignment % — $isin",
+      "description": "Scarto % del prezzo teorico rispetto al mid. Verde = allineato (±20bps), Arancione = ±50bps, Rosso = >100bps",
+      "gridPos": { "x": 0, "y": 19, "w": 24, "h": 10 },
+      "datasource": { "type": "redis-datasource", "uid": "${DS_REDIS}" },
+      "options": {
+        "tooltip": { "mode": "multi", "sort": "none" },
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "min", "max", "mean"] }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "decimals": 4,
+          "custom": {
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "pointSize": 3,
+            "showPoints": "never",
+            "spanNulls": false,
+            "thresholdsStyle": { "mode": "area" }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red",    "value": null   },
+              { "color": "orange", "value": -0.005 },
+              { "color": "green",  "value": -0.002 },
+              { "color": "green",  "value":  0.002 },
+              { "color": "orange", "value":  0.005 },
+              { "color": "red",    "value":  0.01  }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "Index Mis" },
+            "properties": [
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "#E0B400" } }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Cluster Mis" },
+            "properties": [
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "#37872D" } }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Intraday Mis" },
+            "properties": [
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "#C4162A" } }
+            ]
+          }
+        ]
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "redis-datasource", "uid": "${DS_REDIS}" },
+          "command": "ts.range",
+          "keyName": "ts:${isin}:live_idx_mis",
+          "legend": "Index Mis"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "redis-datasource", "uid": "${DS_REDIS}" },
+          "command": "ts.range",
+          "keyName": "ts:${isin}:live_clust_mis",
+          "legend": "Cluster Mis"
+        },
+        {
+          "refId": "C",
+          "datasource": { "type": "redis-datasource", "uid": "${DS_REDIS}" },
+          "command": "ts.range",
+          "keyName": "ts:${isin}:intraday_mis",
+          "legend": "Intraday Mis"
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "type": "row",
+      "title": "Overview tutti gli ISIN",
+      "collapsed": true,
+      "gridPos": { "x": 0, "y": 29, "w": 24, "h": 1 },
+      "panels": [
+        {
+          "id": 11,
+          "type": "table",
+          "title": "Misalignment corrente — tutti gli ISIN (Cluster)",
+          "gridPos": { "x": 0, "y": 30, "w": 24, "h": 12 },
+          "datasource": { "type": "redis-datasource", "uid": "${DS_REDIS}" },
+          "options": {
+            "footer": { "show": false },
+            "showHeader": true,
+            "sortBy": [{ "desc": true, "displayName": "Valore" }]
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percentunit",
+              "decimals": 4,
+              "custom": {
+                "align": "auto",
+                "cellOptions": { "type": "color-background" }
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "red",    "value": null   },
+                  { "color": "orange", "value": -0.005 },
+                  { "color": "green",  "value": -0.002 },
+                  { "color": "green",  "value":  0.002 },
+                  { "color": "orange", "value":  0.005 },
+                  { "color": "red",    "value":  0.01  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": { "type": "redis-datasource", "uid": "${DS_REDIS}" },
+              "command": "ts.mrange",
+              "filter": "field=live_clust_mis",
+              "legend": "Valore"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

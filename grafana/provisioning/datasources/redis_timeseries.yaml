@@ -1,0 +1,12 @@
+apiVersion: 1
+
+datasources:
+  - name: Redis-TimeSeries
+    type: redis-datasource
+    uid: redis-ts-etf
+    access: proxy
+    url: "redis://localhost:6380"
+    jsonData:
+      tlsSkipVerify: true
+    isDefault: true
+    editable: true
