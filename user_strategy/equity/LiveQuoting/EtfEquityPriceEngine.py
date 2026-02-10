@@ -17,11 +17,11 @@ from sfm_data_provider.analytics.adjustments.fx_spot import FxSpotComponent
 from sfm_data_provider.analytics.adjustments.ter import TerComponent
 from sfm_data_provider.core.holidays.holiday_manager import HolidayManager
 
-from market_monitor.publishers.timeseries_publisher import TimeSeriesPublisher
-from datetime import datetime, time
-from typing import Dict, Set, Optional
-import logging
-
+from market_monitor.publishers.timeseries_publisher import (
+    TimeSeriesPublisher, RetentionPolicy, CompactionRule,
+    AggregationType, DuplicatePolicy,
+)
+from user_strategy.equity.utils.SQLUtils.storage import PriceDatabaseManager
 from sfm_data_provider.interface.bshdata import BshData
 
 from market_monitor.gui.implementations.GUI import GUI
@@ -37,6 +37,17 @@ from user_strategy.utils.bloomberg_subscription_utils.SubscriptionManager import
 logger = logging.getLogger(__name__)
 
 DB_ANAGRPHIC_PATH = r"V:\EquityETF\etf_equity_anagraphic_db.sqlite"
+
+_TS_RETENTION_POLICY = RetentionPolicy(
+    retention_ms=86_400_000,        # 1 giorno raw (1-min resolution)
+    duplicate_policy=DuplicatePolicy.LAST,
+    chunk_size=4096,
+    compaction_rules=[
+        CompactionRule(AggregationType.LAST, 600_000,    "_10min", 86_400_000),    # 10 min, 1 giorno
+        CompactionRule(AggregationType.LAST, 1_800_000,  "_30min", 172_800_000),   # 30 min, 2 giorni
+        CompactionRule(AggregationType.LAST, 3_600_000,  "_1h",    259_200_000),   # 1 ora,  3 giorni
+    ]
+)
 
 
 class EtfEquityPriceEngine(StrategyUI):
@@ -59,10 +70,10 @@ class EtfEquityPriceEngine(StrategyUI):
                                                                 fields=["REFERENCE_TICK_SIZE"],
                                                                 source="bloomberg")["REFERENCE_TICK_SIZE"].to_dict()
         try:
-            self.timeseries_publisher = TimeSeriesPublisher()
+            self.timeseries_publisher = TimeSeriesPublisher(default_policy=_TS_RETENTION_POLICY)
         except Exception as e:
             self.timeseries_publisher = None
-            self.logger.warning("redis TS not connected,", e)
+            logger.warning(f"TimeSeriesPublisher non disponibile, TimeSeries disabilitato: {e}")
 
         with sqlite3.connect(DB_ANAGRPHIC_PATH) as conn:
             self.isin_to_ticker = pd.read_sql(
@@ -105,7 +116,7 @@ class EtfEquityPriceEngine(StrategyUI):
         beta_cluster = self.input_params.beta_cluster
         beta_cluster_index = self.input_params.beta_cluster_index
 
-        #  Crea una nuova lista filtrata invece di modificare durante iterazione
+        # ✅ Crea una nuova lista filtrata invece di modificare durante iterazione
         self.etfs = list({
             *self.input_params.beta_cluster.index,
             *self.input_params.beta_cluster.columns,
@@ -129,12 +140,14 @@ class EtfEquityPriceEngine(StrategyUI):
 
         self.etfs = sorted(valid_etfs)
 
+
         for attr in ['beta_cluster', 'beta_cluster_index']:
             df = getattr(self.input_params, attr)
             # Filtra solo per le colonne/indici rimasti
             df_filtered = df.loc[df.index.intersection(self.etfs), df.columns.intersection(self.etfs)]
             # Rinormalizza dividendo per la nuova somma
             setattr(self.input_params, attr, df_filtered.div(df_filtered.sum(axis=1), axis=0).fillna(0))
+
 
         self.instruments = list({
             *self.etfs,
@@ -255,7 +268,7 @@ class EtfEquityPriceEngine(StrategyUI):
             name="theoretical_live_cluster_price")
 
         self.cluster_model_intraday = ClusterPricingModel(
-            beta=beta_cluster,
+            beta=beta_cluster_index,
             returns=self.corrected_return_intraday,
             forecast_aggregator=TrimmedMean(0.2),
             cluster_correction=self._calculate_cluster_correction(beta_cluster_index, 0),
@@ -270,11 +283,6 @@ class EtfEquityPriceEngine(StrategyUI):
 
         self.cluster_model.calculate_cluster_correction()
         self.index_cluster_model.calculate_cluster_correction()
-
-
-        print("="*80)
-        print("see price analytics in: http://localhost:3000/d/etf-price-monitor-v2/")
-        print("="*80)
 
         # Publish returns
         static_return = self.adjuster.get_clean_returns()
@@ -353,6 +361,45 @@ class EtfEquityPriceEngine(StrategyUI):
 
         return True
 
+    """
+    Versione ottimizzata della funzione update_HF con:
+    - Creazione TimeSeries centralizzata e una sola volta
+    - Calcoli di misalignment pre-elaborati
+    - Pipeline Redis per export message
+    - Batch publishing unificato
+    - Eliminazione ridondanze
+    """
+
+    from datetime import datetime, time
+    import numpy as np
+    from typing import Dict, Tuple, Set
+    import logging
+
+    logger = logging.getLogger(__name__)
+
+    """
+    Versione ottimizzata della funzione update_HF con:
+    - Creazione TimeSeries centralizzata e una sola volta
+    - Calcoli di misalignment pre-elaborati
+    - Uso corretto di RedisMessaging per export GUI
+    - Batch publishing unificato
+    - Eliminazione ridondanze
+
+    IMPORTANTE: Usa self.gui_redis.export_message() NON redis_client.pipeline()
+    per mantenere correttezza di:
+      - Normalizzazione dati
+      - Change detection
+      - Serializzazione JSON
+      - Size control (Excel RTD limit)
+      - Logging tracciato
+    """
+
+    from datetime import datetime, time
+    import numpy as np
+    from typing import Dict, Tuple, Set, Optional, Any
+    import logging
+
+    logger = logging.getLogger(__name__)
 
     def update_HF(self):
         """Aggiornamento ad alta frequenza con ottimizzazioni di performance."""
@@ -388,7 +435,7 @@ class EtfEquityPriceEngine(StrategyUI):
 
             # 4. STORAGE - Solo se è passato il tempo minimo
             current_time = datetime.now()
-            if (current_time - self.last_storage_time).total_seconds() > 2 and self.timeseries_publisher is not None:
+            if (current_time - self.last_storage_time).total_seconds() >= 60 and self.timeseries_publisher is not None:
                 self._publish_to_storage(normalized_prices, current_time)
 
     def _export_normalized_prices_to_gui(self, normalized_prices: Dict[str, any]):
@@ -405,6 +452,11 @@ class EtfEquityPriceEngine(StrategyUI):
             'market:mid': 'mid'
         }
 
+        # Pubblica attraverso RedisMessaging per mantenere:
+        # - Normalizzazione (già fatto, ma passa through)
+        # - Change detection
+        # - Serializzazione con metadata
+        # - Logging tracciato
         for channel, price_key in export_mapping.items():
             try:
                 self.gui_redis.export_message(
@@ -420,44 +472,25 @@ class EtfEquityPriceEngine(StrategyUI):
 
     def _publish_to_storage(self, normalized_prices: Dict[str, any], current_time: datetime):
         """
-        Pubblica dati su Redis TimeSeries con batch ottimizzato.
+        Pubblica mid, prezzi teorici e misalignment su Redis TimeSeries.
 
-        Ottimizzazioni:
-        - Crea TimeSeries una sola volta per ISINs trovati
-        - Calcola misalignment pre-batch
-        - Usa ts_batch() per pubblicare tutto insieme
+        Pubblica 7 campi per ogni ETF ISIN in un singolo batch:
+        mid, live_idx, live_clust, intraday, live_idx_mis, live_clust_mis, intraday_mis.
         """
-
-        # 1. RACCOLTA ISINS - Una sola volta
-        all_isins: Set[str] = set()
-        price_series = [
-            self.theoretical_live_index_cluster_price,
-            self.theoretical_live_cluster_price,
-            self.theoretical_intraday_prices,
-        ]
-
-        for series in price_series:
-            all_isins.update(series.keys())
-
-        if not all_isins:
-            logger.warning("No ISINs found for storage")
+        etf_isins: Set[str] = set(self.etfs)
+        if not etf_isins:
+            logger.warning("No ETF ISINs found for storage")
             return
 
-        # 2. CREAZIONE TIMESERIES - Una sola volta per ISIN
-        field_names = ['live_idx_mis', 'live_clust_mis', 'intraday_mis']
-        self._ensure_timeseries_exist(all_isins, field_names)
+        all_field_names = ['mid', 'live_idx', 'live_clust', 'intraday',
+                           'live_idx_mis', 'live_clust_mis', 'intraday_mis']
+        self._ensure_timeseries_exist(etf_isins, all_field_names)
 
-        # 3. PREPARAZIONE MISALIGNMENTS - Pre-elaborati
-        misalignments = self._calculate_misalignments(
-            normalized_prices,
-            all_isins
-        )
-
-        # 4. BATCH PUBLISHING - Una sola volta
-        self._batch_publish_misalignments(misalignments)
+        all_data = self._build_publish_data(normalized_prices, etf_isins)
+        self._batch_publish_prices(all_data, current_time)
 
         self.last_storage_time = current_time
-        logger.info(f"Storage published {len(misalignments)} entries")
+        logger.info(f"Storage published {len(all_data)} entries for {len(etf_isins)} ISINs")
 
     def _ensure_timeseries_exist(self, isins: Set[str], field_names: list):
         """
@@ -481,6 +514,55 @@ class EtfEquityPriceEngine(StrategyUI):
                        - initial_count)
         if new_created > 0:
             logger.debug(f"Created {new_created} new TimeSeries")
+
+    def _build_publish_data(
+            self,
+            normalized_prices: Dict[str, any],
+            etf_isins: Set[str]
+    ) -> list:
+        """
+        Raccoglie mid, prezzi teorici e misalignment per tutti gli ETF ISINs.
+
+        Usa operazioni pandas vettorializzate per performance.
+        Ritorna lista di tuple (isin, field_name, value) arrotondati a 5 decimali.
+        """
+        mid = normalized_prices['mid'].reindex(etf_isins).replace(0, np.nan)
+
+        price_fields = {
+            'mid':        mid,
+            'live_idx':   normalized_prices['live_idx'].reindex(etf_isins),
+            'live_clust': normalized_prices['live_clust'].reindex(etf_isins),
+            'intraday':   normalized_prices['intraday'].reindex(etf_isins),
+        }
+        mis_fields = {
+            'live_idx_mis':   (price_fields['live_idx']   / mid - 1),
+            'live_clust_mis': (price_fields['live_clust'] / mid - 1),
+            'intraday_mis':   (price_fields['intraday']   / mid - 1),
+        }
+
+        all_data = []
+        for field_name, series in {**price_fields, **mis_fields}.items():
+            valid = series.round(5).dropna()
+            for isin, value in valid.items():
+                all_data.append((isin, field_name, float(value)))
+        return all_data
+
+    def _batch_publish_prices(self, all_data: list, current_time: datetime):
+        """
+        Pubblica mid, prezzi teorici e misalignment in un singolo batch Redis.
+
+        Non solleva eccezioni: un errore di pubblicazione non deve interrompere la strategia.
+        """
+        if not all_data:
+            logger.warning("No data to publish to TimeSeries")
+            return
+        try:
+            with self.timeseries_publisher.ts_batch() as batch:
+                for isin, field_name, value in all_data:
+                    batch.add(isin, field_name, value, timestamp=current_time)
+            logger.debug(f"Batch published {len(all_data)} values")
+        except Exception as e:
+            logger.error(f"Batch publishing failed, TimeSeries skipped: {e}", exc_info=True)
 
     def _calculate_misalignments(
             self,
