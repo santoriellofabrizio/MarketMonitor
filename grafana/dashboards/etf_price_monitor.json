@@ -132,6 +132,22 @@
           { "text": "Intraday Mis %",   "value": "intraday_mis",  "selected": false }
         ],
         "current": { "text": "Cluster Mis %", "value": "live_clust_mis" }
+      },
+      {
+        "name": "resolution",
+        "type": "custom",
+        "label": "Risoluzione",
+        "query": "Live (1 min) : ,10 min : _10min,30 min : _30min,1 ora : _1h",
+        "multi": false,
+        "includeAll": false,
+        "hide": 0,
+        "options": [
+          { "text": "Live (1 min)", "value": "",      "selected": true  },
+          { "text": "10 min",       "value": "_10min","selected": false },
+          { "text": "30 min",       "value": "_30min","selected": false },
+          { "text": "1 ora",        "value": "_1h",   "selected": false }
+        ],
+        "current": { "text": "Live (1 min)", "value": "" }
       }
     ]
   },
@@ -373,28 +389,28 @@
           "refId": "A",
           "datasource": { "type": "redis-datasource", "uid": "${DS_REDIS}" },
           "command": "ts.range",
-          "keyName": "ts:${isin}:mid",
+          "keyName": "ts:${isin}:mid${resolution}",
           "legend": "Mid"
         },
         {
           "refId": "B",
           "datasource": { "type": "redis-datasource", "uid": "${DS_REDIS}" },
           "command": "ts.range",
-          "keyName": "ts:${isin}:live_idx",
+          "keyName": "ts:${isin}:live_idx${resolution}",
           "legend": "Index Cluster"
         },
         {
           "refId": "C",
           "datasource": { "type": "redis-datasource", "uid": "${DS_REDIS}" },
           "command": "ts.range",
-          "keyName": "ts:${isin}:live_clust",
+          "keyName": "ts:${isin}:live_clust${resolution}",
           "legend": "Cluster"
         },
         {
           "refId": "D",
           "datasource": { "type": "redis-datasource", "uid": "${DS_REDIS}" },
           "command": "ts.range",
-          "keyName": "ts:${isin}:intraday",
+          "keyName": "ts:${isin}:intraday${resolution}",
           "legend": "Intraday"
         }
       ]
@@ -469,21 +485,21 @@
           "refId": "A",
           "datasource": { "type": "redis-datasource", "uid": "${DS_REDIS}" },
           "command": "ts.range",
-          "keyName": "ts:${isin}:live_idx_mis",
+          "keyName": "ts:${isin}:live_idx_mis${resolution}",
           "legend": "Index Mis"
         },
         {
           "refId": "B",
           "datasource": { "type": "redis-datasource", "uid": "${DS_REDIS}" },
           "command": "ts.range",
-          "keyName": "ts:${isin}:live_clust_mis",
+          "keyName": "ts:${isin}:live_clust_mis${resolution}",
           "legend": "Cluster Mis"
         },
         {
           "refId": "C",
           "datasource": { "type": "redis-datasource", "uid": "${DS_REDIS}" },
           "command": "ts.range",
-          "keyName": "ts:${isin}:intraday_mis",
+          "keyName": "ts:${isin}:intraday_mis${resolution}",
           "legend": "Intraday Mis"
         }
       ]
@@ -649,7 +665,7 @@
           "refId": "A",
           "datasource": { "type": "redis-datasource", "uid": "${DS_REDIS}" },
           "command": "ts.mrange",
-          "filter": "identifier=(${driver:csv}) field=${field}",
+          "filter": "identifier=(${driver:csv}) field=${field}${resolution}",
           "legend": "${ticker}"
         }
       ]
