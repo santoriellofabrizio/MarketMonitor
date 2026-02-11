@@ -428,3 +428,258 @@ class RedisPubSubThread(BaseDashboardThread):
         self.running = False
         self._cleanup_redis()
         self.wait(2000)
+
+
+# ============================================================================
+# CLASSE 4: RabbitMQ Pub/Sub Thread
+# ============================================================================
+class RabbitPubSubThread(BaseDashboardThread):
+    """
+    Worker thread per RabbitMQ mode.
+    Sottoscrive a un exchange fanout e riceve messaggi in real-time.
+
+    Equivalente di RedisPubSubThread ma per RabbitMQ:
+    - Usa exchange fanout (broadcast a tutti i consumer registrati).
+    - Crea una coda esclusiva temporanea per ogni istanza dashboard.
+    - Stesso meccanismo di batching di RedisPubSubThread.
+    - Stesso formato messaggi JSON (parse_redis_message riutilizzato).
+
+    Configurazione attesa (rabbit_config dict):
+        host         : str  - host RabbitMQ (default 'rabbitmq.af.tst')
+        port         : int  - porta (default 5672)
+        user         : str  - utente (default 'mqclient')
+        password     : str  - password (default 'Mqclient-00')
+        virtual_host : str  - vhost (default '/')
+        exchange     : str  - nome exchange da sottoscrivere (default 'trades_df')
+    """
+
+    def __init__(self, rabbit_config: Dict):
+        super().__init__()
+        self.batch_queue = deque()
+        self.last_emit_time = 0
+        self.batch_interval = 0.5   # 500ms
+        self.batch_max_size = None
+
+        self.rabbit_config = rabbit_config
+        self._connection = None
+        self._channel = None
+        self._queue_name = None
+
+    def run(self):
+        """Main loop - RabbitMQ consumer con batching."""
+        try:
+            import pika
+            from pika.exceptions import AMQPConnectionError
+        except ImportError:
+            self.error_occurred.emit(
+                "pika non installato. Eseguire: pip install pika"
+            )
+            return
+
+        self.running = True
+        print("[RabbitPubSub] Thread started")
+
+        try:
+            credentials = pika.PlainCredentials(
+                username=self.rabbit_config.get('user', 'mqclient'),
+                password=self.rabbit_config.get('password', 'Mqclient-00'),
+            )
+            params = pika.ConnectionParameters(
+                host=self.rabbit_config.get('host', 'rabbitmq.af.tst'),
+                port=self.rabbit_config.get('port', 5672),
+                virtual_host=self.rabbit_config.get('virtual_host', '/'),
+                credentials=credentials,
+                heartbeat=60,
+                blocked_connection_timeout=30,
+            )
+
+            self._connection = pika.BlockingConnection(params)
+            self._channel = self._connection.channel()
+
+            exchange = self.rabbit_config.get('exchange', 'trades_df')
+
+            # Dichiara exchange fanout (idempotente)
+            self._channel.exchange_declare(
+                exchange=exchange,
+                exchange_type='fanout',
+                durable=True,
+            )
+
+            # Coda esclusiva temporanea (auto-delete alla disconnessione)
+            result = self._channel.queue_declare(
+                queue='', exclusive=True, auto_delete=True
+            )
+            self._queue_name = result.method.queue
+
+            # Bind coda -> exchange
+            self._channel.queue_bind(
+                exchange=exchange, queue=self._queue_name
+            )
+
+            print(
+                f"[RabbitPubSub] Subscribed to exchange: {exchange}, "
+                f"queue: {self._queue_name}"
+            )
+
+            def _on_message(ch, method, properties, body):
+                """Callback invocata per ogni messaggio ricevuto."""
+                if not self.running:
+                    ch.stop_consuming()
+                    return
+                try:
+                    json_str = body.decode('utf-8')
+                    data, metadata = parse_redis_message(json_str)
+                    normalized_msg = {
+                        'data': data,
+                        'metadata': metadata,
+                        'type': metadata.get('type', 'DATA'),
+                    }
+                    self._enqueue_message(normalized_msg)
+                except json.JSONDecodeError as e:
+                    self.error_occurred.emit(
+                        f"Invalid JSON da RabbitMQ: {str(e)}"
+                    )
+                except Exception as e:
+                    self.error_occurred.emit(
+                        f"Errore processing messaggio RabbitMQ: {str(e)}"
+                    )
+
+                # Flush batch se l'intervallo è scaduto
+                now = time.time()
+                if now - self.last_emit_time >= self.batch_interval:
+                    self._flush_batch()
+
+            self._channel.basic_consume(
+                queue=self._queue_name,
+                on_message_callback=_on_message,
+                auto_ack=True,
+            )
+
+            # Blocking loop - gestisce heartbeat e dispatch messaggi
+            self._channel.start_consuming()
+
+        except Exception as e:
+            self.error_occurred.emit(f"RabbitMQ error: {str(e)}")
+
+        finally:
+            self._flush_batch()
+            self._cleanup_rabbit()
+
+        print("[RabbitPubSub] Thread stopped")
+
+    # ------------------------------------------------------------------
+    # Batching (speculare a RedisPubSubThread)
+    # ------------------------------------------------------------------
+
+    def _enqueue_message(self, msg):
+        """Accoda il messaggio e invia batch se necessario."""
+        now = time.time()
+        self.batch_queue.append(msg)
+
+        if self.batch_max_size and len(self.batch_queue) >= self.batch_max_size:
+            self._flush_batch()
+            return
+
+        if now - self.last_emit_time >= self.batch_interval:
+            self._flush_batch()
+
+    def _flush_batch(self):
+        """Invia alla GUI un batch di messaggi in una sola soluzione."""
+        if not self.batch_queue:
+            return
+
+        batch = list(self.batch_queue)
+        self.batch_queue.clear()
+        self.last_emit_time = time.time()
+
+        try:
+            self._process_message(batch)
+        except Exception as e:
+            self.error_occurred.emit(f"Batch processing error: {str(e)}")
+
+    # ------------------------------------------------------------------
+    # Processing (identico a RedisPubSubThread)
+    # ------------------------------------------------------------------
+
+    def _process_single_message(self, message: dict):
+        """Processa singolo messaggio normalizzato."""
+        msg_type = message.get('type', 'DATA')
+        data = message.get('data')
+        metadata = message.get('metadata', {})
+
+        if msg_type in ('data', 'DATA'):
+            try:
+                df = self._to_dataframe(data)
+                self.data_updated.emit(df)
+            except Exception as e:
+                self.error_occurred.emit(f"Data conversion error: {str(e)}")
+
+        elif msg_type in ('status', 'flow_detected', 'command', 'config', 'error'):
+            status_data = {'type': msg_type, 'data': data}
+            if metadata:
+                status_data['metadata'] = metadata
+            self.status_updated.emit(status_data)
+
+    def _process_message(self, msg):
+        """Gestisce lista o singolo messaggio normalizzato."""
+        if isinstance(msg, list):
+            data_frames = []
+            for single in msg:
+                msg_type = single.get("type", "DATA")
+                if msg_type in ("data", "DATA"):
+                    data = single.get("data")
+                    if data is not None:
+                        try:
+                            df = self._to_dataframe(data)
+                            data_frames.append(df)
+                        except Exception as e:
+                            self.error_occurred.emit(
+                                f"Data conversion error: {str(e)}"
+                            )
+                else:
+                    self._process_single_message(single)
+
+            if data_frames:
+                try:
+                    df_concat = safe_concat(data_frames, ignore_index=True)
+                    self.data_updated.emit(df_concat)
+                except Exception as e:
+                    self.error_occurred.emit(
+                        f"Batch dataframe concat error: {str(e)}"
+                    )
+            return
+
+        self._process_single_message(msg)
+
+    # ------------------------------------------------------------------
+    # Cleanup
+    # ------------------------------------------------------------------
+
+    def _cleanup_rabbit(self):
+        """Cleanup connessioni RabbitMQ."""
+        if self._channel:
+            try:
+                if self._channel.is_open:
+                    self._channel.close()
+            except Exception:
+                pass
+
+        if self._connection:
+            try:
+                if self._connection.is_open:
+                    self._connection.close()
+            except Exception:
+                pass
+
+    def stop(self):
+        """Stop del thread e cleanup."""
+        self.running = False
+        # Interrompe il blocking start_consuming() in modo thread-safe
+        if self._connection and self._connection.is_open:
+            try:
+                self._connection.add_callback_threadsafe(
+                    self._channel.stop_consuming
+                )
+            except Exception:
+                pass
+        self.wait(3000)

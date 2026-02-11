@@ -4,9 +4,10 @@ Dashboard completa per trades (PyQt5Dashboard) - CON WORKER THREAD
 Dashboard PyQt5 per la visualizzazione real-time dei trade con supporto
 a worker thread in background.
 
-Supporta due modalità di alimentazione dati:
+Supporta tre modalità di alimentazione dati:
 - queue  : polling da Queue interna allo stesso processo Strategy
-- redis  : sottoscrizione RedisPublisher Pub/Sub da processo separato
+- redis  : sottoscrizione Redis Pub/Sub da processo separato
+- rabbit : sottoscrizione RabbitMQ fanout exchange da processo separato
 
 Caratteristiche:
 - Tabella Raw Trades con deduplicazione e filtri
@@ -40,7 +41,8 @@ from market_monitor.gui.implementations.PyQt5Dashboard.metrics_definition import
 from market_monitor.gui.threaded_GUI.QueueDataSource import QueueDataSource
 from market_monitor.gui.implementations.PyQt5Dashboard.worker_thread import (
     QueuePollingThread,
-    RedisPubSubThread
+    RedisPubSubThread,
+    RabbitPubSubThread,
 )
 
 
@@ -65,6 +67,7 @@ class TradeDashboard(BasePyQt5Dashboard, TradeDashboardExtensions):
             datasource: Optional[QueueDataSource] = None,
             mode: str = "redis",
             redis_config: Optional[Dict] = None,
+            rabbit_config: Optional[Dict] = None,
             columns: Optional[list] = None,
             logger: Optional[logging.Logger] = None,
             config: Optional[Dict] = None,
@@ -76,6 +79,7 @@ class TradeDashboard(BasePyQt5Dashboard, TradeDashboardExtensions):
         self.config = config or {}
         self.mode = mode
         self.redis_config = redis_config or {}
+        self.rabbit_config = rabbit_config or {}
         self.columns = columns
 
         self.all_trades = pd.DataFrame()
@@ -164,6 +168,9 @@ class TradeDashboard(BasePyQt5Dashboard, TradeDashboardExtensions):
 
         elif self.mode == 'redis':
             self.worker_thread = RedisPubSubThread(self.redis_config)
+
+        elif self.mode == 'rabbit':
+            self.worker_thread = RabbitPubSubThread(self.rabbit_config)
 
         else:
             raise ValueError(f"Unknown mode: {self.mode}")

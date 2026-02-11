@@ -7,6 +7,7 @@ import pandas as pd
 from sfm_data_provider.interface.bshdata import BshData
 
 from market_monitor.publishers.redis_publisher import RedisMessaging
+from market_monitor.publishers.rabbit_publisher import RabbitMessaging
 from market_monitor.strategy.common.trade_manager.trade_manager import TradeManager
 from market_monitor.strategy.strategy_ui.StrategyUI import StrategyUI
 from user_strategy.equity.utils.SQLUtils.storage import PriceDatabaseManager
@@ -51,7 +52,14 @@ class EtfEquityLiveAnalysis(StrategyUI):
         self.theoretical_price: pd.Series = pd.Series(index=self.instruments, name="TH_CLUSTER_PRICE")
         self.mid = pd.Series(index=self.all_isin_ETFP, name="mid")
 
-        self.trade_dashboard_messaging = RedisMessaging()
+        rabbit_cfg = kwargs.get('rabbit_data_distributor', {})
+        if rabbit_cfg.get('activate', False):
+            rabbit_params = rabbit_cfg.get('rabbit_params', {})
+            self.trade_dashboard_messaging = RabbitMessaging(**rabbit_params)
+        else:
+            redis_cfg = kwargs.get('redis_data_distributor', {})
+            redis_params = redis_cfg.get('redis_params', {})
+            self.trade_dashboard_messaging = RedisMessaging(**redis_params)
         self.trade_manager = TradeManager(self.book_storage,
                                           self.theoretical_price,
                                           **kwargs["trade_manager"])

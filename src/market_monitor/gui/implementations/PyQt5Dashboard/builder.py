@@ -38,6 +38,7 @@ def build_dashboard(config: str | None = None) -> TradeDashboard:
         columns=dashboard_cfg.get("columns"),
         mode=dashboard_cfg.get("mode", "redis"),
         redis_config=dashboard_cfg.get("redis", {}),
+        rabbit_config=dashboard_cfg.get("rabbit", {}),
         logger=logger,
         metrics_config=dashboard_cfg.get("metrics", {}),
     )
