@@ -25,6 +25,8 @@ class EtfEquityLiveAnalysis(StrategyUI):
         self.min_ctv_trades_excel = kwargs.get("min_ctv_trades_excel", 20000)
         self.price_source = kwargs.get("price_source", "kafka")
 
+        self.rabbit_publisher: RabbitMessaging = RabbitMessaging()
+
         self.API = BshData(config_path=r"C:\AFMachineLearning\Libraries\MarketMonitor\etc\config\bshdata_config.yaml")
 
         self.all_isin_ETFP = self.API.general.get(fields=["etp_isins"],
@@ -163,7 +165,7 @@ class EtfEquityLiveAnalysis(StrategyUI):
         self.flow_detector.process_trades(processed_new)
         if self.flow_detector.has_new_flows():
             for flow in self.flow_detector.get_new_flows():  # ← Una volta sola!
-                self.trade_dashboard_messaging.export_flow_detected(channel="trades_df", flow=flow)
+                self.trade_dashboard_messaging.export_flow_detected(channel="trades_rabbit", flow=flow)
 
         # Invia trades: nuovi parziali + parziali precedenti ora elaborati
         trades_to_publish = self.trade_manager.get_trades_to_publish(processed_new)
@@ -187,6 +189,11 @@ class EtfEquityLiveAnalysis(StrategyUI):
 
         start = time()
         self.trade_dashboard_messaging.export_message(channel="trades_df",
+                                                      value=new_trades,
+                                                      date_format='iso',
+                                                      orient="records")
+
+        self.rabbit_publisher.export_message(channel="trades_rabbit",
                                                       value=new_trades,
                                                       date_format='iso',
                                                       orient="records")

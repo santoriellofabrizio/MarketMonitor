@@ -38,20 +38,12 @@ ESEMPIO:
 import logging
 import threading
 import uuid
-from datetime import datetime
-from enum import Enum
-from typing import Optional, Dict, Any, List, Set, Tuple, Deque
-from collections import defaultdict, deque
-from queue import Queue
-import pandas as pd
-import time
+from typing import Optional, Dict, Any, List, Set
 
-from market_monitor.input_threads.trade import TradeType
 from market_monitor.live_data_hub.real_time_data_hub import RTData
 from market_monitor.live_data_hub.live_subscription import KafkaSubscription
 
 logger = logging.getLogger(__name__)
-TradeKey = Tuple[str, str, int, float, float]
 
 
 class KafkaStreamingThread(threading.Thread):
@@ -75,6 +67,7 @@ class KafkaStreamingThread(threading.Thread):
         consumer_group: Group ID per il consumer (default: UUID random)
     """
 
+    # Default configuration (cluster test Sella)
     DEFAULT_BOOTSTRAP_SERVERS = "aftstserver51.af.tst:9092,aftstserver52.af.tst:9092,aftstserver53.af.tst:9092"
     DEFAULT_SCHEMA_REGISTRY = "http://aftstserver51.af.tst:8081,http://aftstserver52.af.tst:8081,http://aftstserver53.af.tst:8081"
 
@@ -84,7 +77,6 @@ class KafkaStreamingThread(threading.Thread):
                  schema_registry_url: Optional[str] = None,
                  start_mode: str = "latest",
                  consumer_group: Optional[str] = None,
-                 q_trade: Queue = Queue(),
                  **kwargs):
 
         super().__init__(daemon=True)
@@ -112,13 +104,6 @@ class KafkaStreamingThread(threading.Thread):
         
         # FAST LOOKUP: isin -> (subscription_id, KafkaSubscription) per O(1) match
         self._isin_to_sub: Dict[str, KafkaSubscription] = {}
-
-        # queue
-        self.queue_trade: Queue = q_trade
-        self._buffer_sec: float = 1  # Wait this seconds before insert a market trade
-        self._pending_publicdeals: Dict[TradeKey, Deque[pd.DataFrame]] = defaultdict(deque)
-        self._seen_own_trades: Set[TradeKey] = set()
-        self._pending_trade_timestamp_received: Dict[TradeKey, float] = {}
 
     def _load_subscriptions(self):
         """Carica le sottoscrizioni Kafka dal SubscriptionService."""
@@ -201,7 +186,6 @@ class KafkaStreamingThread(threading.Thread):
             while not stop_event.is_set():
                 # Poll for messages (0.1s = più reattivo)
                 msg = consumer.poll(timeout=0.1)
-                self._flush_public_deal_expired()
 
                 if msg is None:
                     # Check for new subscriptions periodically
@@ -240,73 +224,6 @@ class KafkaStreamingThread(threading.Thread):
                 self.consumer.close()
             self.running = False
             logger.info("KafkaStreamingThread stopped")
-
-    def _flush_public_deal_expired(self):
-        """
-        Check for every public deal already received:
-        1. First check all expired trade key by iterating self._pending_trade_timestamp_received, which is a dictionary
-           with TradeKey as key and timestamp as value (note that there could be more than one trade with the same
-           TradeKey).
-        2. Check all the expired keys, pop the TradeKey from self._pending_publicdeals, which is a dictionary with
-           TradeKey as key and a deque of dictionary (it could be more than one trade for TradeKey).
-        3. Pop all the expired keys in the two dictionaries.
-        4. Push all the trade in the popped deque as MarketTrade.
-        """
-        now = time.time()
-        expired_keys = [
-            key for key, ts in self._pending_trade_timestamp_received.items()
-            if now - ts > self._buffer_sec
-        ]
-        for key in expired_keys:
-            queue = self._pending_publicdeals.pop(key, None)
-            self._pending_trade_timestamp_received.pop(key, None)
-            if not queue:
-                continue
-            for data in queue:
-                self.queue_trade.put((TradeType.MARKET, data))
-
-    def _handle_public_vs_own_deal(self, data: Dict[str, Any]) -> bool:
-        """
-        Method to handle both market and own_deal.
-        Whenever we received a trade data:
-        1. Create a TradeKey (it is not unique, because we can have multiple trades with same timestamp, price, quantity).
-        2. If the trade is a bsh trade:
-           2.1. push in the queue as own trade and add the trade key in self._seen_own_trades;
-           2.2. check if a trade with the same key is present in self._pending_publicdeals;
-           2.3. if is present, pop only one trade of the queue in self._pending_publicdeals[TradeKey];
-        3. If the trade is a public deal:
-           3.1. if there is an identical trade in self._seen_own_trades, discard the public deal and also discard
-                the own trade saved in self._seen_own_trades (it's been already pushed so no worries);
-           3.2. if there isn't an identical trade in self._seen_own_trades, put the public deal in the buffer
-                self._pending_publicdeals[TradeKey];
-           3.3. if it's the first trade with this TradeKey, save the timestamp received in self._pending_trade_timestamp_received[tradeKey].
-        """
-        key: TradeKey = (
-            str(data["isin"]),
-            str(data["market"]),
-            int(data["last_update_int"]),
-            data["price"],
-            data["quantity"]
-        )
-        is_own = data.get("own_trade", 0) != 0
-        data = pd.DataFrame([data])[['ticker', 'isin', 'currency', 'quantity', 'price', 'last_update', 'exchange', 'market', 'description',"own_trade"]]
-        if is_own:
-            self.queue_trade.put((TradeType.OWN, data))
-            self._seen_own_trades.add(key)
-            if key in self._pending_publicdeals and self._pending_publicdeals[key]:
-                self._pending_publicdeals[key].popleft()
-                if not self._pending_publicdeals[key]:
-                    self._pending_publicdeals.pop(key, None)
-                    self._pending_trade_timestamp_received.pop(key, None)
-        else:
-            if key in self._seen_own_trades:
-                self._seen_own_trades.discard(key)
-                return False
-
-            self._pending_publicdeals[key].append(data)
-            if key not in self._pending_trade_timestamp_received:
-                self._pending_trade_timestamp_received[key] = time.time()
-        return True
 
     def _check_new_subscriptions(self):
         """Check for new subscriptions and update consumer if needed."""
@@ -386,9 +303,6 @@ class KafkaStreamingThread(threading.Thread):
                 data = self._extract_default_market_fields(value)
 
             if data:
-                continue_iteration = self._handle_public_vs_own_deal(data)
-                if not continue_iteration:
-                    return
                 real_time_data.update(ticker, data, store="market")
 
         elif store == "state":
@@ -400,8 +314,7 @@ class KafkaStreamingThread(threading.Thread):
         elif store == "blob":
             real_time_data._blob_store.store(ticker, value)
 
-    @staticmethod
-    def _extract_default_market_fields(value: Dict[str, Any]) -> Dict[str, Any]:
+    def _extract_default_market_fields(self, value: Dict[str, Any]) -> Dict[str, float]:
         """
         Estrazione di default per formati comuni quando non c'è fields_mapping.
 
@@ -412,62 +325,49 @@ class KafkaStreamingThread(threading.Thread):
         """
         data = {}
 
-        if 'instrument' in value:
-            if 'symbol' in value['instrument']:
-                try:
-                    data['ticker'] = value['instrument']['symbol']
-                except (ValueError, TypeError):
-                    pass
-            if 'isin' in value['instrument']:
-                try:
-                    data['isin'] = value['instrument']['isin']
-                except (ValueError, TypeError):
-                    pass
-            if 'market' in value['instrument']:
-                try:
-                    data['market'] = value['instrument']['market']
-                    data['exchange'] = value['instrument']['market']
-                except (ValueError, TypeError):
-                    pass
-            if 'currency' in value['instrument']:
-                try:
-                    data['currency'] = value['instrument']['currency']
-                except (ValueError, TypeError):
-                    pass
-            data['description'] = None
+        # BookBest format (DUMA)
+        if 'bidBestLevel' in value and value['bidBestLevel']:
+            bid_level = value['bidBestLevel']
+            if 'price' in bid_level:
+                data['BID'] = float(bid_level['price'])
+            if 'quantity' in bid_level:
+                data['BID_SIZE'] = float(bid_level['quantity'])
 
+        if 'askBestLevel' in value and value['askBestLevel']:
+            ask_level = value['askBestLevel']
+            if 'price' in ask_level:
+                data['ASK'] = float(ask_level['price'])
+            if 'quantity' in ask_level:
+                data['ASK_SIZE'] = float(ask_level['quantity'])
+
+        # PublicDeal format
         if 'price' in value:
             try:
-                data['price'] = float(value['price'])
+                data['LAST'] = float(value['price'])
             except (ValueError, TypeError):
                 pass
         if 'quantity' in value:
             try:
-                data['quantity'] = float(value['quantity'])
+                data['SIZE'] = float(value['quantity'])
             except (ValueError, TypeError):
                 pass
 
-        if 'eventTimestampUTC' in value:
+        # Generic quote format
+        if 'bid' in value:
             try:
-                data['last_update_int'] = (ts := value['eventTimestampUTC'])
-                data['last_update'] = datetime.fromtimestamp(ts / 1_000_000_000)
+                data['BID'] = float(value['bid'])
             except (ValueError, TypeError):
                 pass
-
-        if 'side' in value:
+        if 'ask' in value:
             try:
-                data['own_trade'] = -1 if value["side"] == "ASK" else +1
+                data['ASK'] = float(value['ask'])
             except (ValueError, TypeError):
                 pass
-        else:
-            data['own_trade'] = 0
 
         return data
 
     def stop(self):
-        """
-        Stop the thread.
-        """
+        """Ferma il thread in modo pulito."""
         self.stop_event.set()
         logger.info("KafkaStreamingThread stop requested")
 
@@ -482,30 +382,37 @@ if __name__ == "__main__":
 
     logging.basicConfig(level=logging.INFO)
 
+    # Setup
     lock = Lock()
-    rtdata = RTData(locker=lock, fields=["LAST", "SIZE", "TIMESTAMP"])
+    rtdata = RTData(locker=lock, fields=["BID", "ASK", "BID_SIZE", "ASK_SIZE"])
 
-    isin_to_subscribe = [ "IE00BKM4GZ66", "IE00B4L5YC18", "IE00BP3QZ601", "LU0950668870", "IE00B0M63516",
-                          "LU1900068914", "LU0659579733", "LU1781541252", "IE00B469F816", "LU0779800910",
-                          "IE00BP3QZ825", "IE00B4L5YX21", "IE00B5L8K969", "IE00B02KXH56", "IE00BZCQB185",
-                          "FR0010429068", "LU0514695690", "IE00B4K48X80", "LU0950674175", "LU0480132876",
-                          "IE00099GAJC6", "LU0846194776", "IE00B6R52259", "LU0147308422", "LU1900066207",
-                          "LU1900067940", "DE000A0Q4R85", "IE000Y77LGG9", "FR0014003IY1", "IE00BMY76136",
-                          "LU0274209740", "FR0010245514", "LU1681043599", "IE00BHZPJ783", "LU2573967036",
-                          "IE00BCHWNQ94", "IE00B0M63177", "FR0010361683", "IE00B44Z5B48", "IE00BHZRR147",
-                          "LU2376679564", "IE00BP3QZB59", "FR0010315770", "IE00BFNM3J75", "LU1681044480",
-                          "IE00B60SX394", "IE00BKX55T58", "IE00BTJRMP35", "LU0274209237", "IE000UQND7H4",
-                          "IE00B945VV12", "LU2573966905", "IE00BZ02LR44"]
-    thread_to_subscribe = ["COALESCENT_DUMA.ETFP.PublicDeal", "COALESCENT_DUMA.ETFP.Trade"]
+    # Subscribe a ETF via subscription service
     svc = rtdata.get_subscription_manager()
-    for isin in isin_to_subscribe:
-        for topic in thread_to_subscribe:
-            svc.subscribe_kafka(
-                id=f"{isin}_{topic.split('.')[-1]}",
-                topic=topic,
-                symbol_filter=isin,
-                symbol_field="instrument.isin",
-            )
+
+    # IWDA - iShares Core MSCI World
+    svc.subscribe_kafka(
+        id="IWDA",
+        topic="COALESCENT_DUMA.ETFP.BookBest",
+        symbol_filter="IE00B4L5Y983",
+        symbol_field="instrument.isin",
+        store="market",
+        fields_mapping={
+            "BID": "bidBestLevel.price",
+            "ASK": "askBestLevel.price",
+            "BID_SIZE": "bidBestLevel.quantity",
+            "ASK_SIZE": "askBestLevel.quantity"
+        }
+    )
+
+    # CSPX - iShares Core S&P 500
+    svc.subscribe_kafka(
+        id="CSPX",
+        topic="COALESCENT_DUMA.ETFP.BookBest",
+        symbol_filter="IE00B5BMR087",
+        symbol_field="instrument.isin",
+        store="market"
+        # No fields_mapping -> uses default extraction
+    )
 
     # Start thread
     kafka_thread = KafkaStreamingThread(rtdata)
@@ -515,11 +422,10 @@ if __name__ == "__main__":
     print("Monitoring ETF prices (Ctrl+C to stop)...")
     try:
         while True:
-            time.sleep(10)
-            data_retrieved = rtdata.get_data_field()
-            if not data_retrieved.empty:
-                print(f"\n=== Market Data ===")
-                print(data_retrieved)
+            time.sleep(2)
+            data = rtdata.get_data_field()
+            print(f"\n=== Market Data ===")
+            print(data)
     except KeyboardInterrupt:
         kafka_thread.stop()
         kafka_thread.join(timeout=5)

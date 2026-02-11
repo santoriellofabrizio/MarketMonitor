@@ -18,7 +18,7 @@ DEFAULT_RABBIT_HOST = 'rabbitmq.af.tst'
 DEFAULT_RABBIT_PORT = 5672
 DEFAULT_RABBIT_USER = 'mqclient'
 DEFAULT_RABBIT_PASSWORD = 'Mqclient-00'
-DEFAULT_RABBIT_VHOST = '/'
+DEFAULT_RABBIT_VHOST = 'TestCredEQEtf'
 
 
 # ============================================================================

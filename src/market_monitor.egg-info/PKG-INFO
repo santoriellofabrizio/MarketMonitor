@@ -16,14 +16,15 @@ Requires-Dist: httpx>=0.28.1
 Requires-Dist: joblib>=1.3.0
 Requires-Dist: matplotlib>=3.9.0
 Requires-Dist: openpyxl>=3.1.2
+Requires-Dist: pika>=1.3.2
 Requires-Dist: pyarrow>=14.0.0
 Requires-Dist: pyqt5>=5.15.11
 Requires-Dist: questionary>=2.0.0
 Requires-Dist: redis>=6.2.0
 Requires-Dist: ruamel-yaml>=0.18.6
 Requires-Dist: scipy>=1.16.0
-Requires-Dist: sfm-data-provider>=1.2.76738
-Requires-Dist: sfm-datalibrary>=1.0.76723
+Requires-Dist: sfm-data-provider>=1.2.76735
+Requires-Dist: sfm-timescaledb-queries>=1.0.72117
 Requires-Dist: tqdm>=4.64.0
 Requires-Dist: watchdog>=2.2.1
 Requires-Dist: xlwings>=0.31.4
@@ -101,9 +102,9 @@ Ogni callback è chiamata dal runtime asincrono di `StrategyUIAsync`, che raccog
 ### Esempio minimo di strategia
 
 ```python
-from market_monitor.strategy.StrategyUI.StrategyUI import StrategyUI
-from user_strategy.utils.trade_manager.book_memory import BookStorage
-from user_strategy.utils.trade_manager.trade_manager import TradeManager
+from market_monitor.strategy.strategy_ui.StrategyUI import StrategyUI
+from market_monitor.strategy.common.trade_manager.book_memory import BookStorage
+from market_monitor.strategy.common.trade_manager import TradeManager
 
 
 class MyStrategy(StrategyUI):
@@ -137,3 +138,59 @@ class MyStrategy(StrategyUI):
 ```
 
 Con una configurazione YAML che punta a `MyStrategy`, `run_monitor` inizializzerà il book, avvierà i thread di input dati, raccoglierà i trade e manterrà la persistenza tramite `TradeManager`.
+
+---
+
+## Deployment
+
+MarketMonitor offre diverse modalità di deployment per adattarsi a scenari diversi.
+
+### Deployment Ibrido (Consigliato per distribuzione)
+
+Crea un **eseguibile standalone** con strategie modificabili esternamente:
+
+- ✅ Non richiede Python sul computer target
+- ✅ Strategie modificabili senza ricompilare
+- ✅ Deployment semplificato (zip + unzip)
+
+**Build:**
+```bash
+# Linux/Mac
+./build_hybrid.sh
+
+# Windows
+build_hybrid.bat
+```
+
+**Risultato:**
+```
+deployment/run-strategy/
+├── run-strategy.exe           # Eseguibile standalone
+├── user_strategy/             # Strategie .py (modificabili!)
+└── etc/config/                # Configurazioni
+```
+
+**Vedi [DEPLOYMENT_HYBRID.md](DEPLOYMENT_HYBRID.md) per istruzioni complete.**
+
+### Installazione standard (Sviluppo)
+
+Per sviluppo locale o deployment con Python disponibile:
+
+```bash
+# Installazione editable
+pip install -e .
+
+# Esegui strategia
+run-strategy my_config
+```
+
+### Docker (Produzione)
+
+Per deployment containerizzato:
+
+```bash
+docker build -t market-monitor .
+docker run market-monitor run-strategy my_config
+```
+
+---

@@ -254,7 +254,7 @@ class EtfEquityPriceEngine(StrategyUI):
             name="theoretical_live_cluster_price")
 
         self.cluster_model_intraday = ClusterPricingModel(
-            beta=beta_cluster_index,
+            beta=beta_cluster,
             returns=self.corrected_return_intraday,
             forecast_aggregator=TrimmedMean(0.2),
             cluster_correction=self._calculate_cluster_correction(beta_cluster_index, 0),
