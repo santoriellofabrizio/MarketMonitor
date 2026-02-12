@@ -33,12 +33,12 @@ logger = logging.getLogger(__name__)
 
 class EtfEquityPriceEngine(StrategyUI):
 
-    # Labels per ogni campo TimeSeries: type (MID | MISALIGNMENT) e model opzionale
+    # Labels per ogni campo TimeSeries: type (MID | MODEL_PRICE | MISALIGNMENT) e model opzionale
     _TS_FIELD_META: Dict[str, Dict[str, str]] = {
         'mid':            {'type': 'MID'},
-        'live_idx':       {'type': 'MID',          'model': 'index_cluster'},
-        'live_clust':     {'type': 'MID',          'model': 'cluster'},
-        'intraday':       {'type': 'MID',          'model': 'intraday_cluster'},
+        'live_idx':       {'type': 'MODEL_PRICE', 'model': 'index_cluster'},
+        'live_clust':     {'type': 'MODEL_PRICE', 'model': 'cluster'},
+        'intraday':       {'type': 'MODEL_PRICE', 'model': 'intraday_cluster'},
         'live_idx_mis':   {'type': 'MISALIGNMENT', 'model': 'index_cluster'},
         'live_clust_mis': {'type': 'MISALIGNMENT', 'model': 'cluster'},
         'intraday_mis':   {'type': 'MISALIGNMENT', 'model': 'intraday_cluster'},
@@ -434,7 +434,7 @@ class EtfEquityPriceEngine(StrategyUI):
         """
         Pubblica su Redis TS in un unico batch:
         - mid mercato (type=MID)
-        - prezzi teorici live_idx, live_clust, intraday (type=MID, model=...)
+        - prezzi teorici live_idx, live_clust, intraday (type=MODEL_PRICE, model=...)
         - misalignment live_idx_mis, live_clust_mis, intraday_mis (type=MISALIGNMENT, model=...)
         """
         all_isins: Set[str] = set()
