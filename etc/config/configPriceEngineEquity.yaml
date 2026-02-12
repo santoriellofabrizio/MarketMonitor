@@ -44,6 +44,24 @@ market_monitor:
     IE00BKFB6K94: FR0011720911 # CHINA -> CNAA
     IE000IEGVMH6: IE00B5BMR087 # ETFUSA -> CSSPX
 
+  gui_publisher:
+    type: redis           # redis | rabbit
+    redis:
+      host: localhost
+      port: 6379
+      db: 0
+    rabbit:
+      host: rabbitmq.af.tst
+      port: 5672
+      user: mqclient
+      password: Mqclient-00
+      vhost: TestCredEQEtf
+
+  timeseries:
+    host: localhost
+    port: 6380
+    db: 0
+
   tasks:
     update_HF:
       activate: true
