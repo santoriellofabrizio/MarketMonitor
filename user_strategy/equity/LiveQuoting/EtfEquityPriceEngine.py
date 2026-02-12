@@ -46,6 +46,7 @@ class EtfEquityPriceEngine(StrategyUI):
 
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
+        self.logger = logger
         self._init_publisher(kwargs)
         self._init_universe(kwargs)
         self._init_historical_data(kwargs)
@@ -261,7 +262,7 @@ class EtfEquityPriceEngine(StrategyUI):
             beta=beta_cluster,
             returns=self.corrected_return_intraday,
             forecast_aggregator=TrimmedMean(0.2),
-            cluster_correction=self._calculate_cluster_correction(beta_cluster_index, 0),
+            cluster_correction=self._calculate_cluster_correction(beta_cluster, 0),
             name="theoretical_live_cluster_price")
 
         self.index_cluster_model = ClusterPricingModel(
