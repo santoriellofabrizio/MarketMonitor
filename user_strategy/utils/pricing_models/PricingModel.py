@@ -7,12 +7,13 @@ from dateutil.utils import today
 from scipy.sparse import csr_matrix
 import datetime as dt
 
+from user_strategy.equity.LiveQuoting.pricing_engine import PricePredictor
 from user_strategy.utils import CustomBDay
 from user_strategy.utils.pricing_models.AggregationFunctions import ForecastAggregator, EwmaOutlier
 from user_strategy.utils.pricing_models.IRPManager import IRPManager
 
 
-class PricingModel:
+class PricingModel(PricePredictor):
 
     def __init__(self, returns: pd.DataFrame | None = None, *args, **kwargs):
         self.returns: pd.DataFrame = returns
