@@ -238,13 +238,17 @@ a = Analysis(
 pyz = PYZ(a.pure, a.zipped_data, cipher=None)
 
 # ============================================================================
-# 6. EXE - Eseguibile finale
+# 6. EXE - Eseguibile ONEFILE (tutto in un singolo .exe)
 # ============================================================================
+# ONEFILE: exclude_binaries=False + a.binaries/zipfiles/datas dentro EXE
+# All'avvio si estrae in %TEMP%\_MEIxxxxx (startup ~5-10s più lento)
 exe = EXE(
     pyz,
     a.scripts,
-    [],
-    exclude_binaries=True,
+    a.binaries,    # <-- inclusi nel singolo exe
+    a.zipfiles,    # <-- inclusi nel singolo exe
+    a.datas,       # <-- inclusi nel singolo exe
+    exclude_binaries=False,  # <-- False = onefile
     name='run-dashboard',
     debug=False,
     bootloader_ignore_signals=False,
@@ -261,27 +265,17 @@ exe = EXE(
     icon=None,  # Aggiungi un .ico se vuoi
 )
 
-# ============================================================================
-# 7. COLLECT - Raccolta di tutti i file in una directory
-# ============================================================================
-coll = COLLECT(
-    exe,
-    a.binaries,
-    a.zipfiles,
-    a.datas,
-    strip=False,
-    upx=True,
-    upx_exclude=[],
-    name='run-dashboard',
-)
+# COLLECT non serve in modalità onefile
+# (decommentare e commentare EXE sopra per tornare alla modalità cartella)
 
 print("\n" + "=" * 80)
-print("Dashboard Build: MarketMonitor PyQt5 Dashboard")
+print("Dashboard Build: MarketMonitor PyQt5 Dashboard (ONEFILE)")
 print("=" * 80)
-print(f"Output: dist/run-dashboard/")
-print(f"Eseguibile: dist/run-dashboard/run-dashboard{'.exe' if sys.platform == 'win32' else ''}")
-print("\nDEPLOYMENT STEPS:")
-print("  1. Copia dist/run-dashboard/ sul computer target")
-print("  2. Copia etc/config/ con le configurazioni (es: dashboard.yaml)")
-print("  3. Avvia: run-dashboard.exe <nome_config>")
+print(f"Output: dist/run-dashboard.exe")
+print("\nUSO:")
+print("  ATTENZIONE: in onefile il config viene cercato relativo al temp dir.")
+print("  Passa SEMPRE il path assoluto al config:")
+print(r'  run-dashboard.exe "C:\MieiConfig\dashboard.yaml"')
+print("  oppure usa la variabile d'ambiente:")
+print("  set MARKET_MONITOR_CONFIG=C:\\MieiConfig\\dashboard.yaml")
 print("=" * 80)
