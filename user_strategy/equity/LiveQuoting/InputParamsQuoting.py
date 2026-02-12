@@ -36,7 +36,7 @@ class InputParamsQuoting(InputParams):
         self._beta_driver = pd.DataFrame()
         self._beta_cluster = pd.DataFrame()
         self._beta_cluster_index = pd.DataFrame()
-        self._load_inputs_db(path_db)
+        self.load_inputs_db(path_db)
         # self._load_inputs_excel(file_path)
 
 
@@ -87,7 +87,7 @@ class InputParamsQuoting(InputParams):
 
         self._beta_cluster_index = value
 
-    def _load_inputs_db(self, db_path):
+    def load_inputs_db(self, db_path):
 
         # Connessione al database
         conn = sqlite3.connect(db_path)

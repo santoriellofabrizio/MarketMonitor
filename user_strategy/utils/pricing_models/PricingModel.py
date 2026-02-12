@@ -40,6 +40,11 @@ class LinearPricingModel(PricingModel, ABC):
         self.target_variables = beta.index.tolist()
         self.regressor = beta.columns.tolist()
 
+    def set_beta(self, beta: pd.DataFrame):
+        self.beta = beta
+        self.beta_sparse = csr_matrix(
+            self.beta)
+
 
 class MultiPeriodLinearPricingModel(LinearPricingModel, ABC):
 

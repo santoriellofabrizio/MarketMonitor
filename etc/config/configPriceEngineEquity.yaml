@@ -5,7 +5,6 @@ load_strategy_info:
 
 market_monitor:
 
-
   bloomberg_subscription_config_path: etc\config\bbg_subscription\config_bloomberg_subscription.yaml
   bshdata_config_path: C:\AFMachineLearning\Libraries\MarketMonitor\etc\config\bshdata_config.yaml
 
@@ -75,8 +74,8 @@ market_monitor:
       synchronous: false
       frequency: 1
     dynamic_params:
-      activate: false
-      dynamic_config_path: "configFolder/dynamicEquityQuoting.yaml"
+      activate: true
+      dynamic_config_path: C:\AFMachineLearning\Libraries\MarketMonitor\etc\config\dynamic_config.yaml
       frequency: 1
 
   DB connection:

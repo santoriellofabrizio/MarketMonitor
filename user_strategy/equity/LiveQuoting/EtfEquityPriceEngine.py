@@ -4,7 +4,7 @@ import sqlite3
 import time as sleep_time
 from collections import deque
 from datetime import datetime, time, date
-from typing import Dict, Optional, Set
+from typing import Dict, Optional, Set, Any
 
 import numpy as np
 import pandas as pd
@@ -32,21 +32,21 @@ logger = logging.getLogger(__name__)
 
 
 class EtfEquityPriceEngine(StrategyUI):
-
     # Labels per ogni campo TimeSeries: type (MID | MODEL_PRICE | MISALIGNMENT) e model opzionale
     _TS_FIELD_META: Dict[str, Dict[str, str]] = {
-        'mid':            {'type': 'MID'},
-        'live_idx':       {'type': 'MODEL_PRICE', 'model': 'index_cluster'},
-        'live_clust':     {'type': 'MODEL_PRICE', 'model': 'cluster'},
-        'intraday':       {'type': 'MODEL_PRICE', 'model': 'intraday_cluster'},
-        'live_idx_mis':   {'type': 'MISALIGNMENT', 'model': 'index_cluster'},
+        'mid': {'type': 'MID'},
+        'live_idx': {'type': 'MODEL_PRICE', 'model': 'index_cluster'},
+        'live_clust': {'type': 'MODEL_PRICE', 'model': 'cluster'},
+        'intraday': {'type': 'MODEL_PRICE', 'model': 'intraday_cluster'},
+        'live_idx_mis': {'type': 'MISALIGNMENT', 'model': 'index_cluster'},
         'live_clust_mis': {'type': 'MISALIGNMENT', 'model': 'cluster'},
-        'intraday_mis':   {'type': 'MISALIGNMENT', 'model': 'intraday_cluster'},
+        'intraday_mis': {'type': 'MISALIGNMENT', 'model': 'intraday_cluster'},
     }
 
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
         self.logger = logger
+        self.db_path = kwargs.get("path_db", None)
         self._init_publisher(kwargs)
         self._init_universe(kwargs)
         self._init_historical_data(kwargs)
@@ -127,33 +127,8 @@ class EtfEquityPriceEngine(StrategyUI):
         self.ticker_to_isin = {ticker: isin for isin, ticker in self.isin_to_ticker.items()}
         self.input_params = InputParamsQuoting(**kwargs)
 
-        # ETF universe: unione degli indici/colonne delle matrici beta
-        raw_etfs = list({
-            *self.input_params.beta_cluster.index,
-            *self.input_params.beta_cluster.columns,
-            *self.input_params.beta_cluster_index.index,
-            *self.input_params.beta_cluster_index.columns,
-        })
-        isin_list = kwargs.get("isin_list", [])
-        valid_etfs = []
-        for etf in raw_etfs:
-            if isin_list and etf not in isin_list:
-                continue
-            if self.active_isin.get(etf, "NOT_PRESENT") != "ACTV":
-                logger.warning(f"{etf} ({self.ticker_to_isin.get(etf)}) is not ACTV.")
-                continue
-            valid_etfs.append(etf)
-        self.etfs = sorted(valid_etfs)
-
-        # Rifiltra e rinormalizza le matrici beta sugli ETF rimasti
-        for attr in ['beta_cluster', 'beta_cluster_index']:
-            df = getattr(self.input_params, attr)
-            df_filtered = df.loc[
-                df.index.intersection(self.etfs),
-                df.columns.intersection(self.etfs)
-            ]
-            setattr(self.input_params, attr,
-                    df_filtered.div(df_filtered.sum(axis=1), axis=0).fillna(0))
+        # Filtra ETF attivi dall'universo beta
+        self.etfs = self._filter_active_etfs(kwargs.get("isin_list", []))
 
         self.instruments = list({*self.etfs, *self.currencies})
         self._isins_etf_equity = list(isins_etf_equity)
@@ -168,8 +143,42 @@ class EtfEquityPriceEngine(StrategyUI):
         self.today = pd.Timestamp.today().normalize()
         self.yesterday = HolidayManager().previous_business_day(self.today)
 
+    def _filter_active_etfs(self, isin_list: list) -> list:
+        """
+        Filtra gli ETF attivi dall'universo delle matrici beta.
+
+        Args:
+            isin_list: Lista opzionale di ISIN da includere (whitelist)
+
+        Returns:
+            Lista ordinata di ETF attivi
+        """
+        # ETF universe: unione degli indici/colonne delle matrici beta
+        raw_etfs = list({
+            *self.input_params.beta_cluster.index,
+            *self.input_params.beta_cluster.columns,
+            *self.input_params.beta_cluster_index.index,
+            *self.input_params.beta_cluster_index.columns,
+        })
+
+        valid_etfs = []
+        for etf in raw_etfs:
+            # Whitelist check
+            if isin_list and etf not in isin_list:
+                continue
+
+            # Active status check
+            if self.active_isin.get(etf, "NOT_PRESENT") != "ACTV":
+                logger.warning(f"{etf} ({self.ticker_to_isin.get(etf)}) is not ACTV.")
+                continue
+
+            valid_etfs.append(etf)
+
+        return sorted(valid_etfs)
+
     def _init_historical_data(self, kwargs: dict) -> None:
         """Carica prezzi storici, adjusters e modelli di pricing."""
+
         self.holidays = HolidayManager()
         start = self.holidays.subtract_business_days(today(), self.number_of_days)
         start_intraday = self.holidays.subtract_business_days(today(), self.number_of_days_intraday)
@@ -242,15 +251,12 @@ class EtfEquityPriceEngine(StrategyUI):
         self.theoretical_live_index_cluster_price: Optional[pd.Series] = None
         self.theoretical_intraday_prices: Optional[pd.Series] = None
 
-        beta_cluster = (self.input_params.beta_cluster
-                        .rename(self.ticker_to_isin, axis=1)
-                        .rename(self.ticker_to_isin, axis=0))
-        beta_cluster_index = (self.input_params.beta_cluster_index
-                              .rename(self.ticker_to_isin, axis=1)
-                              .rename(self.ticker_to_isin, axis=0))
+        beta_cluster = self._prepare_beta_matrix(self.input_params.beta_cluster)
+        beta_cluster_index = self._prepare_beta_matrix(self.input_params.beta_cluster_index)
 
         self.input_params.set_forecast_aggregation_func(kwargs["pricing"])
 
+        # Crea i modelli
         self.cluster_model = ClusterPricingModel(
             beta=beta_cluster,
             returns=self.corrected_return,
@@ -365,13 +371,13 @@ class EtfEquityPriceEngine(StrategyUI):
             self.calculate_cluster_theoretical_price()
 
             normalized_prices = {
-                'live_idx':  self.round_series_to_tick(
+                'live_idx': self.round_series_to_tick(
                     self.theoretical_live_index_cluster_price, self.reference_tick_size),
                 'live_clust': self.round_series_to_tick(
                     self.theoretical_live_cluster_price.fillna(0), self.reference_tick_size),
-                'intraday':  self.round_series_to_tick(
+                'intraday': self.round_series_to_tick(
                     self.theoretical_intraday_prices.fillna(0), self.reference_tick_size),
-                'mid':       self.round_series_to_tick(
+                'mid': self.round_series_to_tick(
                     self.mid_eur.fillna(0), self.reference_tick_size),
             }
 
@@ -403,9 +409,9 @@ class EtfEquityPriceEngine(StrategyUI):
         """Esporta prezzi normalizzati via pub/sub (Redis o RabbitMQ)."""
         export_mapping = {
             'market:theoretical_live_index_cluster_price': 'live_idx',
-            'market:theoretical_live_cluster_price':       'live_clust',
-            'market:theoretical_live_intraday_price':      'intraday',
-            'market:mid':                                  'mid',
+            'market:theoretical_live_cluster_price': 'live_clust',
+            'market:theoretical_live_intraday_price': 'intraday',
+            'market:mid': 'mid',
         }
         for channel, price_key in export_mapping.items():
             try:
@@ -425,7 +431,7 @@ class EtfEquityPriceEngine(StrategyUI):
     def _build_ts_labels(self, isin: str, field: str) -> Dict[str, str]:
         """Costruisce le label TS: ISIN, TICKER, type (MID|MISALIGNMENT), model."""
         labels: Dict[str, str] = {
-            'isin':   isin,
+            'isin': isin,
             'ticker': self.isin_to_ticker.get(isin, isin),
         }
         labels.update(self._TS_FIELD_META.get(field, {}))
@@ -450,14 +456,14 @@ class EtfEquityPriceEngine(StrategyUI):
 
         mid_prices = normalized_prices['mid']
         price_fields = [
-            ('live_idx',   normalized_prices['live_idx']),
+            ('live_idx', normalized_prices['live_idx']),
             ('live_clust', normalized_prices['live_clust']),
-            ('intraday',   normalized_prices['intraday']),
+            ('intraday', normalized_prices['intraday']),
         ]
         mis_fields = [
-            ('live_idx_mis',   normalized_prices['live_idx']),
+            ('live_idx_mis', normalized_prices['live_idx']),
             ('live_clust_mis', normalized_prices['live_clust']),
-            ('intraday_mis',   normalized_prices['intraday']),
+            ('intraday_mis', normalized_prices['intraday']),
         ]
 
         count = 0
@@ -511,9 +517,9 @@ class EtfEquityPriceEngine(StrategyUI):
         if self.mid_eur is not None:
             safe_last_book = last_mid.replace(0, np.nan)
             is_outlier = (
-                last_mid.isna()
-                | (last_mid == 0)
-                | ((self.mid_eur / safe_last_book - 1).abs() > self.book_mid_threshold)
+                    last_mid.isna()
+                    | (last_mid == 0)
+                    | ((self.mid_eur / safe_last_book - 1).abs() > self.book_mid_threshold)
             )
             valid_entries = last_mid[~is_outlier]
             self.mid_eur.loc[[i for i in valid_entries.index if i in self.mid_eur.index]] = valid_entries
@@ -546,6 +552,119 @@ class EtfEquityPriceEngine(StrategyUI):
                 self.mid_eur, self.corrected_return_intraday.T)
         except Exception as e:
             logger.error(f"Error calculating cluster price: {e}")
+
+    def on_config_change(self, key: str, old_value: Any, new_value: Any):
+        """Gestisce i cambiamenti di configurazione runtime."""
+
+        if key == "reload_beta" and new_value:
+            try:
+                logger.info("Starting beta hot reload...")
+                self._reload_beta_matrices()
+                logger.info("Beta reload completed successfully")
+                self.calculate_cluster_theoretical_price()
+            except Exception as e:
+                logger.error(f"Beta hot reload failed: {e}", exc_info=True)
+
+    def _reload_beta_matrices(self):
+        """Ricarica e aggiorna le matrici beta per tutti i modelli."""
+        # Ricarica dal database
+        self.input_params.load_inputs_db(db_path=self.db_path)
+
+        # Filtra e normalizza
+        beta_cluster = self._prepare_beta_matrix(self.input_params.beta_cluster)
+        beta_cluster_index = self._prepare_beta_matrix(self.input_params.beta_cluster_index)
+
+        # Validazione
+        if beta_cluster.empty or beta_cluster_index.empty:
+            raise ValueError("One or both beta matrices are empty after filtering")
+
+        # Aggiorna i modelli
+        self._update_model_with_beta(self.cluster_model, beta_cluster)
+        self._update_model_with_beta(self.cluster_model_intraday, beta_cluster)
+        self._update_model_with_beta(self.index_cluster_model, beta_cluster_index)
+
+        logger.info(f"  - Cluster beta shape: {beta_cluster.shape}, "
+                    f"density: {(beta_cluster != 0).sum().sum() / beta_cluster.size:.2%}")
+        logger.info(f"  - Index cluster beta shape: {beta_cluster_index.shape}, "
+                    f"density: {(beta_cluster_index != 0).sum().sum() / beta_cluster_index.size:.2%}")
+
+    def _prepare_beta_matrix(self, beta_df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Filtra, normalizza e converte ticker→ISIN per una matrice beta.
+
+        Args:
+            beta_df: Matrice beta grezza (con ticker)
+
+        Returns:
+            Matrice beta filtrata, normalizzata e con ISIN
+        """
+        # Filtra su ETF attivi
+        filtered = beta_df.loc[
+            beta_df.index.intersection(self.etfs),
+            beta_df.columns.intersection(self.etfs)
+        ]
+
+        # Check per matrice vuota
+        if filtered.empty:
+            logger.warning("Filtered beta matrix is empty")
+            return pd.DataFrame()
+
+        # Rimuovi righe/colonne con tutti NaN
+        filtered = filtered.dropna(how='all', axis=0).dropna(how='all', axis=1)
+
+        # Normalizza con gestione NaN
+        row_sums = filtered.sum(axis=1)
+
+        # Check per righe con somma zero o NaN
+        invalid_rows = (row_sums == 0) | row_sums.isna()
+        if invalid_rows.any():
+            logger.warning(f"Beta matrix has {invalid_rows.sum()} rows with zero/NaN sum: "
+                           f"{filtered.index[invalid_rows].tolist()}")
+            # Rimuovi righe invalide
+            filtered = filtered[~invalid_rows]
+            row_sums = row_sums[~invalid_rows]
+
+        # Normalizza
+        normalized = filtered.div(row_sums, axis=0).fillna(0)
+
+        # Converti ticker → ISIN
+        result = (normalized
+                  .rename(self.ticker_to_isin, axis=1)
+                  .rename(self.ticker_to_isin, axis=0))
+
+        logger.debug(f"Beta matrix prepared: shape {result.shape}, "
+                     f"non-zero elements: {(result != 0).sum().sum()}")
+
+        return result
+
+    def _update_model_with_beta(self, model: ClusterPricingModel, beta: pd.DataFrame):
+        """
+        Aggiorna un modello con nuova matrice beta e correzione cluster.
+
+        Args:
+            model: Modello da aggiornare
+            beta: Nuova matrice beta (già in formato ISIN)
+        """
+        if beta.empty:
+            logger.error(f"Cannot update {model.name}: beta matrix is empty")
+            return
+
+        # Verifica che non ci siano NaN
+        if beta.isna().any().any():
+            nan_count = beta.isna().sum().sum()
+            logger.warning(f"Beta matrix contains {nan_count} NaN values, replacing with 0")
+            beta = beta.fillna(0)
+
+        cluster_correction = self._calculate_cluster_correction(beta, 0)
+
+        # Verifica correzione
+        if cluster_correction.isna().any():
+            logger.warning(f"Cluster correction contains NaN values: "
+                           f"{cluster_correction[cluster_correction.isna()].index.tolist()}")
+            cluster_correction = cluster_correction.fillna(1.0)
+
+        model.set_beta(beta)
+        model.set_cluster_correction(cluster_correction)
 
     # =========================================================================
     # Utilities
@@ -604,11 +723,26 @@ class EtfEquityPriceEngine(StrategyUI):
         Returns:
             pd.Series: fattori di correzione per ISIN.
         """
+        if cluster_betas.empty:
+            return pd.Series(dtype=float)
+
         cluster_betas = cluster_betas.sort_index(axis=1).sort_index(axis=0)
+
+        # Azzera la diagonale
         for etf in cluster_betas.index:
-            cluster_betas.loc[etf, etf] = 0
-        cluster_threshold: pd.Series = threshold / (cluster_betas != 0).sum(axis=1)
+            if etf in cluster_betas.columns:
+                cluster_betas.loc[etf, etf] = 0
+
+        # Conta elementi non-zero per riga
+        non_zero_counts = (cluster_betas != 0).sum(axis=1)
+
+        # Evita divisione per zero
+        cluster_threshold = pd.Series(index=cluster_betas.index, dtype=float)
+        cluster_threshold[non_zero_counts > 0] = threshold / non_zero_counts[non_zero_counts > 0]
+        cluster_threshold[non_zero_counts == 0] = 0
+
         cluster_sizes = cluster_betas.gt(cluster_threshold, axis=0).sum(axis=1) + 1
+
         return cluster_sizes.where(cluster_sizes == 1, (cluster_sizes - 1) / cluster_sizes)
 
     def get_update_hf_stats(self) -> dict:
@@ -616,9 +750,9 @@ class EtfEquityPriceEngine(StrategyUI):
         ts_stats = self.timeseries_publisher.ts_stats if self.timeseries_publisher else {}
         return {
             "timeseries_created": ts_stats.get("timeseries_created", 0),
-            "total_published":    ts_stats.get("total_published", 0),
+            "total_published": ts_stats.get("total_published", 0),
             "duplicates_skipped": ts_stats.get("duplicates_skipped", 0),
-            "errors":             ts_stats.get("errors", 0),
-            "last_storage_time":  self.last_storage_time.isoformat()
-                                  if hasattr(self, 'last_storage_time') else None,
+            "errors": ts_stats.get("errors", 0),
+            "last_storage_time": self.last_storage_time.isoformat()
+            if hasattr(self, 'last_storage_time') else None,
         }
