@@ -3,19 +3,16 @@ from __future__ import annotations
 import asyncio
 import logging
 from abc import ABC, abstractmethod
-from pathlib import Path
 from queue import Queue
 from time import time
 from typing import Optional, Dict, Any, Union, Coroutine
 
 import pandas as pd
-from watchdog.observers import Observer
-
-
 from market_monitor.gui.implementations.GUI import GUI
 from market_monitor.input_threads.trade import TradeType
 
 from market_monitor.live_data_hub.real_time_data_hub import RTData
+from market_monitor.utils.command_listener import CommandListener
 from market_monitor.live_data_hub.subscription_service import SubscriptionService
 from market_monitor.utils.config_observer import ConfigChangeHandler
 
@@ -28,10 +25,9 @@ class StrategyUIAsync(ABC):
 
       Available tasks:
           - High-frequency computations (update HF)
-          - Storing data in the database (store on DB)
-          - Monitoring trade queue and handling market operations (check trade queue)
-          - Monitoring dynamic parameters (observe params)
           - Low-frequency computations (update LF)
+          - Monitoring trade queue and handling market operations (check trade queue)
+          - Command listener via Redis pub/sub (command_listener)
 
       Attributes:
           logger (Logger): Logger instance for recording events and errors.
@@ -85,7 +81,7 @@ class StrategyUIAsync(ABC):
             "update_LF": self._async_update_LF,
             "trade": self._async_check_trade_queue,
             "update_HF": self._async_update_HF,
-            "dynamic_params": self._async_dynamic_params_observer
+            "command_listener": self._async_command_listener,
         }
 
         try:
@@ -114,71 +110,88 @@ class StrategyUIAsync(ABC):
         else:
             logger.error("Book initialization failed.")
 
-    async def _async_dynamic_params_observer(self, dynamic_config_path: str, frequency: float):
+    # =========================================================================
+    # Command listener (Redis pub/sub)
+    # =========================================================================
+
+    async def _async_command_listener(self, redis_client_attr: str = "publisher.gui.redis_client",
+                                      channel: str = "engine:commands",
+                                      status_channel: str = "engine:status"):
         """
-        Osserva e aggiorna parametri dinamici tramite callback.
+        Avvia un CommandListener su un canale Redis pub/sub.
+        Il listener gira in un daemon thread e invoca on_command per ogni comando ricevuto.
+
+        Config example:
+            tasks:
+              command_listener:
+                activate: true
+                redis_client_attr: publisher.gui.redis_client
+                channel: engine:commands
+                status_channel: engine:status
 
         Args:
-            dynamic_config_path: Path al file di configurazione
-            frequency: Frequenza di controllo (in secondi)
+            redis_client_attr: Attributo dot-separated per raggiungere il redis_client (es. "publisher.gui.redis_client")
+            channel: Canale Redis su cui ascoltare i comandi
+            status_channel: Canale Redis su cui pubblicare lo status
         """
-        logger.debug("Starting config observer")
+        # Risolvi il redis_client dall'attributo dot-separated
+        redis_client = self
+        for attr in redis_client_attr.split("."):
+            redis_client = getattr(redis_client, attr)
 
-        event_handler = ConfigChangeHandler(
-            dynamic_config_path=dynamic_config_path,
-            on_config_change=self._handle_config_change
+        self._command_listener = CommandListener(
+            redis_client=redis_client,
+            on_command=self._handle_command,
+            channel=channel,
+            status_channel=status_channel,
         )
-
-        observer = Observer()
-        observer.name = "DynamicParamsObserver"
-        observer.schedule(event_handler, path=str(Path(dynamic_config_path).parent), recursive=False)
-        observer.start()
-
-        self._config_observer = observer
+        self._command_listener.start()
 
         try:
             while not self.running:
-                await asyncio.sleep(frequency)
-        except Exception as e:
-            logger.error(f"Error in config observer: {e}")
+                await asyncio.sleep(1)
         finally:
-            observer.stop()
-            observer.join()
+            self._command_listener.stop()
 
-    def _handle_config_change(self, key: str, old_value: Any, new_value: Any):
+    def _handle_command(self, action: str, payload: dict):
         """
-        Callback invocato quando un parametro di configurazione cambia.
+        Callback invocato quando un comando viene ricevuto via Redis.
 
         Args:
-            key: Nome del parametro
-            old_value: Valore precedente
-            new_value: Nuovo valore
+            action: Nome dell'azione (es. "reload_beta")
+            payload: Payload completo del messaggio JSON
         """
-        logger.info(f"Handling config change: {key} = {new_value} (was {old_value})")
+        logger.info(f"Handling command: {action}")
 
         try:
-            self.on_config_change(key, old_value, new_value)
+            self.on_command(action, payload)
         except Exception as e:
-            logger.error(f"Error handling config change for {key}: {e}", exc_info=True)
+            logger.error(f"Error handling command '{action}': {e}", exc_info=True)
+            raise
 
-    def on_config_change(self, key: str, old_value: Any, new_value: Any):
+    def on_command(self, action: str, payload: dict):
         """
-        Override questo metodo nella tua strategia per gestire i cambi di configurazione.
+        Override questo metodo nella tua strategia per gestire i comandi via Redis.
+
+        Il risultato (success/error) viene automaticamente pubblicato su engine:status
+        dal CommandListener. Se il metodo lancia un'eccezione, lo status sarà "error".
+
+        Trigger:
+            redis-cli PUBLISH engine:commands '{"action": "reload_beta"}'
 
         Example:
-            def on_config_change(self, key, old_value, new_value):
-                if key == "max_position_size":
-                    self.max_position = new_value
-                elif key == "risk_threshold":
-                    self.risk_threshold = new_value
-                    self._recalculate_limits()
+            def on_command(self, action, payload):
+                if action == "reload_beta":
+                    self._reload_beta_matrices()
+                    self.models.predict_all(self.mid_eur)
+                elif action == "reset_cache":
+                    self.publisher.gui.clear_change_cache()
 
         Args:
-            key: Nome del parametro modificato
-            old_value: Valore precedente
-            new_value: Nuovo valore
+            action: Nome dell'azione richiesta
+            payload: Payload completo del messaggio (contiene almeno {"action": "..."})
         """
-        pass
+        logger.warning(f"Unhandled command: '{action}'. Override on_command() in your strategy.")
 
     async def _async_update_HF(self, frequency, *args, **kwargs):
         """
@@ -352,17 +365,6 @@ class StrategyUIAsync(ABC):
         """ Sets book object for the strategy."""
         self.market_data = market_data
         self._on_market_data_setting()
-
-    def set_trade_subscription_manager(self, svc: SubscriptionService):
-        """Sets the SubscriptionService of the trade thread for subscription registration."""
-        self.trade_subscription_manager = svc
-        self._on_trade_subscription_setting()
-
-    def _on_trade_subscription_setting(self):
-        self.on_trade_subscription_setting()
-
-    def on_trade_subscription_setting(self):
-        pass
 
     def on_book_initialized(self):
         pass

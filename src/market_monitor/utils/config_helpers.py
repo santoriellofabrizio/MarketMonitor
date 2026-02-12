@@ -1,4 +1,5 @@
 import argparse
+import os
 import sys
 from dataclasses import dataclass
 from difflib import get_close_matches
@@ -22,6 +23,10 @@ class ConfigEntry:
 
 
 def _project_root() -> Path:
+    # PyInstaller frozen: usa _MEIPASS (dove stanno i datas)
+    frozen_root = os.environ.get('_MARKET_MONITOR_FROZEN_ROOT')
+    if frozen_root:
+        return Path(frozen_root)
     # Dalla posizione del file (src/market_monitor/utils/)
     # risali a src/market_monitor/ -> src/ -> root progetto
     return Path(__file__).parent.parent.parent.parent

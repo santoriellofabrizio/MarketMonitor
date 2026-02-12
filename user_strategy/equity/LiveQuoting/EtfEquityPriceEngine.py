@@ -1,11 +1,10 @@
 import logging
-import os
 import sqlite3
 import time as sleep_time
-
 from collections import deque
 from datetime import datetime, time, date
-from typing import Optional, Set
+from typing import Dict, Optional, Set, Any
+
 import numpy as np
 import pandas as pd
 from dateutil.utils import today
@@ -16,143 +15,117 @@ from sfm_data_provider.analytics.adjustments.fx_forward_carry import FxForwardCa
 from sfm_data_provider.analytics.adjustments.fx_spot import FxSpotComponent
 from sfm_data_provider.analytics.adjustments.ter import TerComponent
 from sfm_data_provider.core.holidays.holiday_manager import HolidayManager
-
-from market_monitor.publishers.timeseries_publisher import (
-    TimeSeriesPublisher, RetentionPolicy, CompactionRule,
-    AggregationType, DuplicatePolicy,
-)
-from user_strategy.equity.utils.SQLUtils.storage import PriceDatabaseManager
 from sfm_data_provider.interface.bshdata import BshData
 
 from market_monitor.gui.implementations.GUI import GUI
 from market_monitor.publishers.redis_publisher import RedisMessaging
+from market_monitor.publishers.timeseries_publisher import TimeSeriesPublisher
 from market_monitor.strategy.strategy_ui.StrategyUI import StrategyUI
+
 from user_strategy.equity.LiveQuoting.InputParamsQuoting import InputParamsQuoting
-
-from user_strategy.utils.pricing_models.AggregationFunctions import ForecastAggregator, TrimmedMean
-
-from user_strategy.utils.pricing_models.PricingModel import ClusterPricingModel
 from user_strategy.utils.bloomberg_subscription_utils.SubscriptionManager import SubscriptionManager
+from user_strategy.utils.pricing_models.AggregationFunctions import ForecastAggregator, TrimmedMean
+from user_strategy.utils.pricing_models.PricingModel import ClusterPricingModel
 
 logger = logging.getLogger(__name__)
-
-DB_ANAGRPHIC_PATH = r"V:\EquityETF\etf_equity_anagraphic_db.sqlite"
-
-_TS_RETENTION_POLICY = RetentionPolicy(
-    retention_ms=86_400_000,        # 1 giorno raw (1-min resolution)
-    duplicate_policy=DuplicatePolicy.LAST,
-    chunk_size=4096,
-    compaction_rules=[
-        CompactionRule(AggregationType.LAST, 600_000,    "_10min", 86_400_000),    # 10 min, 1 giorno
-        CompactionRule(AggregationType.LAST, 1_800_000,  "_30min", 172_800_000),   # 30 min, 2 giorni
-        CompactionRule(AggregationType.LAST, 3_600_000,  "_1h",    259_200_000),   # 1 ora,  3 giorni
-    ]
-)
 
 
 class EtfEquityPriceEngine(StrategyUI):
 
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
+        self.logger = logger
+        self.db_path = kwargs.get("path_db", None)
+        self._init_universe(kwargs)
+        self.publisher = PricePublisherHub.from_config(kwargs, self.isin_to_ticker)
+        self._init_historical_data(kwargs)
+        self._init_bloomberg(kwargs)
 
+    # =========================================================================
+    # Inizializzazione
+    # =========================================================================
+
+    def _init_universe(self, kwargs: dict) -> None:
+        """Carica l'universo ETF, le valute e i mapping ISIN/ticker."""
+        self.number_of_days = kwargs.get("number_of_days", 5)
         self.number_of_days_intraday = kwargs.get("number_of_days_intraday", 3)
-        self.API = BshData(config_path=r"C:\AFMachineLearning\Libraries\MarketMonitor\etc\config\bshdata_config.yaml")
-
         self.failed_isin = []
 
-        isins_etf_equity = self.API.general.get(fields=["etp_isins"],
-                                                segments=["IM"],
-                                                currency="EUR",
-                                                underlying="EQUITY",
-                                                source="oracle")["etp_isins"]
+        self.API = BshData(config_path=kwargs.get("bshdata_config_path"))
 
-        self.reference_tick_size = self.API.info.get_etp_fields(isin=isins_etf_equity,
-                                                                fields=["REFERENCE_TICK_SIZE"],
-                                                                source="bloomberg")["REFERENCE_TICK_SIZE"].to_dict()
-        try:
-            self.timeseries_publisher = TimeSeriesPublisher(default_policy=_TS_RETENTION_POLICY)
-        except Exception as e:
-            self.timeseries_publisher = None
-            logger.warning(f"TimeSeriesPublisher non disponibile, TimeSeries disabilitato: {e}")
+        isins_etf_equity = self.API.general.get(
+            fields=["etp_isins"], segments=["IM"], currency="EUR",
+            underlying="EQUITY", source="oracle",
+        )["etp_isins"]
 
-        with sqlite3.connect(DB_ANAGRPHIC_PATH) as conn:
+        self.reference_tick_size = self.API.info.get_etp_fields(
+            isin=isins_etf_equity, fields=["REFERENCE_TICK_SIZE"], source="bloomberg",
+        )["REFERENCE_TICK_SIZE"].to_dict()
+
+        db_path = kwargs["path_db"]
+        with sqlite3.connect(db_path) as conn:
             self.isin_to_ticker = pd.read_sql(
                 "SELECT ISIN, TICKER FROM vw_isin_ticker", conn
             ).set_index("ISIN")["TICKER"].to_dict()
-
             self.active_isin = pd.read_sql(
                 "SELECT ISIN, MARKET_STATUS FROM market_status", conn
             ).set_index("ISIN")["MARKET_STATUS"].to_dict()
 
-        currencies = ['USD', 'GBP', 'CHF', 'AUD', 'DKK', 'HKD', 'NOK',
-                      'PLN', 'SEK', 'CNY', 'JPY', 'CNH', 'CAD', 'INR', 'BRL']
+        self.currencies = [
+            f"EUR{c}" for c in
+            ['USD', 'GBP', 'CHF', 'AUD', 'DKK', 'HKD', 'NOK',
+             'PLN', 'SEK', 'CNY', 'JPY', 'CNH', 'CAD', 'INR', 'BRL']
+        ]
 
-        self.currencies = [f"EUR{c}" for c in currencies if c != "EUR"]
-        self.gui_redis = RedisMessaging()
-
-        self.mid_eur: Optional[pd.Series] = None
-        self.book_mid_threshold = .5
-        self.input_params = InputParamsQuoting(**kwargs)
-        self.subscription_manager: None | SubscriptionManager = None
         self.ticker_to_isin = {ticker: isin for isin, ticker in self.isin_to_ticker.items()}
-        self.number_of_days = kwargs.get("number_of_days", 5)
+        self.input_params = InputParamsQuoting(**kwargs)
 
-        self.theoretical_prices: pd.DataFrame | None = None
+        # Filtra ETF attivi dall'universo beta
+        self.etfs = self._filter_active_etfs(kwargs.get("isin_list", []))
+
+        self.instruments = list({*self.etfs, *self.currencies})
+        self._isins_etf_equity = list(isins_etf_equity)
+
+        # Stato runtime
+        self.mid_eur: Optional[pd.Series] = None
+        self.book_mid_threshold = 0.5
+        self.book_eur: pd.DataFrame = pd.DataFrame()
         self.book_storage: deque = deque(maxlen=3)
-        self.strategy_input: pd.DataFrame | pd.Series | None = None
         self.position: Optional[pd.Series] = None
         self.return_to_publish: list = [1, 2, 3, 4, 5, 6, 7, 8]
-        self._cumulative_returns: bool = True
-
-        self.fx_list: list | None = None
-        self.mid_eur: pd.Series()
-        self.book_eur: pd.DataFrame()
-        self.securities_list: list | None = None
-        self.instruments_status: None | pd.Series = None
-        self.GUIs: GUI
         self.today = pd.Timestamp.today().normalize()
         self.yesterday = HolidayManager().previous_business_day(self.today)
 
-        beta_cluster = self.input_params.beta_cluster
-        beta_cluster_index = self.input_params.beta_cluster_index
+    def _filter_active_etfs(self, isin_list: list) -> list:
+        """
+        Filtra gli ETF attivi dall'universo delle matrici beta.
 
-        # ✅ Crea una nuova lista filtrata invece di modificare durante iterazione
-        self.etfs = list({
+        Args:
+            isin_list: Lista opzionale di ISIN da includere (whitelist)
+
+        Returns:
+            Lista ordinata di ETF attivi
+        """
+        raw_etfs = list({
             *self.input_params.beta_cluster.index,
             *self.input_params.beta_cluster.columns,
             *self.input_params.beta_cluster_index.index,
             *self.input_params.beta_cluster_index.columns,
         })
 
-        isin_list = kwargs.get("isin_list", [])
         valid_etfs = []
-        for etf in self.etfs:
-            # Skip se non in isin_list (se specificato)
+        for etf in raw_etfs:
             if isin_list and etf not in isin_list:
                 continue
-
-            # Skip se non ACTV
             if self.active_isin.get(etf, "NOT_PRESENT") != "ACTV":
                 logger.warning(f"{etf} ({self.ticker_to_isin.get(etf)}) is not ACTV.")
                 continue
-
             valid_etfs.append(etf)
 
-        self.etfs = sorted(valid_etfs)
+        return sorted(valid_etfs)
 
-
-        for attr in ['beta_cluster', 'beta_cluster_index']:
-            df = getattr(self.input_params, attr)
-            # Filtra solo per le colonne/indici rimasti
-            df_filtered = df.loc[df.index.intersection(self.etfs), df.columns.intersection(self.etfs)]
-            # Rinormalizza dividendo per la nuova somma
-            setattr(self.input_params, attr, df_filtered.div(df_filtered.sum(axis=1), axis=0).fillna(0))
-
-
-        self.instruments = list({
-            *self.etfs,
-            *self.currencies
-        })
+    def _init_historical_data(self, kwargs: dict) -> None:
+        """Carica prezzi storici, adjusters e modelli di pricing."""
 
         self.holidays = HolidayManager()
         start = self.holidays.subtract_business_days(today(), self.number_of_days)
@@ -160,62 +133,43 @@ class EtfEquityPriceEngine(StrategyUI):
         end = self.holidays.previous_business_day(today())
         days = self.holidays.get_business_days(start=start, end=end)
         snapshot_time = time(16, 45)
-        self.last_storage_time = datetime.now()
 
-        fx_composition = self.API.info.get_fx_composition(self.etfs, fx_fxfwrd="fx",
-                                                          reference_date=date(2026, 2, 9))
-
-        fx_forward = self.API.info.get_fx_composition(self.etfs, fx_fxfwrd="fxfwrd",
-                                                      reference_date=date(2026, 2, 9))
+        fx_composition = self.API.info.get_fx_composition(
+            self.etfs, fx_fxfwrd="fx", reference_date=date(2026, 2, 9))
+        fx_forward = self.API.info.get_fx_composition(
+            self.etfs, fx_fxfwrd="fxfwrd", reference_date=date(2026, 2, 9))
 
         for isin, isin_proxy in kwargs.get("fx_mapping", {}).items():
             fx_composition.loc[isin] = fx_composition.loc[isin_proxy]
 
-        self.fx_prices = self.API.market.get_daily_currency(id=self.currencies,
-                                                            start=start,
-                                                            end=end,
-                                                            snapshot_time=snapshot_time,
-                                                            fallbacks=[{"source": "bloomberg"}],
-                                                            ).reindex(days)
+        self.fx_prices = self.API.market.get_daily_currency(
+            id=self.currencies, start=start, end=end, snapshot_time=snapshot_time,
+            fallbacks=[{"source": "bloomberg"}],
+        ).reindex(days)
 
-        self.etf_prices = self.API.market.get_daily_etf(id=self.etfs,
-                                                        start=start,
-                                                        end=end,
-                                                        snapshot_time=snapshot_time,
-                                                        timeout=10,
-                                                        fallbacks=[{"source": "bloomberg",
-                                                                    "market": mkt} for mkt in
-                                                                   ["IM", "FP", "NA"]]).reindex(days)
+        self.etf_prices = self.API.market.get_daily_etf(
+            id=self.etfs, start=start, end=end, snapshot_time=snapshot_time, timeout=10,
+            fallbacks=[{"source": "bloomberg", "market": mkt} for mkt in ["IM", "FP", "NA"]],
+        ).reindex(days)
 
-        self.fx_prices_intraday = self.filter_outliers(
-            self.API.market.get_intraday_fx(id=self.currencies,
-                                            start=start_intraday,
-                                            end=end,
-                                            frequency="15m",
-                                            fallbacks=[{"source": "bloomberg"}])
+        self.fx_prices_intraday = filter_outliers(
+            self.API.market.get_intraday_fx(
+                id=self.currencies, start=start_intraday, end=end, frequency="15m",
+                fallbacks=[{"source": "bloomberg"}])
             .between_time("10:00", "17:00"))
 
-        self.etf_prices_intraday = self.filter_outliers(
-            self.API.market.get_intraday_etf(id=self.etfs,
-                                             start=start_intraday,
-                                             end=end,
-                                             frequency="15m",
-                                             source='timescale',
-                                             fallbacks=[{"source": "bloomberg",
-                                                         "market": mkt} for mkt in ["IM", "FP", "NA"]])
+        self.etf_prices_intraday = filter_outliers(
+            self.API.market.get_intraday_etf(
+                id=self.etfs, start=start_intraday, end=end, frequency="15m",
+                source='timescale',
+                fallbacks=[{"source": "bloomberg", "market": mkt} for mkt in ["IM", "FP", "NA"]])
             .between_time("10:00", "17:00"), name="etf_intraday")
 
         self.etf_prices = self.etf_prices.interpolate("time")
         self.etf_prices_intraday = self.etf_prices_intraday.interpolate("time")
 
-        # _, fx_full = self.input_params.get_currency_data(self.instruments)
-
-        fx_forward_needed = fx_forward.columns.tolist()
-
-        fx_forward_prices = self.API.market.get_daily_fx_forward(quoted_currency=fx_forward_needed,
-                                                                 start=start,
-                                                                 end=end)
-
+        fx_forward_prices = self.API.market.get_daily_fx_forward(
+            quoted_currency=fx_forward.columns.tolist(), start=start, end=end)
         dividends = self.API.info.get_dividends(id=self.etfs, start=start)
         ter = self.API.info.get_ter(id=self.etfs) / 100
 
@@ -226,92 +180,95 @@ class EtfEquityPriceEngine(StrategyUI):
             .add(FxForwardCarryComponent(fx_forward, fx_forward_prices, "1M", self.fx_prices))
             .add(DividendComponent(dividends, self.etf_prices, fx_prices=self.fx_prices))
         )
+        self.intraday_adjuster = (
+            Adjuster(self.etf_prices_intraday)
+            .add(FxSpotComponent(fx_composition, self.fx_prices_intraday))
+            .add(DividendComponent(dividends, self.etf_prices_intraday,
+                                   fx_prices=self.fx_prices_intraday))
+        )
 
-        self.intraday_adjuster = Adjuster(self.etf_prices_intraday).add(
-            FxSpotComponent(fx_composition, self.fx_prices_intraday)).add(
-            DividendComponent(dividends, self.etf_prices_intraday, fx_prices=self.fx_prices_intraday))
+        self.corrected_return = pd.DataFrame(
+            index=self.etf_prices.index, columns=self.etf_prices.columns, dtype=float)
+        self.corrected_return_intraday = pd.DataFrame(
+            index=self.etf_prices_intraday.index, columns=self.etf_prices_intraday.columns,
+            dtype=float)
 
-        self.corrected_return: Optional[pd.DataFrame] = pd.DataFrame(index=self.etf_prices.index,
-                                                                     columns=self.etf_prices.columns,
-                                                                     dtype=float)
-
-        self.corrected_return_intraday: Optional[pd.DataFrame] = pd.DataFrame(index=self.etf_prices_intraday.index,
-                                                                              columns=self.etf_prices_intraday.columns,
-                                                                              dtype=float)
-
-        self.bloomberg_subscription_config_path = kwargs.get("bloomberg_subscription_config_path", None)
-        self.all_etf_plus_securities = list(set(self.currencies + list(isins_etf_equity)))
-        self.subscription_manager = SubscriptionManager(self.all_etf_plus_securities,
-                                                        self.bloomberg_subscription_config_path)
-
-        # ----------------------------------------- PRICING ------------------------------------------------------------
-
-        self.theoretical_live_cluster_price: Optional[pd.Series] = None
-        self.theoretical_live_index_cluster_price: pd.Series | None = None
-        self.theoretical_intraday_prices: pd.Series | None = None
-
-        beta_cluster = (self.input_params.beta_cluster
-                        .rename(self.ticker_to_isin, axis=1)
-                        .rename(self.ticker_to_isin, axis=0))
-
-        beta_cluster_index = (self.input_params.beta_cluster_index
-                              .rename(self.ticker_to_isin, axis=1)
-                              .rename(self.ticker_to_isin, axis=0))
+        # Modelli di pricing via registry
+        beta_cluster = self._prepare_beta_matrix(self.input_params.beta_cluster)
+        beta_cluster_index = self._prepare_beta_matrix(self.input_params.beta_cluster_index)
 
         self.input_params.set_forecast_aggregation_func(kwargs["pricing"])
 
-        self.cluster_model = ClusterPricingModel(
+        self.models = PricingModelRegistry()
+        self.models.register("cluster", ClusterPricingModel(
             beta=beta_cluster,
             returns=self.corrected_return,
             forecast_aggregator=self.input_params.forecast_aggregator_cluster,
             cluster_correction=self._calculate_cluster_correction(beta_cluster, 0),
-            name="theoretical_live_cluster_price")
+            name="theoretical_live_cluster_price",
+        ), self.corrected_return)
 
-        self.cluster_model_intraday = ClusterPricingModel(
-            beta=beta_cluster_index,
+        self.models.register("intraday", ClusterPricingModel(
+            beta=beta_cluster,
             returns=self.corrected_return_intraday,
             forecast_aggregator=TrimmedMean(0.2),
-            cluster_correction=self._calculate_cluster_correction(beta_cluster_index, 0),
-            name="theoretical_live_cluster_price")
+            cluster_correction=self._calculate_cluster_correction(beta_cluster, 0),
+            name="theoretical_live_cluster_price",
+        ), self.corrected_return_intraday)
 
-        self.index_cluster_model = ClusterPricingModel(
+        self.models.register("index_cluster", ClusterPricingModel(
             beta=beta_cluster_index,
             returns=self.corrected_return,
             forecast_aggregator=self.input_params.forecast_aggregator_cluster,
             cluster_correction=self._calculate_cluster_correction(beta_cluster_index, 0),
-            name="theoretical_live_index_cluster_price")
+            name="theoretical_live_index_cluster_price",
+        ), self.corrected_return)
 
-        self.cluster_model.calculate_cluster_correction()
-        self.index_cluster_model.calculate_cluster_correction()
+    def _init_bloomberg(self, kwargs: dict) -> None:
+        """Configura la sottoscrizione Bloomberg e pubblica i ritorni storici iniziali."""
+        self.all_etf_plus_securities = list(set(self.currencies + self._isins_etf_equity))
+        self.bloomberg_subscription_config_path = kwargs.get("bloomberg_subscription_config_path")
+        self.subscription_manager = SubscriptionManager(
+            self.all_etf_plus_securities, self.bloomberg_subscription_config_path)
 
-        # Publish returns
-        static_return = self.adjuster.get_clean_returns()
-        for i in self.return_to_publish:
-            self.gui_redis.export_static_data(**{f"market:return_{i}":
-                                                     (static_return.iloc[-i].astype(float) * 100).round(4)})
+        logger.info("=" * 70)
+        logger.info("Price analytics: http://localhost:3000/d/etf-price-monitor-v2/")
+        logger.info("=" * 70)
+
+        self.publisher.publish_static_returns(self.adjuster, self.return_to_publish)
+
+    # =========================================================================
+    # Command handling (via Redis pub/sub — task "command_listener")
+    # Usage: redis-cli PUBLISH engine:commands '{"action": "reload_beta"}'
+    # =========================================================================
+
+    def on_command(self, action: str, payload: dict):
+        """Gestisce comandi ricevuti via Redis pub/sub."""
+        if action == "reload_beta":
+            logger.info("Beta reload triggered via command channel")
+            self._reload_beta_matrices()
+            self.models.predict_all(self.mid_eur)
+            logger.info("Beta reload completed successfully")
+        else:
+            logger.warning(f"Unknown command: '{action}'")
+
+    # =========================================================================
+    # Market data setup
+    # =========================================================================
 
     def on_market_data_setting(self) -> None:
-        """
-        Set the market data to include _securities and currency pairs.
-        default for ccy is EURCCY. es EURUSD.
-        """
+        """Imposta i securities e le sottoscrizioni Bloomberg."""
         self.mid_eur = pd.Series(index=self.all_etf_plus_securities)
         self.book_eur = pd.DataFrame(columns=["BID", "ASK"])
         self.market_data.set_securities(self.all_etf_plus_securities)
 
-        # Get subscription info
         bloomberg_subscriptions = self.subscription_manager.get_subscription_dict()
         currency_info = self.subscription_manager.get_currency_informations()
-
-        # Set currency information
         self.market_data.currency_information = currency_info
 
         subscription_manager = self.market_data.get_subscription_manager()
 
-        # Subscribe using new Bloomberg API
         for isin in self.etfs:
-            # Determine if currency
-
             subscription_manager.subscribe_bloomberg(
                 id=isin,
                 subscription_string=bloomberg_subscriptions.get(isin, isin),
@@ -328,10 +285,7 @@ class EtfEquityPriceEngine(StrategyUI):
             )
 
     def wait_for_book_initialization(self):
-        """
-        Attende l'inizializzazione del book e gestisce strumenti con dati mancanti.
-        """
-
+        """Attende l'inizializzazione del book e gestisce strumenti con dati mancanti."""
         while datetime.today().time() < time(9, 5):
             return False
 
@@ -341,7 +295,6 @@ class EtfEquityPriceEngine(StrategyUI):
         return True
 
     def wait_for_bloomberg_initialization(self):
-
         while self.market_data.get_pending_subscriptions("bloomberg"):
             sleep_time.sleep(1)
 
@@ -356,318 +309,56 @@ class EtfEquityPriceEngine(StrategyUI):
 
         for sub in subscription_manager.get_failed_subscriptions():
             isin = sub.get("id")
-            logger.warning(f"failed subscription: -> '{isin} IM EQUITY' ({self.isin_to_ticker.get(isin)})")
+            logger.warning(f"failed subscription: '{isin} IM EQUITY' ({self.isin_to_ticker.get(isin)})")
             self.failed_isin.append(isin)
 
         return True
 
-    """
-    Versione ottimizzata della funzione update_HF con:
-    - Creazione TimeSeries centralizzata e una sola volta
-    - Calcoli di misalignment pre-elaborati
-    - Pipeline Redis per export message
-    - Batch publishing unificato
-    - Eliminazione ridondanze
-    """
-
-    from datetime import datetime, time
-    import numpy as np
-    from typing import Dict, Tuple, Set
-    import logging
-
-    logger = logging.getLogger(__name__)
-
-    """
-    Versione ottimizzata della funzione update_HF con:
-    - Creazione TimeSeries centralizzata e una sola volta
-    - Calcoli di misalignment pre-elaborati
-    - Uso corretto di RedisMessaging per export GUI
-    - Batch publishing unificato
-    - Eliminazione ridondanze
-
-    IMPORTANTE: Usa self.gui_redis.export_message() NON redis_client.pipeline()
-    per mantenere correttezza di:
-      - Normalizzazione dati
-      - Change detection
-      - Serializzazione JSON
-      - Size control (Excel RTD limit)
-      - Logging tracciato
-    """
-
-    from datetime import datetime, time
-    import numpy as np
-    from typing import Dict, Tuple, Set, Optional, Any
-    import logging
-
-    logger = logging.getLogger(__name__)
+    # =========================================================================
+    # Loop ad alta frequenza
+    # =========================================================================
 
     def update_HF(self):
-        """Aggiornamento ad alta frequenza con ottimizzazioni di performance."""
-
-        # 1. UPDATE DATI
+        """Aggiornamento ad alta frequenza: prezzi, modelli, export GUI e storage TS."""
         if datetime.today().time() < time(17, 30):
             self.get_mid()
 
-            self.calculate_cluster_theoretical_price()
+            predictions = self.models.predict_all(self.mid_eur)
 
-            # 2. PREPARAZIONE SERIE NORMALIZZATE (una sola volta)
             normalized_prices = {
-                'live_idx': self.round_series_to_tick(
-                    self.theoretical_live_index_cluster_price,
-                    self.reference_tick_size
-                ),
-                'live_clust': self.round_series_to_tick(
-                    self.theoretical_live_cluster_price.fillna(0),
-                    self.reference_tick_size
-                ),
-                'intraday': self.round_series_to_tick(
-                    self.theoretical_intraday_prices.fillna(0),
-                    self.reference_tick_size
-                ),
-                'mid': self.round_series_to_tick(
-                    self.mid_eur.fillna(0),
-                    self.reference_tick_size
-                )
+                'live_idx': round_series_to_tick(
+                    predictions.get("index_cluster"), self.reference_tick_size),
+                'live_clust': round_series_to_tick(
+                    predictions.get("cluster", pd.Series(dtype=float)).fillna(0),
+                    self.reference_tick_size),
+                'intraday': round_series_to_tick(
+                    predictions.get("intraday", pd.Series(dtype=float)).fillna(0),
+                    self.reference_tick_size),
+                'mid': round_series_to_tick(
+                    self.mid_eur.fillna(0), self.reference_tick_size),
             }
 
-            # 3. EXPORT ALLE GUI (pipeline Redis)
-            self._export_normalized_prices_to_gui(normalized_prices)
-
-            # 4. STORAGE - Solo se è passato il tempo minimo
-            current_time = datetime.now()
-            if (current_time - self.last_storage_time).total_seconds() >= 60 and self.timeseries_publisher is not None:
-                self._publish_to_storage(normalized_prices, current_time)
-
-    def _export_normalized_prices_to_gui(self, normalized_prices: Dict[str, any]):
-        """
-        Esporta prezzi normalizzati alle GUI usando RedisMessaging.
-
-        Mantiene normalizzazione, change detection, e serializzazione corretti.
-        Ottimizzazione: batch tutte le operazioni insieme anziché una per una.
-        """
-        export_mapping = {
-            'market:theoretical_live_index_cluster_price': 'live_idx',
-            'market:theoretical_live_cluster_price': 'live_clust',
-            'market:theoretical_live_intraday_price': 'intraday',
-            'market:mid': 'mid'
-        }
-
-        # Pubblica attraverso RedisMessaging per mantenere:
-        # - Normalizzazione (già fatto, ma passa through)
-        # - Change detection
-        # - Serializzazione con metadata
-        # - Logging tracciato
-        for channel, price_key in export_mapping.items():
-            try:
-                self.gui_redis.export_message(
-                    channel,
-                    normalized_prices[price_key],
-                    skip_if_unchanged=True,  # ✅ Salta se non è cambiato
-                    flat_mode=True  # ✅ RTD-compatible format
-                )
-            except Exception as e:
-                logger.error(f"Errore export_message per {channel}: {e}", exc_info=True)
-
-        logger.debug(f"GUI export complete: {len(export_mapping)} channels processed")
-
-    def _publish_to_storage(self, normalized_prices: Dict[str, any], current_time: datetime):
-        """
-        Pubblica mid, prezzi teorici e misalignment su Redis TimeSeries.
-
-        Pubblica 7 campi per ogni ETF ISIN in un singolo batch:
-        mid, live_idx, live_clust, intraday, live_idx_mis, live_clust_mis, intraday_mis.
-        """
-        etf_isins: Set[str] = set(self.etfs)
-        if not etf_isins:
-            logger.warning("No ETF ISINs found for storage")
-            return
-
-        all_field_names = ['mid', 'live_idx', 'live_clust', 'intraday',
-                           'live_idx_mis', 'live_clust_mis', 'intraday_mis']
-        self._ensure_timeseries_exist(etf_isins, all_field_names)
-
-        all_data = self._build_publish_data(normalized_prices, etf_isins)
-        self._batch_publish_prices(all_data, current_time)
-
-        self.last_storage_time = current_time
-        logger.info(f"Storage published {len(all_data)} entries for {len(etf_isins)} ISINs")
-
-    def _ensure_timeseries_exist(self, isins: Set[str], field_names: list):
-        """
-        Crea TimeSeries per tutte le combinazioni ISIN x field_name.
-
-        Ottimizzazione: usa cache interno di TimeSeriesPublisher.
-        """
-        created_count = 0
-        initial_count = self.timeseries_publisher.ts_stats.get("timeseries_created", 0)
-
-        for isin in isins:
-            for field_name in field_names:
-                try:
-                    self.timeseries_publisher.ts_create(isin, field_name)
-                    created_count += 1
-                except Exception as e:
-                    # Già esiste o errore recoverable
-                    logger.debug(f"ts_create for {isin}:{field_name}: {e}")
-
-        new_created = (self.timeseries_publisher.ts_stats.get("timeseries_created", 0)
-                       - initial_count)
-        if new_created > 0:
-            logger.debug(f"Created {new_created} new TimeSeries")
-
-    def _build_publish_data(
-            self,
-            normalized_prices: Dict[str, any],
-            etf_isins: Set[str]
-    ) -> list:
-        """
-        Raccoglie mid, prezzi teorici e misalignment per tutti gli ETF ISINs.
-
-        Usa operazioni pandas vettorializzate per performance.
-        Ritorna lista di tuple (isin, field_name, value) arrotondati a 5 decimali.
-        """
-        mid = normalized_prices['mid'].reindex(etf_isins).replace(0, np.nan)
-
-        price_fields = {
-            'mid':        mid,
-            'live_idx':   normalized_prices['live_idx'].reindex(etf_isins),
-            'live_clust': normalized_prices['live_clust'].reindex(etf_isins),
-            'intraday':   normalized_prices['intraday'].reindex(etf_isins),
-        }
-        mis_fields = {
-            'live_idx_mis':   (price_fields['live_idx']   / mid - 1),
-            'live_clust_mis': (price_fields['live_clust'] / mid - 1),
-            'intraday_mis':   (price_fields['intraday']   / mid - 1),
-        }
-
-        all_data = []
-        for field_name, series in {**price_fields, **mis_fields}.items():
-            valid = series.round(5).dropna()
-            for isin, value in valid.items():
-                all_data.append((isin, field_name, float(value)))
-        return all_data
-
-    def _batch_publish_prices(self, all_data: list, current_time: datetime):
-        """
-        Pubblica mid, prezzi teorici e misalignment in un singolo batch Redis.
-
-        Non solleva eccezioni: un errore di pubblicazione non deve interrompere la strategia.
-        """
-        if not all_data:
-            logger.warning("No data to publish to TimeSeries")
-            return
-        try:
-            with self.timeseries_publisher.ts_batch() as batch:
-                for isin, field_name, value in all_data:
-                    batch.add(isin, field_name, value, timestamp=current_time)
-            logger.debug(f"Batch published {len(all_data)} values")
-        except Exception as e:
-            logger.error(f"Batch publishing failed, TimeSeries skipped: {e}", exc_info=True)
-
-    def _calculate_misalignments(
-            self,
-            normalized_prices: Dict[str, any],
-            all_isins: Set[str]
-    ) -> list:
-        """
-        Calcola misalignment (scarto %) per tutti gli ISINs.
-
-        Ritorna lista di tuple (isin, field_name, misalignment_value)
-        pronta per batch publish.
-
-        Ottimizzazione: vectorizzato per ISINs, non per ogni ISIN dentro il loop.
-        """
-        misalignments = []
-
-        mid_prices = normalized_prices['mid']
-
-        price_mapping = [
-            ('live_idx_mis', normalized_prices['live_idx']),
-            ('live_clust_mis', normalized_prices['live_clust']),
-            ('intraday_mis', normalized_prices['intraday'])
-        ]
-
-        for field_name, price_series in price_mapping:
-            for isin in all_isins:
-                try:
-                    series_value = price_series.get(isin)
-                    mid_price = mid_prices.get(isin)
-
-                    # Validazione: mid_price deve essere positivo e non NaN
-                    if mid_price is None or mid_price == 0 or np.isnan(mid_price):
-                        continue
-
-                    # Calcolo misalignment
-                    if series_value is not None and not np.isnan(series_value):
-                        misalignment = float(np.round(series_value / mid_price - 1, 6))
-                        misalignments.append((isin, field_name, misalignment))
-
-                except (TypeError, ZeroDivisionError, ValueError) as e:
-                    logger.warning(f"Error calculating misalignment for {isin}: {e}")
-                    continue
-
-        return misalignments
-
-    def _batch_publish_misalignments(self, misalignments: list):
-        """
-        Pubblica misalignments in un singolo batch.
-
-        Ottimizzazione: usa ts_batch() context manager per minimo overhead.
-        """
-        if not misalignments:
-            logger.warning("No misalignments to publish")
-            return
-
-        try:
-            with self.timeseries_publisher.ts_batch() as batch:
-                for isin, field_name, misalignment_value in misalignments:
-                    batch.add(isin, field_name, misalignment_value)
-
-            logger.debug(f"Batch published {len(misalignments)} misalignment values")
-
-        except Exception as e:
-            logger.error(f"Batch publishing failed: {e}", exc_info=True)
-            raise
-
-    # ============================================================================
-    # Statistiche e Monitoring (opzionale)
-    # ============================================================================
-
-    def get_update_hf_stats(self) -> dict:
-        """Ritorna statistiche dell'ultimo update_HF."""
-        ts_stats = self.timeseries_publisher.ts_get_stats()
-        return {
-            "timeseries_created": ts_stats.get("timeseries_created", 0),
-            "total_published": ts_stats.get("total_published", 0),
-            "duplicates_skipped": ts_stats.get("duplicates_skipped", 0),
-            "errors": ts_stats.get("errors", 0),
-            "last_storage_time": self.last_storage_time.isoformat() if hasattr(self, 'last_storage_time') else None
-        }
+            self.publisher.publish_prices_to_gui(normalized_prices)
+            self.publisher.publish_to_timeseries(
+                normalized_prices, datetime.now(), predictions)
 
     def update_LF(self):
+        """Aggiornamento a bassa frequenza: pubblica i ritorni intraday storici."""
+        self.publisher.publish_lf_data(
+            self.intraday_adjuster, self.mid_eur,
+            self.currencies, self.all_etf_plus_securities)
 
-        fx = self.mid_eur[self.currencies]
-        etfs = self.mid_eur[self.all_etf_plus_securities]
-        self.intraday_adjuster.append_update(prices=etfs, fx_prices=fx)
-        intraday_returns = self.intraday_adjuster.get_clean_returns()
-
-        intraday_returns.index = intraday_returns.index.floor('min')
-        intraday_returns.sort_index(ascending=False, inplace=True)
-        intraday_returns.index = intraday_returns.index.strftime('%Y-%m-%dT%H:%M:%S')
-
-        self.gui_redis.export_static_data(df_big=intraday_returns.T.to_json())
+    # =========================================================================
+    # Pricing
+    # =========================================================================
 
     def get_mid(self) -> pd.Series:
         """
-        Get the mid-price of book.
-        Store corrected returns and a copy of last book
-
-        Returns:
-            pd.Series: Series of md-prices for ETFs, Drivers, and FX.
+        Legge il mid corrente dal book, filtra outlier e aggiorna i ritorni corretti.
         """
-
         last_mid = self.market_data.get_mid()
         self.book_eur = self.market_data.get_data_field(["BID", "ASK"])
+
         if self.mid_eur is not None:
             safe_last_book = last_mid.replace(0, np.nan)
             is_outlier = (
@@ -675,26 +366,92 @@ class EtfEquityPriceEngine(StrategyUI):
                     | (last_mid == 0)
                     | ((self.mid_eur / safe_last_book - 1).abs() > self.book_mid_threshold)
             )
-
             valid_entries = last_mid[~is_outlier]
             self.mid_eur.loc[[i for i in valid_entries.index if i in self.mid_eur.index]] = valid_entries
-
         else:
             self.mid_eur = last_mid
 
         with self.adjuster.live_update(fx_prices=last_mid[self.currencies], prices=last_mid):
             self.corrected_return = self.adjuster.get_clean_returns(cumulative=True).T
             last_return = self.corrected_return.iloc[:, -1]
+
         with self.intraday_adjuster.live_update(fx_prices=last_mid[self.currencies], prices=last_mid):
             self.corrected_return_intraday = self.intraday_adjuster.get_clean_returns(cumulative=True).T
             last_return_intraday = self.corrected_return_intraday.iloc[:, -1]
 
-        self.gui_redis.export_message("market:return_0",
-                                      (last_return.astype(float) * 100).round(4))
-        self.gui_redis.export_message("market:intraday_return_0",
-                                      (last_return_intraday.astype(float) * 100).round(4))
+        # Aggiorna i returns source nel registry (i DataFrame sono stati ricreati)
+        self.models.set_returns_source("cluster", self.corrected_return)
+        self.models.set_returns_source("index_cluster", self.corrected_return)
+        self.models.set_returns_source("intraday", self.corrected_return_intraday)
+
+        self.publisher.publish_returns(last_return, last_return_intraday)
         self.book_storage.append(last_mid)
         return last_mid
+
+    def _reload_beta_matrices(self):
+        """Ricarica e aggiorna le matrici beta per tutti i modelli."""
+        self.input_params.load_inputs_db(db_path=self.db_path)
+
+        beta_cluster = self._prepare_beta_matrix(self.input_params.beta_cluster)
+        beta_cluster_index = self._prepare_beta_matrix(self.input_params.beta_cluster_index)
+
+        if beta_cluster.empty or beta_cluster_index.empty:
+            raise ValueError("One or both beta matrices are empty after filtering")
+
+        for name, beta in [("cluster", beta_cluster), ("intraday", beta_cluster),
+                           ("index_cluster", beta_cluster_index)]:
+            correction = self._calculate_cluster_correction(beta, 0)
+            self.models.update_beta(name, beta, correction)
+
+        logger.info(f"  - Cluster beta shape: {beta_cluster.shape}, "
+                    f"density: {(beta_cluster != 0).sum().sum() / beta_cluster.size:.2%}")
+        logger.info(f"  - Index cluster beta shape: {beta_cluster_index.shape}, "
+                    f"density: {(beta_cluster_index != 0).sum().sum() / beta_cluster_index.size:.2%}")
+
+    def _prepare_beta_matrix(self, beta_df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Filtra, normalizza e converte ticker->ISIN per una matrice beta.
+
+        Args:
+            beta_df: Matrice beta grezza (con ticker)
+
+        Returns:
+            Matrice beta filtrata, normalizzata e con ISIN
+        """
+        filtered = beta_df.loc[
+            beta_df.index.intersection(self.etfs),
+            beta_df.columns.intersection(self.etfs)
+        ]
+
+        if filtered.empty:
+            logger.warning("Filtered beta matrix is empty")
+            return pd.DataFrame()
+
+        filtered = filtered.dropna(how='all', axis=0).dropna(how='all', axis=1)
+
+        row_sums = filtered.sum(axis=1)
+
+        invalid_rows = (row_sums == 0) | row_sums.isna()
+        if invalid_rows.any():
+            logger.warning(f"Beta matrix has {invalid_rows.sum()} rows with zero/NaN sum: "
+                           f"{filtered.index[invalid_rows].tolist()}")
+            filtered = filtered[~invalid_rows]
+            row_sums = row_sums[~invalid_rows]
+
+        normalized = filtered.div(row_sums, axis=0).fillna(0)
+
+        result = (normalized
+                  .rename(self.ticker_to_isin, axis=1)
+                  .rename(self.ticker_to_isin, axis=0))
+
+        logger.debug(f"Beta matrix prepared: shape {result.shape}, "
+                     f"non-zero elements: {(result != 0).sum().sum()}")
+
+        return result
+
+    # =========================================================================
+    # Utilities
+    # =========================================================================
 
     @property
     def instruments(self) -> list:
@@ -709,32 +466,17 @@ class EtfEquityPriceEngine(StrategyUI):
         return self._instruments
 
     def as_isin(self, _id: str | list[str]) -> list[str] | str:
-        if isinstance(_id, str): return self.ticker_to_isin.get(_id, _id)
+        if isinstance(_id, str):
+            return self.ticker_to_isin.get(_id, _id)
         return [self.ticker_to_isin.get(el, el) for el in _id]
-
-    def calculate_cluster_theoretical_price(self):
-        try:
-            self.theoretical_live_cluster_price = (self.cluster_model.
-                                                   get_price_prediction(self.mid_eur,
-                                                                        self.corrected_return.T))
-            self.theoretical_live_index_cluster_price = (self.index_cluster_model.
-                                                         get_price_prediction(self.mid_eur,
-                                                                              self.corrected_return.T))
-
-            self.theoretical_intraday_prices = (self.cluster_model_intraday.
-                                                get_price_prediction(self.mid_eur,
-                                                                     self.corrected_return_intraday.T))
-        except Exception as e:
-            logging.error(f"Exception occurred while calculating cluster price: {e}")
 
     @staticmethod
     def round_series_to_tick(series, tick_dict, default_tick=0.001):
-        """ Arrotonda una Series ai tick specificati per ciascun strumento e normalizza i float. """
+        """Arrotonda una Series ai tick specificati per ciascun strumento."""
         if series is None:
             return series
         if isinstance(tick_dict, pd.Series):
             tick_dict = tick_dict.to_dict()
-
         ticks = np.array([tick_dict.get(idx, default_tick) for idx in series.index]) / 2
         values = series.fillna(0).values.astype(float)
         rounded_values = np.round(np.round(values / ticks) * ticks, 10)
@@ -756,22 +498,40 @@ class EtfEquityPriceEngine(StrategyUI):
         return df
 
     @staticmethod
-    def _calculate_cluster_correction(cluster_betas: pd.DataFrame, threshold: float = 0.5) -> pd.Series:
+    def _calculate_cluster_correction(cluster_betas: pd.DataFrame,
+                                      threshold: float = 0.5) -> pd.Series:
         """
-        Calculate the cluster correction factor for each subcluster.
+        Calcola il fattore di correzione per ciascun sottocluster.
 
         Returns:
-            pd.Series: Series with correction factors for each ISIN.
+            pd.Series: fattori di correzione per ISIN.
         """
-        # this first line is used for the brothers matrix, in order to make it comparable with the clusters matrix
-        cluster_betas = cluster_betas.sort_index(axis=1)
-        cluster_betas = cluster_betas.sort_index(axis=0)
+        if cluster_betas.empty:
+            return pd.Series(dtype=float)
+
+        cluster_betas = cluster_betas.sort_index(axis=1).sort_index(axis=0)
+
         for etf in cluster_betas.index:
-            cluster_betas.loc[etf, etf] = 0
-        # with the first series we define which is the threshold for a betas to be considered
-        cluster_threshold: pd.Series = threshold / (cluster_betas != 0).sum(axis=1)
-        # here we count only the beta which are above the threshold
+            if etf in cluster_betas.columns:
+                cluster_betas.loc[etf, etf] = 0
+
+        non_zero_counts = (cluster_betas != 0).sum(axis=1)
+
+        cluster_threshold = pd.Series(index=cluster_betas.index, dtype=float)
+        cluster_threshold[non_zero_counts > 0] = threshold / non_zero_counts[non_zero_counts > 0]
+        cluster_threshold[non_zero_counts == 0] = 0
+
         cluster_sizes = cluster_betas.gt(cluster_threshold, axis=0).sum(axis=1) + 1
-        # the correction is than calculated as the number of elements which truly influence our calculations
-        correction = cluster_sizes.where(cluster_sizes == 1, (cluster_sizes - 1) / cluster_sizes)
-        return correction
+
+        return cluster_sizes.where(cluster_sizes == 1, (cluster_sizes - 1) / cluster_sizes)
+
+    def get_update_hf_stats(self) -> dict:
+        """Ritorna statistiche dell'ultimo ciclo update_HF."""
+        ts_stats = self.publisher.ts_stats
+        return {
+            "timeseries_created": ts_stats.get("timeseries_created", 0),
+            "total_published": ts_stats.get("total_published", 0),
+            "duplicates_skipped": ts_stats.get("duplicates_skipped", 0),
+            "errors": ts_stats.get("errors", 0),
+            "last_storage_time": self.publisher.last_storage_time.isoformat(),
+        }
