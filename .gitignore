@@ -11,3 +11,5 @@ logs
 *.pyc
 *.parquet
 grafana
+dist
+build

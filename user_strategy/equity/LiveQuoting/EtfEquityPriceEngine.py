@@ -18,7 +18,10 @@ from sfm_data_provider.analytics.adjustments.ter import TerComponent
 from sfm_data_provider.core.holidays.holiday_manager import HolidayManager
 
 from market_monitor.publishers.timeseries_publisher import TimeSeriesPublisher
-from user_strategy.equity.utils.SQLUtils.storage import PriceDatabaseManager
+from datetime import datetime, time
+from typing import Dict, Set, Optional
+import logging
+
 from sfm_data_provider.interface.bshdata import BshData
 
 from market_monitor.gui.implementations.GUI import GUI
@@ -102,7 +105,7 @@ class EtfEquityPriceEngine(StrategyUI):
         beta_cluster = self.input_params.beta_cluster
         beta_cluster_index = self.input_params.beta_cluster_index
 
-        # ✅ Crea una nuova lista filtrata invece di modificare durante iterazione
+        #  Crea una nuova lista filtrata invece di modificare durante iterazione
         self.etfs = list({
             *self.input_params.beta_cluster.index,
             *self.input_params.beta_cluster.columns,
@@ -126,14 +129,12 @@ class EtfEquityPriceEngine(StrategyUI):
 
         self.etfs = sorted(valid_etfs)
 
-
         for attr in ['beta_cluster', 'beta_cluster_index']:
             df = getattr(self.input_params, attr)
             # Filtra solo per le colonne/indici rimasti
             df_filtered = df.loc[df.index.intersection(self.etfs), df.columns.intersection(self.etfs)]
             # Rinormalizza dividendo per la nuova somma
             setattr(self.input_params, attr, df_filtered.div(df_filtered.sum(axis=1), axis=0).fillna(0))
-
 
         self.instruments = list({
             *self.etfs,
@@ -270,6 +271,11 @@ class EtfEquityPriceEngine(StrategyUI):
         self.cluster_model.calculate_cluster_correction()
         self.index_cluster_model.calculate_cluster_correction()
 
+
+        print("="*80)
+        print("see price analytics in: http://localhost:3000/d/etf-price-monitor-v2/")
+        print("="*80)
+
         # Publish returns
         static_return = self.adjuster.get_clean_returns()
         for i in self.return_to_publish:
@@ -347,45 +353,6 @@ class EtfEquityPriceEngine(StrategyUI):
 
         return True
 
-    """
-    Versione ottimizzata della funzione update_HF con:
-    - Creazione TimeSeries centralizzata e una sola volta
-    - Calcoli di misalignment pre-elaborati
-    - Pipeline Redis per export message
-    - Batch publishing unificato
-    - Eliminazione ridondanze
-    """
-
-    from datetime import datetime, time
-    import numpy as np
-    from typing import Dict, Tuple, Set
-    import logging
-
-    logger = logging.getLogger(__name__)
-
-    """
-    Versione ottimizzata della funzione update_HF con:
-    - Creazione TimeSeries centralizzata e una sola volta
-    - Calcoli di misalignment pre-elaborati
-    - Uso corretto di RedisMessaging per export GUI
-    - Batch publishing unificato
-    - Eliminazione ridondanze
-
-    IMPORTANTE: Usa self.gui_redis.export_message() NON redis_client.pipeline()
-    per mantenere correttezza di:
-      - Normalizzazione dati
-      - Change detection
-      - Serializzazione JSON
-      - Size control (Excel RTD limit)
-      - Logging tracciato
-    """
-
-    from datetime import datetime, time
-    import numpy as np
-    from typing import Dict, Tuple, Set, Optional, Any
-    import logging
-
-    logger = logging.getLogger(__name__)
 
     def update_HF(self):
         """Aggiornamento ad alta frequenza con ottimizzazioni di performance."""
@@ -438,11 +405,6 @@ class EtfEquityPriceEngine(StrategyUI):
             'market:mid': 'mid'
         }
 
-        # Pubblica attraverso RedisMessaging per mantenere:
-        # - Normalizzazione (già fatto, ma passa through)
-        # - Change detection
-        # - Serializzazione con metadata
-        # - Logging tracciato
         for channel, price_key in export_mapping.items():
             try:
                 self.gui_redis.export_message(
