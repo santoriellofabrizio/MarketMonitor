@@ -56,6 +56,7 @@ class StrategyUIAsync(ABC):
         self.synchronous_trade_handling: bool = True
         self.GUIs: dict[str, GUI] = {}
         self.market_data: RTData = market_data
+        self.trade_market_data: RTData = None
         self.running = False
         self.kwargs = kwargs
 
@@ -350,6 +351,17 @@ class StrategyUIAsync(ABC):
         """ Sets book object for the strategy."""
         self.market_data = market_data
         self._on_market_data_setting()
+
+    def set_trade_market_data(self, trade_market_data: RTData):
+        """Sets the dedicated RTData for trade subscriptions."""
+        self.trade_market_data = trade_market_data
+        self._on_trade_market_data_setting()
+
+    def _on_trade_market_data_setting(self):
+        self.on_trade_market_data_setting()
+
+    def on_trade_market_data_setting(self):
+        pass
 
     def on_book_initialized(self):
         pass

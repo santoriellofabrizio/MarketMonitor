@@ -21,7 +21,7 @@ from market_monitor.input_threads.trade import TradeThread
 from market_monitor.input_threads.bloomberg import BloombergStreamingThread
 from market_monitor.input_threads.excel import ExcelStreamingThread
 from market_monitor.input_threads.redis import RedisStreamingThread
-from market_monitor.input_threads.kafka import KafkaStreamingThread
+from market_monitor.input_threads.kafka import KafkaStreamingThread, KafkaTradeStreamingThread
 from market_monitor.live_data_hub.real_time_data_hub import RTData
 
 
@@ -239,11 +239,26 @@ class Builder:
         threads.append(redis_distributor_thread)
 
     def _setup_kafka_distributor(self, threads, monitor):
-        """Setup Kafka streaming thread per dati real-time da DUMA/Binance."""
-
+        """Setup book e trade Kafka threads separati."""
         kafka_params = self.config.get("kafka_data_distributor", {}).get("kafka_params", {})
-        kafka_thread = KafkaStreamingThread(real_time_data=monitor.market_data, **kafka_params)
-        threads.append(kafka_thread)
+
+        # Book thread: usa monitor.market_data (già impostato da _set_real_time_data)
+        book_thread = KafkaStreamingThread(real_time_data=monitor.market_data, **kafka_params)
+        threads.append(book_thread)
+
+        # Trade thread: RTData dedicato + queue separata
+        trade_rtdata = RTData(Lock())
+        monitor.set_trade_market_data(trade_rtdata)  # → on_trade_market_data_setting()
+
+        trade_queue = Queue()
+        monitor.set_q_trade(trade_queue)
+
+        trade_thread = KafkaTradeStreamingThread(
+            real_time_data=trade_rtdata,
+            queue=trade_queue,
+            **kafka_params
+        )
+        threads.append(trade_thread)
 
     def _setup_gui(self, threads, monitor):
         gui = None

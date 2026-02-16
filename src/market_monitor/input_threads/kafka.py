@@ -40,7 +40,6 @@ import threading
 import time
 import uuid
 from collections import defaultdict, deque
-from enum import Enum
 from queue import Queue
 from typing import Optional, Dict, Any, List, Set, Tuple, Deque
 
@@ -48,17 +47,12 @@ import pandas as pd
 
 from market_monitor.live_data_hub.real_time_data_hub import RTData
 from market_monitor.live_data_hub.live_subscription import KafkaSubscription
+from market_monitor.input_threads.trade import TradeType
 
 logger = logging.getLogger(__name__)
 
 # Type alias for trade deduplication key: (isin, market, timestamp, price, quantity)
 TradeKey = Tuple[str, str, int, float, float]
-
-
-class TradeType(Enum):
-    """Trade classification for the queue emitted by KafkaTradeStreamingThread."""
-    MARKET = 1
-    OWN = 2
 
 
 class KafkaStreamingThread(threading.Thread):
@@ -402,9 +396,7 @@ class KafkaTradeStreamingThread(KafkaStreamingThread):
       the same key arrives within that window the public deal is discarded.
       Otherwise it is flushed as (TradeType.MARKET, df) after the window expires.
 
-    Note on TradeType: this module defines its own TradeType enum (MARKET=1,
-    OWN=2). trade.py defines a different one (OWN=1, MARKET=2). Consumers of
-    the queue should import TradeType from this module.
+    TradeType is imported from trade.py (OWN=1, MARKET=2).
 
     Args:
         real_time_data: RTData instance (used for subscription management)
