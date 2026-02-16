@@ -37,13 +37,28 @@ ESEMPIO:
 
 import logging
 import threading
+import time
 import uuid
-from typing import Optional, Dict, Any, List, Set
+from collections import defaultdict, deque
+from enum import Enum
+from queue import Queue
+from typing import Optional, Dict, Any, List, Set, Tuple, Deque
+
+import pandas as pd
 
 from market_monitor.live_data_hub.real_time_data_hub import RTData
 from market_monitor.live_data_hub.live_subscription import KafkaSubscription
 
 logger = logging.getLogger(__name__)
+
+# Type alias for trade deduplication key: (isin, market, timestamp, price, quantity)
+TradeKey = Tuple[str, str, int, float, float]
+
+
+class TradeType(Enum):
+    """Trade classification for the queue emitted by KafkaTradeStreamingThread."""
+    MARKET = 1
+    OWN = 2
 
 
 class KafkaStreamingThread(threading.Thread):
@@ -314,7 +329,7 @@ class KafkaStreamingThread(threading.Thread):
         elif store == "blob":
             real_time_data._blob_store.store(ticker, value)
 
-    def _extract_default_market_fields(self, value: Dict[str, Any]) -> Dict[str, float]:
+    def _extract_default_market_fields(self, value: Dict[str, Any]) -> Dict[str, Any]:
         """
         Estrazione di default per formati comuni quando non c'è fields_mapping.
 
@@ -372,6 +387,288 @@ class KafkaStreamingThread(threading.Thread):
         logger.info("KafkaStreamingThread stop requested")
 
 
+class KafkaTradeStreamingThread(KafkaStreamingThread):
+    """
+    Thread per streaming di dati di trade da Kafka (PublicDeal, Trade topics).
+
+    Extends KafkaStreamingThread adding own-trade vs market-trade deduplication
+    via a time-windowed buffer. Results are published to a shared Queue as
+    (TradeType, pd.DataFrame) tuples.
+
+    Deduplication logic:
+    - Own trades are emitted immediately as (TradeType.OWN, df) and cancel
+      the earliest matching buffered public deal.
+    - Public deals are buffered for `buffer_sec` seconds. If an own trade with
+      the same key arrives within that window the public deal is discarded.
+      Otherwise it is flushed as (TradeType.MARKET, df) after the window expires.
+
+    Note on TradeType: this module defines its own TradeType enum (MARKET=1,
+    OWN=2). trade.py defines a different one (OWN=1, MARKET=2). Consumers of
+    the queue should import TradeType from this module.
+
+    Args:
+        real_time_data: RTData instance (used for subscription management)
+        queue: Shared Queue where (TradeType, pd.DataFrame) tuples are put
+        buffer_sec: Seconds to hold a public deal before flushing as MARKET (default 10)
+        **kwargs: Forwarded to KafkaStreamingThread (bootstrap_servers, etc.)
+    """
+
+    def __init__(self,
+                 real_time_data: RTData,
+                 queue: Queue,
+                 buffer_sec: float = 10.0,
+                 **kwargs):
+        super().__init__(real_time_data=real_time_data, **kwargs)
+        self.name = "kafka_trade"
+
+        self.queue_trade: Queue = queue
+        self._buffer_sec: float = buffer_sec
+
+        # Public deals buffered while waiting for own-trade confirmation
+        self._pending_publicdeals: Dict[TradeKey, Deque[Any]] = defaultdict(deque)
+        # Own trade keys seen, used to cancel matching buffered public deals
+        self._seen_own_trades: Set[TradeKey] = set()
+        # Timestamp of when the first public deal for each key was received
+        self._pending_trade_timestamp_received: Dict[TradeKey, float] = {}
+
+    # ------------------------------------------------------------------
+    # run() override: identical to parent with flush call added per cycle
+    # ------------------------------------------------------------------
+
+    def run(self):
+        """
+        Poll loop identical to KafkaStreamingThread.run() with one addition:
+        after each consumer.poll() call, flush any expired buffered public deals.
+        """
+        try:
+            from confluent_kafka import Consumer
+            from confluent_kafka.schema_registry import SchemaRegistryClient
+            from confluent_kafka.schema_registry.avro import AvroDeserializer
+        except ImportError as e:
+            logger.error(f"Kafka libraries not installed: {e}")
+            logger.error("Install with: pip install confluent_kafka fastavro")
+            return
+
+        self._load_subscriptions()
+
+        if not self._topics:
+            logger.warning("No Kafka topics to subscribe to, thread will idle")
+            while not self.stop_event.wait(timeout=5):
+                self._load_subscriptions()
+                if self._topics:
+                    break
+            if not self._topics:
+                logger.info("KafkaTradeStreamingThread stopping (no subscriptions)")
+                return
+
+        schema_registry_conf = {"url": self.schema_registry_url}
+        schema_registry_client = SchemaRegistryClient(schema_registry_conf)
+        self.avro_deserializer = AvroDeserializer(schema_registry_client=schema_registry_client)
+
+        consumer_conf = {
+            "bootstrap.servers": self.bootstrap_servers,
+            "group.id": self.consumer_group,
+            "auto.offset.reset": self.start_mode,
+        }
+        self.consumer = Consumer(consumer_conf)
+        self.consumer.subscribe(list(self._topics))
+
+        logger.info(f"KafkaTradeStreamingThread started - topics: {self._topics}")
+        self.running = True
+
+        # Cache locals for speed in hot loop
+        isin_to_sub = self._isin_to_sub
+        real_time_data = self.real_time_data
+        deserializer = self.avro_deserializer
+        stop_event = self.stop_event
+        consumer = self.consumer
+
+        try:
+            while not stop_event.is_set():
+                msg = consumer.poll(timeout=0.1)
+
+                # Flush expired buffered public deals on every poll cycle
+                self._flush_public_deal_expired()
+
+                if msg is None:
+                    self._check_new_subscriptions()
+                    continue
+
+                if msg.error():
+                    logger.error(f"Kafka error: {msg.error()}")
+                    continue
+
+                try:
+                    value = deserializer(msg.value())
+                except Exception as e:
+                    logger.debug(f"Failed to deserialize message: {e}")
+                    continue
+
+                # FAST PATH: O(1) lookup by ISIN
+                instrument = value.get('instrument')
+                if instrument:
+                    isin = instrument.get('isin')
+                    if isin:
+                        sub = isin_to_sub.get(isin)
+                        if sub:
+                            self._process_matched_message(sub, value, real_time_data)
+                            continue
+
+                # SLOW PATH: fallback per subscription senza symbol_filter
+                topic = msg.topic()
+                self._handle_message(topic, value)
+
+        except Exception as e:
+            logger.error(f"Error in KafkaTradeStreamingThread: {e}", exc_info=True)
+        finally:
+            if self.consumer:
+                self.consumer.close()
+            self.running = False
+            logger.info("KafkaTradeStreamingThread stopped")
+
+    # ------------------------------------------------------------------
+    # _route_to_store() override: intercepts "market" store for trade logic
+    # ------------------------------------------------------------------
+
+    def _route_to_store(self, sub: KafkaSubscription, value: Dict[str, Any], real_time_data: RTData):
+        """
+        Overrides parent routing for the "market" store.
+
+        Inserts _handle_public_vs_own_deal() between field extraction and
+        real_time_data.update(). All other stores fall through to the parent.
+        """
+        store = sub.store
+
+        if store == "market":
+            if sub.fields_mapping:
+                data = sub.extract_fields(value)
+            else:
+                data = self._extract_default_market_fields(value)
+
+            if data:
+                continue_iteration = self._handle_public_vs_own_deal(data)
+                if not continue_iteration:
+                    return
+                real_time_data.update(sub.id, data, store="market")
+        else:
+            super()._route_to_store(sub, value, real_time_data)
+
+    # ------------------------------------------------------------------
+    # _extract_default_market_fields() override: full trade field set
+    # ------------------------------------------------------------------
+
+    def _extract_default_market_fields(self, value: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Extracts the full trade field set from a PublicDeal or Trade message.
+
+        Returns the fields required by _handle_public_vs_own_deal():
+        Isin, Market, Last Update, Price, Quantity, Own Trade, Ticker,
+        Exchange, Currency, Description.
+        """
+        instrument = value.get('instrument') or {}
+        side = value.get('side')
+        if side == 'ASK':
+            own_trade = -1
+        elif side == 'BID':
+            own_trade = 1
+        else:
+            own_trade = 0
+
+        return {
+            'Ticker':      instrument.get('symbol'),
+            'Isin':        instrument.get('isin'),
+            'Currency':    instrument.get('currency'),
+            'Market':      instrument.get('market'),
+            'Exchange':    instrument.get('market'),
+            'Description': None,
+            'Price':       float(value['price']),
+            'Quantity':    float(value['quantity']),
+            'Last Update': value['eventTimestampUTC'],
+            'Own Trade':   own_trade,
+        }
+
+    # ------------------------------------------------------------------
+    # Trade deduplication
+    # ------------------------------------------------------------------
+
+    def _flush_public_deal_expired(self):
+        """
+        Release buffered public deals whose hold time has exceeded _buffer_sec.
+
+        Called once per poll cycle (~100ms). Public deals not matched by an
+        own-trade within the buffer window are emitted as (TradeType.MARKET, df).
+        """
+        now = time.time()
+        expired_keys = [
+            key for key, ts in self._pending_trade_timestamp_received.items()
+            if now - ts > self._buffer_sec
+        ]
+        for key in expired_keys:
+            pending_queue = self._pending_publicdeals.pop(key, None)
+            self._pending_trade_timestamp_received.pop(key, None)
+            if not pending_queue:
+                continue
+            for df in pending_queue:
+                self.queue_trade.put((TradeType.MARKET, df))
+
+    def _handle_public_vs_own_deal(self, data: Dict[str, Any]) -> bool:
+        """
+        Classify an incoming trade message and apply deduplication.
+
+        The deduplication key is (Isin, Market, Last Update, Price, Quantity).
+
+        Own trades (Own Trade != 0):
+            - Emitted immediately as (TradeType.OWN, df)
+            - Cancel the earliest matching buffered public deal
+
+        Public deals (Own Trade == 0):
+            - If a matching own trade key exists: discard, return False
+            - Otherwise: buffer and start the expiry timer
+
+        Returns:
+            True  — caller should proceed with real_time_data.update()
+            False — message consumed by deduplication, skip store update
+        """
+        key: TradeKey = (
+            str(data['Isin']),
+            str(data['Market']),
+            int(data['Last Update']),
+            float(data['Price']),
+            float(data['Quantity']),
+        )
+        is_own = data.get('Own Trade', 0) != 0
+
+        df = pd.DataFrame([data])[[
+            'Ticker', 'Isin', 'Currency', 'Quantity', 'Price',
+            'Last Update', 'Exchange', 'Market', 'Description', 'Own Trade'
+        ]]
+
+        if is_own:
+            self.queue_trade.put((TradeType.OWN, df))
+            self._seen_own_trades.add(key)
+            # Cancel the earliest matching buffered public deal (same execution)
+            if key in self._pending_publicdeals and self._pending_publicdeals[key]:
+                self._pending_publicdeals[key].popleft()
+                if not self._pending_publicdeals[key]:
+                    self._pending_publicdeals.pop(key, None)
+                    self._pending_trade_timestamp_received.pop(key, None)
+        else:
+            if key in self._seen_own_trades:
+                # Already processed as own trade; discard duplicate public deal
+                self._seen_own_trades.discard(key)
+                return False
+            self._pending_publicdeals[key].append(df)
+            if key not in self._pending_trade_timestamp_received:
+                self._pending_trade_timestamp_received[key] = time.time()
+
+        return True
+
+    def stop(self):
+        """Ferma il thread in modo pulito."""
+        self.stop_event.set()
+        logger.info("KafkaTradeStreamingThread stop requested")
+
+
 # ============================================================================
 # Main (esempio di utilizzo)
 # ============================================================================
@@ -382,51 +679,86 @@ if __name__ == "__main__":
 
     logging.basicConfig(level=logging.INFO)
 
-    # Setup
-    lock = Lock()
-    rtdata = RTData(locker=lock, fields=["BID", "ASK", "BID_SIZE", "ASK_SIZE"])
+    isin_to_subscribe = [
+        "IE00BKM4GZ66", "IE00B4L5YC18", "IE00BP3QZ601", "LU0950668870", "IE00B0M63516",
+        "LU1900068914", "LU0659579733", "LU1781541252", "IE00B469F816", "LU0779800910",
+        "IE00BP3QZ825", "IE00B4L5YX21", "IE00B5L8K969", "IE00B02KXH56", "IE00BZCQB185",
+        "FR0010429068", "LU0514695690", "IE00B4K48X80", "LU0950674175", "LU0480132876",
+        "IE00099GAJC6", "LU0846194776", "IE00B6R52259", "LU0147308422", "LU1900066207",
+        "LU1900067940", "DE000A0Q4R85", "IE000Y77LGG9", "FR0014003IY1", "IE00BMY76136",
+        "LU0274209740", "FR0010245514", "LU1681043599", "IE00BHZPJ783", "LU2573967036",
+        "IE00BCHWNQ94", "IE00B0M63177", "FR0010361683", "IE00B44Z5B48", "IE00BHZRR147",
+        "LU2376679564", "IE00BP3QZB59", "FR0010315770", "IE00BFNM3J75", "LU1681044480",
+        "IE00B60SX394", "IE00BKX55T58", "IE00BTJRMP35", "LU0274209237", "IE000UQND7H4",
+        "IE00B945VV12", "LU2573966905", "IE00BZ02LR44",
+    ]
 
-    # Subscribe a ETF via subscription service
-    svc = rtdata.get_subscription_manager()
+    # ------------------------------------------------------------------
+    # Book thread: KafkaStreamingThread subscribes to BookBest topics
+    # ------------------------------------------------------------------
+    book_rtdata = RTData(locker=Lock(), fields=["BID", "ASK", "BID_SIZE", "ASK_SIZE"])
+    book_svc = book_rtdata.get_subscription_manager()
 
-    # IWDA - iShares Core MSCI World
-    svc.subscribe_kafka(
-        id="IWDA",
-        topic="COALESCENT_DUMA.ETFP.BookBest",
-        symbol_filter="IE00B4L5Y983",
-        symbol_field="instrument.isin",
-        store="market",
-        fields_mapping={
-            "BID": "bidBestLevel.price",
-            "ASK": "askBestLevel.price",
-            "BID_SIZE": "bidBestLevel.quantity",
-            "ASK_SIZE": "askBestLevel.quantity"
-        }
-    )
+    for isin in isin_to_subscribe:
+        book_svc.subscribe_kafka(
+            id=isin,
+            topic="COALESCENT_DUMA.ETFP.BookBest",
+            symbol_filter=isin,
+            symbol_field="instrument.isin",
+            store="market",
+            fields_mapping={
+                "BID":      "bidBestLevel.price",
+                "ASK":      "askBestLevel.price",
+                "BID_SIZE": "bidBestLevel.quantity",
+                "ASK_SIZE": "askBestLevel.quantity",
+            }
+        )
 
-    # CSPX - iShares Core S&P 500
-    svc.subscribe_kafka(
-        id="CSPX",
-        topic="COALESCENT_DUMA.ETFP.BookBest",
-        symbol_filter="IE00B5BMR087",
-        symbol_field="instrument.isin",
-        store="market"
-        # No fields_mapping -> uses default extraction
-    )
+    book_thread = KafkaStreamingThread(book_rtdata)
+    book_thread.start()
 
-    # Start thread
-    kafka_thread = KafkaStreamingThread(rtdata)
-    kafka_thread.start()
+    # ------------------------------------------------------------------
+    # Trade thread: KafkaTradeStreamingThread subscribes to trade topics
+    # ------------------------------------------------------------------
+    trade_queue: Queue = Queue()
+    trade_rtdata = RTData(locker=Lock(), fields=[])
+    trade_svc = trade_rtdata.get_subscription_manager()
 
-    # Monitor
-    print("Monitoring ETF prices (Ctrl+C to stop)...")
+    for isin in isin_to_subscribe:
+        for topic in ["COALESCENT_DUMA.ETFP.PublicDeal", "COALESCENT_DUMA.ETFP.Trade"]:
+            trade_svc.subscribe_kafka(
+                id=f"{isin}_{topic.split('.')[-1]}",
+                topic=topic,
+                symbol_filter=isin,
+                symbol_field="instrument.isin",
+                store="market",
+            )
+
+    trade_thread = KafkaTradeStreamingThread(trade_rtdata, queue=trade_queue, buffer_sec=10.0)
+    trade_thread.start()
+
+    # ------------------------------------------------------------------
+    # Monitor both streams
+    # ------------------------------------------------------------------
+    print("Monitoring ETF book prices and trade queue (Ctrl+C to stop)...")
     try:
         while True:
-            time.sleep(2)
-            data = rtdata.get_data_field()
-            print(f"\n=== Market Data ===")
-            print(data)
+            time.sleep(10)
+
+            print("\n=== Book Market Data ===")
+            book_data = book_rtdata.get_data_field()
+            if not book_data.empty:
+                print(book_data)
+
+            print("\n=== Trades ===")
+            while not trade_queue.empty():
+                trade_type, df = trade_queue.get_nowait()
+                print(f"[{trade_type.name}]")
+                print(df.to_string(index=False))
+
     except KeyboardInterrupt:
-        kafka_thread.stop()
-        kafka_thread.join(timeout=5)
+        book_thread.stop()
+        trade_thread.stop()
+        book_thread.join(timeout=5)
+        trade_thread.join(timeout=5)
         print("Stopped")
