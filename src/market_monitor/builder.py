@@ -242,22 +242,18 @@ class Builder:
         """Setup book e trade Kafka threads separati."""
         kafka_params = self.config.get("kafka_data_distributor", {}).get("kafka_params", {})
 
-        # Book thread: usa monitor.market_data (già impostato da _set_real_time_data)
+        # Book thread: usa monitor.market_data (RTData, già impostato)
         book_thread = KafkaStreamingThread(real_time_data=monitor.market_data, **kafka_params)
         threads.append(book_thread)
 
-        # Trade thread: RTData dedicato + queue separata
-        trade_rtdata = RTData(Lock())
-        monitor.set_trade_market_data(trade_rtdata)  # → on_trade_market_data_setting()
-
+        # Trade thread: standalone, senza RTData
         trade_queue = Queue()
+        trade_thread = KafkaTradeStreamingThread(queue=trade_queue, **kafka_params)
+
+        # Espone il SubscriptionService del trade thread alla strategia
+        monitor.set_trade_subscription_manager(trade_thread.get_subscription_manager())
         monitor.set_q_trade(trade_queue)
 
-        trade_thread = KafkaTradeStreamingThread(
-            real_time_data=trade_rtdata,
-            queue=trade_queue,
-            **kafka_params
-        )
         threads.append(trade_thread)
 
     def _setup_gui(self, threads, monitor):

@@ -129,16 +129,15 @@ class EtfEquityLiveAnalysis(StrategyUI):
                                                          "BID_SIZE": "bidBestLevel.quantity",
                                                          "ASK_SIZE": "askBestLevel.quantity"})
 
-    def on_trade_market_data_setting(self) -> None:
-        subscription_manager = self.trade_market_data.get_subscription_manager()
+    def on_trade_subscription_setting(self) -> None:
         for isin in self.all_isin_ETFP:
-            subscription_manager.subscribe_kafka(id=f"{isin}:PublicDeal",
-                                                 symbol_filter=isin,
-                                                 topic="COALESCENT_DUMA.ETFP.PublicDeal")
+            self.trade_subscription_manager.subscribe_kafka(id=f"{isin}:PublicDeal",
+                                                            symbol_filter=isin,
+                                                            topic="COALESCENT_DUMA.ETFP.PublicDeal")
 
-            subscription_manager.subscribe_kafka(id=f"{isin}:Trade",
-                                                 symbol_filter=isin,
-                                                 topic="COALESCENT_DUMA.ETFP.Trade")
+            self.trade_subscription_manager.subscribe_kafka(id=f"{isin}:Trade",
+                                                            symbol_filter=isin,
+                                                            topic="COALESCENT_DUMA.ETFP.Trade")
 
     def update_LF(self) -> None:
         try:

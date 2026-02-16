@@ -47,6 +47,7 @@ import pandas as pd
 
 from market_monitor.live_data_hub.real_time_data_hub import RTData
 from market_monitor.live_data_hub.live_subscription import KafkaSubscription
+from market_monitor.live_data_hub.subscription_service import SubscriptionService
 from market_monitor.input_threads.trade import TradeType
 
 logger = logging.getLogger(__name__)
@@ -381,57 +382,129 @@ class KafkaStreamingThread(threading.Thread):
         logger.info("KafkaStreamingThread stop requested")
 
 
-class KafkaTradeStreamingThread(KafkaStreamingThread):
+class KafkaTradeStreamingThread(threading.Thread):
     """
-    Thread per streaming di dati di trade da Kafka (PublicDeal, Trade topics).
+    Thread standalone per streaming di dati di trade da Kafka (PublicDeal, Trade topics).
 
-    Extends KafkaStreamingThread adding own-trade vs market-trade deduplication
-    via a time-windowed buffer. Results are published to a shared Queue as
-    (TradeType, pd.DataFrame) tuples.
+    Completamente indipendente da RTData: gestisce le proprie subscription tramite
+    un SubscriptionService interno e pubblica i trade in una Queue condivisa come
+    tuple (TradeType, pd.DataFrame).
 
-    Deduplication logic:
-    - Own trades are emitted immediately as (TradeType.OWN, df) and cancel
-      the earliest matching buffered public deal.
-    - Public deals are buffered for `buffer_sec` seconds. If an own trade with
-      the same key arrives within that window the public deal is discarded.
-      Otherwise it is flushed as (TradeType.MARKET, df) after the window expires.
+    Logica di deduplication own-trade vs market-trade:
+    - Own trades emessi subito come (TradeType.OWN, df) e cancellano il primo
+      public deal bufferizzato con la stessa chiave.
+    - Public deals bufferizzati per `buffer_sec` secondi. Se arriva un own trade
+      con la stessa chiave entro la finestra, il public deal viene scartato.
+      Altrimenti viene emesso come (TradeType.MARKET, df) allo scadere del timer.
 
-    TradeType is imported from trade.py (OWN=1, MARKET=2).
+    TradeType è importato da trade.py (OWN=1, MARKET=2).
 
     Args:
-        real_time_data: RTData instance (used for subscription management)
-        queue: Shared Queue where (TradeType, pd.DataFrame) tuples are put
-        buffer_sec: Seconds to hold a public deal before flushing as MARKET (default 10)
-        **kwargs: Forwarded to KafkaStreamingThread (bootstrap_servers, etc.)
+        queue: Queue condivisa dove vengono messe le tuple (TradeType, pd.DataFrame)
+        bootstrap_servers: Lista server Kafka
+        schema_registry_url: URL Schema Registry per deserializzazione Avro
+        start_mode: "latest" (nuovi messaggi) o "earliest" (dall'inizio)
+        consumer_group: Group ID per il consumer (default: UUID random)
+        buffer_sec: Secondi di attesa prima di emettere un public deal come MARKET
+        **kwargs: Parametri extra ignorati (per compatibilità con **kafka_params)
     """
 
+    DEFAULT_BOOTSTRAP_SERVERS = KafkaStreamingThread.DEFAULT_BOOTSTRAP_SERVERS
+    DEFAULT_SCHEMA_REGISTRY   = KafkaStreamingThread.DEFAULT_SCHEMA_REGISTRY
+
     def __init__(self,
-                 real_time_data: RTData,
                  queue: Queue,
+                 bootstrap_servers: Optional[str] = None,
+                 schema_registry_url: Optional[str] = None,
+                 start_mode: str = "latest",
+                 consumer_group: Optional[str] = None,
                  buffer_sec: float = 10.0,
                  **kwargs):
-        super().__init__(real_time_data=real_time_data, **kwargs)
+        super().__init__(daemon=True)
         self.name = "kafka_trade"
 
+        # Output
         self.queue_trade: Queue = queue
-        self._buffer_sec: float = buffer_sec
 
-        # Public deals buffered while waiting for own-trade confirmation
+        # Proprio SubscriptionService — nessuna dipendenza da RTData
+        self._subscription_service = SubscriptionService()
+
+        # Kafka config
+        self.bootstrap_servers   = bootstrap_servers or self.DEFAULT_BOOTSTRAP_SERVERS
+        self.schema_registry_url = schema_registry_url or self.DEFAULT_SCHEMA_REGISTRY
+        self.start_mode          = start_mode
+        self.consumer_group      = consumer_group or str(uuid.uuid4())
+
+        # State
+        self.stop_event        = threading.Event()
+        self.running           = False
+        self.consumer          = None
+        self.avro_deserializer = None
+
+        # Subscription indexes (fast O(1) ISIN lookup)
+        self._subscriptions_by_topic: Dict[str, List[KafkaSubscription]] = {}
+        self._topics: Set[str] = set()
+        self._isin_to_sub: Dict[str, KafkaSubscription] = {}
+
+        # Deduplication state
+        self._buffer_sec: float = buffer_sec
         self._pending_publicdeals: Dict[TradeKey, Deque[Any]] = defaultdict(deque)
-        # Own trade keys seen, used to cancel matching buffered public deals
         self._seen_own_trades: Set[TradeKey] = set()
-        # Timestamp of when the first public deal for each key was received
         self._pending_trade_timestamp_received: Dict[TradeKey, float] = {}
 
+    def get_subscription_manager(self) -> SubscriptionService:
+        """Espone il SubscriptionService interno per la registrazione delle subscription."""
+        return self._subscription_service
+
     # ------------------------------------------------------------------
-    # run() override: identical to parent with flush call added per cycle
+    # Subscription management (mirror di KafkaStreamingThread, senza RTData)
+    # ------------------------------------------------------------------
+
+    def _load_subscriptions(self):
+        """Carica le subscription Kafka dal proprio SubscriptionService."""
+        pending = self._subscription_service.get_pending_subscriptions("kafka") or {}
+        active  = self._subscription_service.get_kafka_subscription() or {}
+        all_subs = {**pending, **active}
+
+        self._subscriptions_by_topic.clear()
+        self._topics.clear()
+        self._isin_to_sub.clear()
+
+        for sub_id, sub in all_subs.items():
+            if isinstance(sub, KafkaSubscription):
+                topic = sub.topic
+                if topic not in self._subscriptions_by_topic:
+                    self._subscriptions_by_topic[topic] = []
+                self._subscriptions_by_topic[topic].append(sub)
+                self._topics.add(topic)
+                if sub.symbol_filter:
+                    self._isin_to_sub[sub.symbol_filter] = sub
+
+        logger.info(
+            f"KafkaTradeStreamingThread: loaded {len(all_subs)} subscriptions "
+            f"for {len(self._topics)} topics: {self._topics}"
+        )
+
+    def _check_new_subscriptions(self):
+        """Controlla se ci sono nuove subscription e aggiorna il consumer se necessario."""
+        pending = self._subscription_service.get_pending_subscriptions("kafka") or {}
+        new_topics = {
+            sub.topic
+            for sub in pending.values()
+            if isinstance(sub, KafkaSubscription) and sub.topic not in self._topics
+        }
+        if new_topics:
+            logger.info(f"New Kafka trade topics detected: {new_topics}")
+            self._load_subscriptions()
+            if self.consumer:
+                self.consumer.subscribe(list(self._topics))
+
+    # ------------------------------------------------------------------
+    # run()
     # ------------------------------------------------------------------
 
     def run(self):
-        """
-        Poll loop identical to KafkaStreamingThread.run() with one addition:
-        after each consumer.poll() call, flush any expired buffered public deals.
-        """
+        """Loop di polling: connette a Kafka e invia i trade in queue."""
         try:
             from confluent_kafka import Consumer
             from confluent_kafka.schema_registry import SchemaRegistryClient
@@ -444,7 +517,7 @@ class KafkaTradeStreamingThread(KafkaStreamingThread):
         self._load_subscriptions()
 
         if not self._topics:
-            logger.warning("No Kafka topics to subscribe to, thread will idle")
+            logger.warning("KafkaTradeStreamingThread: no topics, thread idle")
             while not self.stop_event.wait(timeout=5):
                 self._load_subscriptions()
                 if self._topics:
@@ -453,13 +526,12 @@ class KafkaTradeStreamingThread(KafkaStreamingThread):
                 logger.info("KafkaTradeStreamingThread stopping (no subscriptions)")
                 return
 
-        schema_registry_conf = {"url": self.schema_registry_url}
-        schema_registry_client = SchemaRegistryClient(schema_registry_conf)
+        schema_registry_client = SchemaRegistryClient({"url": self.schema_registry_url})
         self.avro_deserializer = AvroDeserializer(schema_registry_client=schema_registry_client)
 
         consumer_conf = {
             "bootstrap.servers": self.bootstrap_servers,
-            "group.id": self.consumer_group,
+            "group.id":          self.consumer_group,
             "auto.offset.reset": self.start_mode,
         }
         self.consumer = Consumer(consumer_conf)
@@ -469,11 +541,10 @@ class KafkaTradeStreamingThread(KafkaStreamingThread):
         self.running = True
 
         # Cache locals for speed in hot loop
-        isin_to_sub = self._isin_to_sub
-        real_time_data = self.real_time_data
+        isin_to_sub  = self._isin_to_sub
         deserializer = self.avro_deserializer
-        stop_event = self.stop_event
-        consumer = self.consumer
+        stop_event   = self.stop_event
+        consumer     = self.consumer
 
         try:
             while not stop_event.is_set():
@@ -493,7 +564,7 @@ class KafkaTradeStreamingThread(KafkaStreamingThread):
                 try:
                     value = deserializer(msg.value())
                 except Exception as e:
-                    logger.debug(f"Failed to deserialize message: {e}")
+                    logger.debug(f"Failed to deserialize trade message: {e}")
                     continue
 
                 # FAST PATH: O(1) lookup by ISIN
@@ -503,12 +574,12 @@ class KafkaTradeStreamingThread(KafkaStreamingThread):
                     if isin:
                         sub = isin_to_sub.get(isin)
                         if sub:
-                            self._process_matched_message(sub, value, real_time_data)
-                            continue
-
-                # SLOW PATH: fallback per subscription senza symbol_filter
-                topic = msg.topic()
-                self._handle_message(topic, value)
+                            try:
+                                self._dispatch(sub, value)
+                                self._subscription_service.mark_subscription_received(sub.id, "kafka")
+                            except Exception as e:
+                                logger.error(f"Error dispatching trade for {sub.id}: {e}")
+                                self._subscription_service.mark_subscription_failed(sub.id, "kafka", str(e))
 
         except Exception as e:
             logger.error(f"Error in KafkaTradeStreamingThread: {e}", exc_info=True)
@@ -519,41 +590,20 @@ class KafkaTradeStreamingThread(KafkaStreamingThread):
             logger.info("KafkaTradeStreamingThread stopped")
 
     # ------------------------------------------------------------------
-    # _route_to_store() override: intercepts "market" store for trade logic
+    # Dispatch: estrazione campi + deduplication (no RTData.update)
     # ------------------------------------------------------------------
 
-    def _route_to_store(self, sub: KafkaSubscription, value: Dict[str, Any], real_time_data: RTData):
+    def _dispatch(self, sub: KafkaSubscription, value: Dict[str, Any]):
+        """Estrae i campi di trade e applica la deduplication, poi mette in queue."""
+        data = self._extract_trade_fields(value)
+        if data:
+            self._handle_public_vs_own_deal(data)
+
+    def _extract_trade_fields(self, value: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Overrides parent routing for the "market" store.
+        Estrae il set completo di campi da un messaggio PublicDeal o Trade.
 
-        Inserts _handle_public_vs_own_deal() between field extraction and
-        real_time_data.update(). All other stores fall through to the parent.
-        """
-        store = sub.store
-
-        if store == "market":
-            if sub.fields_mapping:
-                data = sub.extract_fields(value)
-            else:
-                data = self._extract_default_market_fields(value)
-
-            if data:
-                continue_iteration = self._handle_public_vs_own_deal(data)
-                if not continue_iteration:
-                    return
-                real_time_data.update(sub.id, data, store="market")
-        else:
-            super()._route_to_store(sub, value, real_time_data)
-
-    # ------------------------------------------------------------------
-    # _extract_default_market_fields() override: full trade field set
-    # ------------------------------------------------------------------
-
-    def _extract_default_market_fields(self, value: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Extracts the full trade field set from a PublicDeal or Trade message.
-
-        Returns the fields required by _handle_public_vs_own_deal():
+        Campi richiesti da _handle_public_vs_own_deal():
         Isin, Market, Last Update, Price, Quantity, Own Trade, Ticker,
         Exchange, Currency, Description.
         """
@@ -585,10 +635,10 @@ class KafkaTradeStreamingThread(KafkaStreamingThread):
 
     def _flush_public_deal_expired(self):
         """
-        Release buffered public deals whose hold time has exceeded _buffer_sec.
+        Rilascia i public deal bufferizzati il cui tempo di attesa ha superato _buffer_sec.
 
-        Called once per poll cycle (~100ms). Public deals not matched by an
-        own-trade within the buffer window are emitted as (TradeType.MARKET, df).
+        Chiamato ad ogni ciclo di poll (~100ms). I public deal non abbinati a un
+        own trade entro la finestra vengono emessi come (TradeType.MARKET, df).
         """
         now = time.time()
         expired_keys = [
@@ -603,23 +653,19 @@ class KafkaTradeStreamingThread(KafkaStreamingThread):
             for df in pending_queue:
                 self.queue_trade.put((TradeType.MARKET, df))
 
-    def _handle_public_vs_own_deal(self, data: Dict[str, Any]) -> bool:
+    def _handle_public_vs_own_deal(self, data: Dict[str, Any]) -> None:
         """
-        Classify an incoming trade message and apply deduplication.
+        Classifica un messaggio di trade e applica la deduplication.
 
-        The deduplication key is (Isin, Market, Last Update, Price, Quantity).
+        La chiave di deduplication è (Isin, Market, Last Update, Price, Quantity).
 
         Own trades (Own Trade != 0):
-            - Emitted immediately as (TradeType.OWN, df)
-            - Cancel the earliest matching buffered public deal
+            - Emessi subito come (TradeType.OWN, df)
+            - Cancellano il primo public deal bufferizzato con la stessa chiave
 
         Public deals (Own Trade == 0):
-            - If a matching own trade key exists: discard, return False
-            - Otherwise: buffer and start the expiry timer
-
-        Returns:
-            True  — caller should proceed with real_time_data.update()
-            False — message consumed by deduplication, skip store update
+            - Se la chiave è già in _seen_own_trades: scartati
+            - Altrimenti: bufferizzati con timer di scadenza
         """
         key: TradeKey = (
             str(data['Isin']),
@@ -638,7 +684,7 @@ class KafkaTradeStreamingThread(KafkaStreamingThread):
         if is_own:
             self.queue_trade.put((TradeType.OWN, df))
             self._seen_own_trades.add(key)
-            # Cancel the earliest matching buffered public deal (same execution)
+            # Cancella il primo public deal bufferizzato corrispondente
             if key in self._pending_publicdeals and self._pending_publicdeals[key]:
                 self._pending_publicdeals[key].popleft()
                 if not self._pending_publicdeals[key]:
@@ -646,14 +692,12 @@ class KafkaTradeStreamingThread(KafkaStreamingThread):
                     self._pending_trade_timestamp_received.pop(key, None)
         else:
             if key in self._seen_own_trades:
-                # Already processed as own trade; discard duplicate public deal
+                # Già processato come own trade; scarta il public deal duplicato
                 self._seen_own_trades.discard(key)
-                return False
+                return
             self._pending_publicdeals[key].append(df)
             if key not in self._pending_trade_timestamp_received:
                 self._pending_trade_timestamp_received[key] = time.time()
-
-        return True
 
     def stop(self):
         """Ferma il thread in modo pulito."""
@@ -710,11 +754,11 @@ if __name__ == "__main__":
     book_thread.start()
 
     # ------------------------------------------------------------------
-    # Trade thread: KafkaTradeStreamingThread subscribes to trade topics
+    # Trade thread: KafkaTradeStreamingThread — standalone, no RTData
     # ------------------------------------------------------------------
     trade_queue: Queue = Queue()
-    trade_rtdata = RTData(locker=Lock(), fields=[])
-    trade_svc = trade_rtdata.get_subscription_manager()
+    trade_thread = KafkaTradeStreamingThread(queue=trade_queue, buffer_sec=10.0)
+    trade_svc = trade_thread.get_subscription_manager()
 
     for isin in isin_to_subscribe:
         for topic in ["COALESCENT_DUMA.ETFP.PublicDeal", "COALESCENT_DUMA.ETFP.Trade"]:
@@ -723,10 +767,8 @@ if __name__ == "__main__":
                 topic=topic,
                 symbol_filter=isin,
                 symbol_field="instrument.isin",
-                store="market",
             )
 
-    trade_thread = KafkaTradeStreamingThread(trade_rtdata, queue=trade_queue, buffer_sec=10.0)
     trade_thread.start()
 
     # ------------------------------------------------------------------
