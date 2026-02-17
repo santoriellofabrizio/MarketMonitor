@@ -426,7 +426,7 @@ class KafkaTradeStreamingThread(threading.Thread):
                  schema_registry_url: Optional[str] = None,
                  start_mode: str = "latest",
                  consumer_group: Optional[str] = None,
-                 buffer_sec: float = 10.0,
+                 buffer_sec: float = 1.0,
                  **kwargs):
         super().__init__(daemon=True)
         self.name = "kafka_trade"
@@ -634,16 +634,16 @@ class KafkaTradeStreamingThread(threading.Thread):
             own_trade = 0
 
         return {
-            'Ticker':      instrument.get('symbol'),
-            'Isin':        instrument.get('isin'),
-            'Currency':    instrument.get('currency'),
-            'Market':      instrument.get('market'),
-            'Exchange':    instrument.get('market'),
-            'Description': None,
-            'Price':       float(value['price']),
-            'Quantity':    float(value['quantity']),
-            'Last Update': value['eventTimestampUTC'],
-            'Own Trade':   own_trade,
+            'ticker':      instrument.get('symbol'),
+            'isin':        instrument.get('isin'),
+            'currency':    instrument.get('currency'),
+            'market':      instrument.get('market'),
+            'exchange':    instrument.get('market'),
+            'description': None,
+            'price':       float(value['price']),
+            'quantity':    float(value['quantity']),
+            'last_update': pd.to_datetime(value['eventTimestampUTC'], utc=True).tz_convert('Europe/Rome').tz_localize(None),
+            'own_trade':   own_trade,
         }
 
     # ------------------------------------------------------------------
@@ -685,21 +685,22 @@ class KafkaTradeStreamingThread(threading.Thread):
             - Altrimenti: bufferizzati con timer di scadenza
         """
         key: TradeKey = (
-            str(data['Isin']),
-            str(data['Market']),
-            int(data['Last Update']),
-            float(data['Price']),
-            float(data['Quantity']),
+            str(data['isin']),
+            str(data['market']),
+            data['last_update'].value,
+            float(data['price']),
+            float(data['quantity']),
         )
-        is_own = data.get('Own Trade', 0) != 0
+        is_own = data.get('own_trade', 0) != 0
 
         df = pd.DataFrame([data])[[
-            'Ticker', 'Isin', 'Currency', 'Quantity', 'Price',
-            'Last Update', 'Exchange', 'Market', 'Description', 'Own Trade'
+            'ticker', 'isin', 'currency', 'quantity', 'price',
+            'last_update', 'exchange', 'market', 'description', 'own_trade'
         ]]
 
         if is_own:
             self.queue_trade.put((TradeType.OWN, df))
+            self.queue_trade.put((TradeType.MARKET, df))
             self._seen_own_trades.add(key)
             # Cancella il primo public deal bufferizzato corrispondente
             if key in self._pending_publicdeals and self._pending_publicdeals[key]:

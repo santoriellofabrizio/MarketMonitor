@@ -13,9 +13,13 @@ timescale_connection:
 
 market_monitor:
 
+  isin_to_description_path: C:\Users\gbs10083\Desktop\MarketMonitorCmds\config\instruments.xlsx
+  api_config_path: C:\AFMachineLearning\Libraries\MarketMonitor\etc\config\bshdata_config.yaml
+
+  columns_dashboard: ["description","ticker","isin","trade_index","timestamp","side","ctv","quantity","price","price_multiplier","spread_pl","lagged_spread_pl","market", "currency", "own_trade", "is_elaborated"]
+
   trade_manager:
-    show_my_trades: True
-    output_trade_columns: ["isin","last_update","price","quantity","ctv","side","own_trade","spread_pl"]
+    time_zero_lag: 30
 
 
   tasks:

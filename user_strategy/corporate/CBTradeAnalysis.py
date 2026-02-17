@@ -1,28 +1,16 @@
+import datetime as dt
 import logging
+from datetime import datetime
+from pathlib import Path
 from time import time, sleep
 
-from datetime import datetime
-import datetime as dt
-
 import pandas as pd
-<<<<<<< .mine
 from sfm_data_provider.interface.bshdata import BshData
-||||||| .r76736
-from sfm_dataprovider.interface.bshdata import BshData
-from sfm_dbconnections.DbConnection import DbConnection
-=======
-from sfm_data_provider.interface.bshdata import BshData
-from sfm_dbconnections.DbConnection import DbConnection
->>>>>>> .r76790
 
 from market_monitor.publishers.redis_publisher import RedisMessaging
-from market_monitor.strategy.strategy_ui.StrategyUI import StrategyUI
-
-from user_strategy.utils import CustomBDay
 from market_monitor.strategy.common.trade_manager.book_memory import BookStorage
-from market_monitor.strategy.common.trade_manager.flow_detector import FlowDetector
-from market_monitor.strategy.common.trade_manager import TradeManager
-from user_strategy.utils.bloomberg_subscription_utils.SubscriptionManager import SubscriptionManager
+from market_monitor.strategy.common.trade_manager.trade_manager import TradeManager
+from market_monitor.strategy.strategy_ui.StrategyUI import StrategyUI
 
 
 class CBTradeAnalysis(StrategyUI):
@@ -30,13 +18,24 @@ class CBTradeAnalysis(StrategyUI):
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
 
-        self.API = BshData(config_path=r"C:\AFMachineLearning\Libraries\MarketMonitor\etc\config\bshdata_config.yaml")
-        self.all_isin = self.API.general.get_bond_isins(classe=(9,10))
-        self.subscription_manager: None | SubscriptionManager = None
+        path_str = kwargs.get("isin_to_description_path")
+        excel_path = Path(path_str) if path_str else None
+
+        if excel_path and excel_path.exists():
+            self.isin_to_des = pd.read_excel(excel_path).set_index("isin")["description"].to_dict()
+            self.all_isin = [i.upper().strip() for i in self.isin_to_des.keys()]
+        else:
+            api_config_path = kwargs.get("api_config_path")
+            if api_config_path:
+                self.API = BshData(config_path=api_config_path)
+                self.isin_to_des = {}
+                self.all_isin = self.API.general.get_bond_isins(classe=(9,10))
+            else:
+                raise Exception("missing valid input")
+
         self.book_storage: BookStorage = BookStorage()
-        self.flow_detector = FlowDetector()
-        self.yesterday = datetime.today() - CustomBDay
         self.instruments = self.all_isin
+        self.columns_dashboard = kwargs.get("columns_dashboard")
         # -------------------------------------- SETTING INSTRUMENTS ---------------------------------------------------
         self.mid = pd.Series(index=self.instruments, name="mid")
         self.trade_dashboard_messaging = RedisMessaging()
@@ -96,26 +95,19 @@ class CBTradeAnalysis(StrategyUI):
 
     def on_trade(self, new_trades):
         new_trades['price_multiplier'] = 0.01
-
         processed_new = self.trade_manager.on_trade(new_trades)
-
-        self.flow_detector.process_trades(processed_new)
-        if self.flow_detector.has_new_flows():
-            for flow in self.flow_detector.get_new_flows():  # ← Una volta sola!
-                self.trade_dashboard_messaging.export_flow_detected(channel="trades_df", flow=flow)
-
         # Invia trades: nuovi parziali + parziali precedenti ora elaborati
         trades_to_publish = self.trade_manager.get_trades_to_publish(processed_new)
         self.publish_trades_on_dashboard(trades_to_publish)
 
-        self.trade_dashboard_messaging.export_message(channel="trades_df_excel",
-                                                      value=self.trade_manager.get_trades(n_of_trades=20),
-                                                      date_format='iso',
-                                                      orient="records")
 
     def publish_trades_on_dashboard(self, new_trades):
 
         start = time()
+        new_trades["description"] = new_trades["isin"].map(self.isin_to_des)
+        if self.columns_dashboard:
+            existing_cols = [c for c in self.columns_dashboard if c in new_trades.columns]
+            new_trades = new_trades[existing_cols]
         self.trade_dashboard_messaging.export_message(channel="trades_df",
                                                       value=new_trades,
                                                       date_format='iso',

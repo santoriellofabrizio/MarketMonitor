@@ -149,16 +149,6 @@ class EtfEquityLiveAnalysis(StrategyUI):
         if datetime.today().time() < dt.time(17, 29, 40):
             self.get_live_data()
 
-        # payload = {
-        #     'theoretical_intraday': self.theoretical_price,
-        #     'mid': self.mid
-        # }
-        #
-        # # Invio allo storage (la classe non sa cosa c'è dentro, si limita a processare)
-        # if time() - self.last_storage_time > 10:
-        #     self.price_db_manager.store_data(payload)
-        #     self.last_storage_time = time()
-
     def on_trade(self, new_trades):
 
         processed_new = self.trade_manager.on_trade(new_trades)
@@ -166,7 +156,7 @@ class EtfEquityLiveAnalysis(StrategyUI):
         self.flow_detector.process_trades(processed_new)
         if self.flow_detector.has_new_flows():
             for flow in self.flow_detector.get_new_flows():  # ← Una volta sola!
-                self.trade_dashboard_messaging.export_flow_detected(channel="trades_rabbit", flow=flow)
+                self.trade_dashboard_messaging.export_flow_detected(channel="trades_rabbit_kafka", flow=flow)
 
         # Invia trades: nuovi parziali + parziali precedenti ora elaborati
         trades_to_publish = self.trade_manager.get_trades_to_publish(processed_new)
@@ -174,6 +164,7 @@ class EtfEquityLiveAnalysis(StrategyUI):
         #                                                   "")].map(self.clusters)
         self.publish_trades_on_dashboard(trades_to_publish)
         self.publish_trades_to_excel(processed_new)
+
 
     def publish_trades_to_excel(self, processed_new):
 
@@ -194,7 +185,7 @@ class EtfEquityLiveAnalysis(StrategyUI):
                                                       date_format='iso',
                                                       orient="records")
 
-        self.rabbit_publisher.export_message(channel="trades_rabbit",
+        self.rabbit_publisher.export_message(channel="trades_rabbit_kafka",
                                                       value=new_trades,
                                                       date_format='iso',
                                                       orient="records")

@@ -7,11 +7,10 @@ import pandas as pd
 from dateutil.utils import today
 import datetime as dt
 
-from core.holidays.holiday_manager import HolidayManager
-from interface.bshdata import BshData
 from market_monitor.publishers.redis_publisher import RedisMessaging
 from market_monitor.strategy.strategy_ui.StrategyUI import StrategyUI
 from user_strategy.utils import CustomBDay
+from sfm_data_provider.core.holidays.holiday_manager import HolidayManager
 from user_strategy.utils.pricing_models.DataFetching.PricesProviderFI import PricesProviderFI
 from user_strategy.utils.InputParamsFIQuoting import InputParamsFIQuoting
 from user_strategy.utils.pricing_models.NAVBasisCalculator import NAVBasisCalculator
@@ -92,8 +91,8 @@ class EtfFiPriceEngine(StrategyUI):
         self.subscription_manager = SubscriptionManager(self._all_securities,
                                                         self.bloomberg_subscription_config_path)
 
-        self.cluster_correction: pd.Series = self._calculate_cluster_correction_2(self.input_params.hedge_ratios_cluster)
-        self.brothers_correction: pd.Series = self._calculate_cluster_correction_2(self.input_params.hedge_ratios_brothers)
+        self.cluster_correction: pd.Series = self._calculate_cluster_correction(self.input_params.hedge_ratios_cluster)
+        self.brothers_correction: pd.Series = self._calculate_cluster_correction(self.input_params.hedge_ratios_brothers)
 
         # Initialize the theoretical live price object
         self.theoretical_price_manager = TheoreticalPriceManager()
@@ -171,37 +170,7 @@ class EtfFiPriceEngine(StrategyUI):
                                                    )
         self.gui_redis = RedisMessaging()
 
-        self.api = BshData(r"C:\AFMachineLearning\Libraries\BshDataProviderDeveloper\config\bshdata_config.yaml")
-        today_ = today()
         self.holidays = HolidayManager()
-
-        start, end = (self.holidays.add_business_days(today_, - self.input_params.number_of_days),
-                      self.holidays.previous_business_day(today_))
-
-        snipping = self.input_params.price_snipping_time
-
-        self.historical_prices: pd.DataFrame = self.api.market.get_daily_etf(id=self.etf_isins,
-                                                                             start=start, end=end,
-                                                                             snapshot_time=snipping,
-                                                                             fallbacks=[{"source": "bloomberg",
-                                                                                         "market": mkt}
-                                                                                        for mkt in ["IM", "FP", "NA"]])
-
-        self.historical_fx: pd.DataFrame = self.api.market.get_daily_currency(id=self.input_params.currencies_EUR_ccy,
-                                                                              start=start,
-                                                                              end=end,
-                                                                              snapshot_time=snipping,
-                                                                              fallbacks=[{"source": "bloomberg"}])
-
-        ter = self.api.info.get_ter(id=self.etf_isins)
-        dividends = self.api.info.get_dividends(id=self.etf_isins, start=start)
-        ytm = self.api.info.get_etp_fields(id=self.etf_isins,
-                                           fields="ytm",
-                                           source="timescale",
-                                           start=start,
-                                           end=end)
-
-        fx_composition, fx_forward_composition = self.input_params.currency_weights, self.currency_exposure
 
 
         self.on_start_strategy()
@@ -253,7 +222,7 @@ class EtfFiPriceEngine(StrategyUI):
                                                 additional_contracts=additional_contracts,
                                                 trading_currency=self.trading_currency)
 
-        self.historical_prices: pd.DataFrame = self.api.market.get_historical_prices()
+        self.historical_prices: pd.DataFrame = self.prices_provider.get_hist_prices()
         self.historical_fx: pd.DataFrame = self.prices_provider.get_hist_fx_prices()
 
         self.irp_manager.save_historical_prices(self.historical_prices)
@@ -355,27 +324,12 @@ class EtfFiPriceEngine(StrategyUI):
         all_returns: pd.Series(dtype=float) = self.book_mid / self.historical_prices - 1
         return all_returns.T
 
-        self.market_data.get_delayed_status()
 
     def stop(self):
         pass
 
     @staticmethod
-    def _calculate_cluster_correction(cluster_anagraphic: pd.Series) -> pd.Series:
-        """
-        Calculate the cluster correction factor for each subcluster.
-
-        Returns:
-            pd.Series: Series with correction factors for each ISIN.
-        """
-        cluster_sizes: pd.Series = cluster_anagraphic.value_counts()
-
-        # Compute weight: (n-1)/n if n > 1, else 1
-        correction = cluster_anagraphic.map(lambda x: (cluster_sizes[x] - 1) / cluster_sizes[x] if cluster_sizes[x] > 1 else 1)
-        return correction
-
-    @staticmethod
-    def _calculate_cluster_correction_2(cluster_betas: pd.DataFrame, threshold: float = 0.5) -> pd.Series:
+    def _calculate_cluster_correction(cluster_betas: pd.DataFrame, threshold: float = 0.5) -> pd.Series:
         """
         Calculate the cluster correction factor for each subcluster.
 
