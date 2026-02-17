@@ -16,7 +16,6 @@ from market_monitor.gui.implementations.GUI import GUI
 from market_monitor.input_threads.trade import TradeType
 
 from market_monitor.live_data_hub.real_time_data_hub import RTData
-from market_monitor.live_data_hub.subscription_service import SubscriptionService
 from market_monitor.utils.config_observer import ConfigChangeHandler
 
 logger = logging.getLogger(__name__)
@@ -57,7 +56,7 @@ class StrategyUIAsync(ABC):
         self.synchronous_trade_handling: bool = True
         self.GUIs: dict[str, GUI] = {}
         self.market_data: RTData = market_data
-        self.trade_subscription_manager: Optional[SubscriptionService] = None
+        self.trade_subscription_manager = None
         self.running = False
         self.kwargs = kwargs
 
@@ -353,7 +352,7 @@ class StrategyUIAsync(ABC):
         self.market_data = market_data
         self._on_market_data_setting()
 
-    def set_trade_subscription_manager(self, svc: SubscriptionService):
+    def set_trade_subscription_manager(self, svc):
         """Sets the SubscriptionService of the trade thread for subscription registration."""
         self.trade_subscription_manager = svc
         self._on_trade_subscription_setting()

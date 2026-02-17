@@ -250,8 +250,8 @@ class Builder:
         trade_queue = Queue()
         trade_thread = KafkaTradeStreamingThread(queue=trade_queue, **kafka_params)
 
-        # Espone il SubscriptionService del trade thread alla strategia
-        monitor.set_trade_subscription_manager(trade_thread.get_subscription_manager())
+        # Passa il trade thread alla strategia per la registrazione delle subscription
+        monitor.set_trade_subscription_manager(trade_thread)
         monitor.set_q_trade(trade_queue)
 
         threads.append(trade_thread)
