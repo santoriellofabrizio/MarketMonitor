@@ -47,6 +47,7 @@ import pandas as pd
 
 from market_monitor.live_data_hub.real_time_data_hub import RTData
 from market_monitor.live_data_hub.live_subscription import KafkaSubscription
+from market_monitor.live_data_hub.subscription_service import SubscriptionService
 from market_monitor.input_threads.trade import TradeType
 
 logger = logging.getLogger(__name__)
@@ -385,11 +386,14 @@ class KafkaTradeStreamingThread(threading.Thread):
     """
     Thread standalone per streaming di dati di trade da Kafka (PublicDeal, Trade topics).
 
-    Completamente indipendente da RTData e SubscriptionService: gestisce le proprie
-    subscription tramite una lista interna e pubblica i trade in una Queue condivisa
-    come tuple (TradeType, pd.DataFrame).
+    Responsabilità (e solo queste):
+    1. Riceve un SubscriptionService iniettato dall'esterno (DI).
+    2. Legge le subscription Kafka dal SubscriptionService (pending + active).
+    3. Scarta i messaggi non sottoscritti (fast-path O(1) per ISIN).
+    4. Matcha i PublicDeal con i potenziali own-trade (deduplication).
+    5. Mette le tuple (TradeType, pd.DataFrame) nella Queue condivisa.
 
-    Le subscription si registrano chiamando subscribe_kafka() prima di start().
+    NON conosce RTData né route_to_store.
 
     Logica di deduplication own-trade vs market-trade:
     - Own trades emessi subito come (TradeType.OWN, df) e cancellano il primo
@@ -402,6 +406,8 @@ class KafkaTradeStreamingThread(threading.Thread):
 
     Args:
         queue: Queue condivisa dove vengono messe le tuple (TradeType, pd.DataFrame)
+        subscription_service: SubscriptionService iniettato, già popolato con le
+            subscription Kafka di tipo trade (es. PublicDeal, Trade)
         bootstrap_servers: Lista server Kafka
         schema_registry_url: URL Schema Registry per deserializzazione Avro
         start_mode: "latest" (nuovi messaggi) o "earliest" (dall'inizio)
@@ -415,6 +421,7 @@ class KafkaTradeStreamingThread(threading.Thread):
 
     def __init__(self,
                  queue: Queue,
+                 subscription_service: SubscriptionService,
                  bootstrap_servers: Optional[str] = None,
                  schema_registry_url: Optional[str] = None,
                  start_mode: str = "latest",
@@ -427,8 +434,8 @@ class KafkaTradeStreamingThread(threading.Thread):
         # Output
         self.queue_trade: Queue = queue
 
-        # Subscription list (registrate prima di start() via subscribe_kafka())
-        self._subscriptions: List[KafkaSubscription] = []
+        # SubscriptionService iniettato — unica fonte di verità per le subscription
+        self._subscription_service: SubscriptionService = subscription_service
 
         # Kafka config
         self.bootstrap_servers   = bootstrap_servers or self.DEFAULT_BOOTSTRAP_SERVERS
@@ -453,46 +460,61 @@ class KafkaTradeStreamingThread(threading.Thread):
         self._seen_own_trades: Set[TradeKey] = set()
         self._pending_trade_timestamp_received: Dict[TradeKey, float] = {}
 
-    def subscribe_kafka(self,
-                        id: str,
-                        topic: str,
-                        symbol_filter: Optional[str] = None,
-                        **kwargs) -> KafkaSubscription:
-        """
-        Registra una subscription. Va chiamato prima di start().
+    _TRADE_TOPIC_SUFFIXES = (".PublicDeal", ".Trade")
 
-        Args:
-            id: Identificativo della subscription (es. "{isin}:PublicDeal")
-            topic: Topic Kafka (es. "COALESCENT_DUMA.ETFP.PublicDeal")
-            symbol_filter: ISIN per il fast-path O(1) lookup
-        """
-        sub = KafkaSubscription(id=id, topic=topic, symbol_filter=symbol_filter)
-        self._subscriptions.append(sub)
-        return sub
+    @classmethod
+    def _is_trade_topic(cls, topic: str) -> bool:
+        return any(topic.endswith(s) for s in cls._TRADE_TOPIC_SUFFIXES)
 
     # ------------------------------------------------------------------
     # Subscription management
     # ------------------------------------------------------------------
 
     def _load_subscriptions(self):
-        """Indicizza le subscription registrate per topic e ISIN lookup."""
+        """
+        Legge le subscription Kafka dal SubscriptionService condiviso e indicizza
+        solo i topic di trade (*.PublicDeal, *.Trade).
+        """
+        pending = self._subscription_service.get_pending_subscriptions("kafka") or {}
+        active  = self._subscription_service.get_kafka_subscription() or {}
+        all_subs = {**pending, **active}
+
         self._subscriptions_by_topic.clear()
         self._topics.clear()
         self._isin_to_sub.clear()
 
-        for sub in self._subscriptions:
-            topic = sub.topic
-            if topic not in self._subscriptions_by_topic:
-                self._subscriptions_by_topic[topic] = []
-            self._subscriptions_by_topic[topic].append(sub)
-            self._topics.add(topic)
-            if sub.symbol_filter:
-                self._isin_to_sub[sub.symbol_filter] = sub
+        count = 0
+        for sub in all_subs.values():
+            if isinstance(sub, KafkaSubscription) and self._is_trade_topic(sub.topic):
+                topic = sub.topic
+                if topic not in self._subscriptions_by_topic:
+                    self._subscriptions_by_topic[topic] = []
+                self._subscriptions_by_topic[topic].append(sub)
+                self._topics.add(topic)
+                if sub.symbol_filter:
+                    self._isin_to_sub[sub.symbol_filter] = sub
+                count += 1
 
         logger.info(
-            f"KafkaTradeStreamingThread: loaded {len(self._subscriptions)} subscriptions "
+            f"KafkaTradeStreamingThread: loaded {count} trade subscriptions "
             f"for {len(self._topics)} topics: {self._topics}"
         )
+
+    def _check_new_subscriptions(self):
+        """Controlla se ci sono nuove subscription pending di tipo trade e aggiorna il consumer."""
+        pending = self._subscription_service.get_pending_subscriptions("kafka") or {}
+        new_topics = {
+            sub.topic
+            for sub in pending.values()
+            if isinstance(sub, KafkaSubscription)
+            and self._is_trade_topic(sub.topic)
+            and sub.topic not in self._topics
+        }
+        if new_topics:
+            logger.info(f"KafkaTradeStreamingThread: new trade topics detected: {new_topics}")
+            self._load_subscriptions()
+            if self.consumer:
+                self.consumer.subscribe(list(self._topics))
 
     # ------------------------------------------------------------------
     # run()
@@ -549,6 +571,7 @@ class KafkaTradeStreamingThread(threading.Thread):
                 self._flush_public_deal_expired()
 
                 if msg is None:
+                    self._check_new_subscriptions()
                     continue
 
                 if msg.error():
@@ -570,8 +593,10 @@ class KafkaTradeStreamingThread(threading.Thread):
                         if sub:
                             try:
                                 self._dispatch(sub, value)
+                                self._subscription_service.mark_subscription_received(sub.id, "kafka")
                             except Exception as e:
                                 logger.error(f"Error dispatching trade for {sub.id}: {e}")
+                                self._subscription_service.mark_subscription_failed(sub.id, "kafka", str(e))
 
         except Exception as e:
             logger.error(f"Error in KafkaTradeStreamingThread: {e}", exc_info=True)
@@ -747,18 +772,24 @@ if __name__ == "__main__":
 
     # ------------------------------------------------------------------
     # Trade thread: KafkaTradeStreamingThread — standalone, no RTData
+    # Usa lo stesso SubscriptionService di RTData: filtra *.PublicDeal / *.Trade
     # ------------------------------------------------------------------
-    trade_queue: Queue = Queue()
-    trade_thread = KafkaTradeStreamingThread(queue=trade_queue, buffer_sec=10.0)
+    trade_sub_service = book_rtdata.get_subscription_manager()
 
     for isin in isin_to_subscribe:
         for topic in ["COALESCENT_DUMA.ETFP.PublicDeal", "COALESCENT_DUMA.ETFP.Trade"]:
-            trade_thread.subscribe_kafka(
+            trade_sub_service.subscribe_kafka(
                 id=f"{isin}_{topic.split('.')[-1]}",
                 topic=topic,
                 symbol_filter=isin,
             )
 
+    trade_queue: Queue = Queue()
+    trade_thread = KafkaTradeStreamingThread(
+        queue=trade_queue,
+        subscription_service=trade_sub_service,
+        buffer_sec=10.0,
+    )
     trade_thread.start()
 
     # ------------------------------------------------------------------
