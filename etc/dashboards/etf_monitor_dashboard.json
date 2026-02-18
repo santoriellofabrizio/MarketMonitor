@@ -1,0 +1,1886 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "description": "Monitoring live di mid, prezzi teorici, misalignment e beta per ETF equity",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": 0,
+  "links": [],
+  "panels": [
+    {
+      "collapsed": true,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "id": 20,
+      "panels": [
+        {
+          "datasource": {
+            "type": "redis-datasource",
+            "uid": "ffct9wgvpkv7kb"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "fixedColor": "#1F60C4",
+                "mode": "fixed"
+              },
+              "custom": {
+                "axisBorderShow": false,
+                "axisCenteredZero": false,
+                "axisColorMode": "text",
+                "axisLabel": "",
+                "axisPlacement": "auto",
+                "barAlignment": 0,
+                "barWidthFactor": 0.6,
+                "drawStyle": "line",
+                "fillOpacity": 8,
+                "gradientMode": "opacity",
+                "hideFrom": {
+                  "legend": false,
+                  "tooltip": false,
+                  "viz": false
+                },
+                "insertNulls": false,
+                "lineInterpolation": "linear",
+                "lineWidth": 2,
+                "pointSize": 3,
+                "scaleDistribution": {
+                  "type": "linear"
+                },
+                "showPoints": "never",
+                "showValues": false,
+                "spanNulls": false,
+                "stacking": {
+                  "group": "A",
+                  "mode": "none"
+                },
+                "thresholdsStyle": {
+                  "mode": "off"
+                }
+              },
+              "decimals": 3,
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": 0
+                  }
+                ]
+              },
+              "unit": "short"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 10,
+            "w": 8,
+            "x": 0,
+            "y": 1
+          },
+          "id": 21,
+          "options": {
+            "legend": {
+              "calcs": [
+                "lastNotNull",
+                "min",
+                "max"
+              ],
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "hideZeros": false,
+              "mode": "single",
+              "sort": "none"
+            }
+          },
+          "pluginVersion": "12.3.2",
+          "targets": [
+            {
+              "command": "ts.range",
+              "datasource": {
+                "type": "redis-datasource",
+                "uid": "ffct9wgvpkv7kb"
+              },
+              "keyName": "ts:${etf1}:mid",
+              "legend": "Mid",
+              "refId": "A"
+            }
+          ],
+          "title": "Mid — ${etf1:text}",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "redis-datasource",
+            "uid": "ffct9wgvpkv7kb"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "fixedColor": "#E0B400",
+                "mode": "fixed"
+              },
+              "custom": {
+                "axisBorderShow": false,
+                "axisCenteredZero": false,
+                "axisColorMode": "text",
+                "axisLabel": "",
+                "axisPlacement": "auto",
+                "barAlignment": 0,
+                "barWidthFactor": 0.6,
+                "drawStyle": "line",
+                "fillOpacity": 8,
+                "gradientMode": "opacity",
+                "hideFrom": {
+                  "legend": false,
+                  "tooltip": false,
+                  "viz": false
+                },
+                "insertNulls": false,
+                "lineInterpolation": "linear",
+                "lineWidth": 2,
+                "pointSize": 3,
+                "scaleDistribution": {
+                  "type": "linear"
+                },
+                "showPoints": "never",
+                "showValues": false,
+                "spanNulls": false,
+                "stacking": {
+                  "group": "A",
+                  "mode": "none"
+                },
+                "thresholdsStyle": {
+                  "mode": "off"
+                }
+              },
+              "decimals": 3,
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": 0
+                  }
+                ]
+              },
+              "unit": "short"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 10,
+            "w": 8,
+            "x": 8,
+            "y": 1
+          },
+          "id": 22,
+          "options": {
+            "legend": {
+              "calcs": [
+                "lastNotNull",
+                "min",
+                "max"
+              ],
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "hideZeros": false,
+              "mode": "single",
+              "sort": "none"
+            }
+          },
+          "pluginVersion": "12.3.2",
+          "targets": [
+            {
+              "command": "ts.range",
+              "datasource": {
+                "type": "redis-datasource",
+                "uid": "ffct9wgvpkv7kb"
+              },
+              "keyName": "ts:${etf2}:mid",
+              "legend": "Mid",
+              "refId": "A"
+            }
+          ],
+          "title": "Mid — ${etf2:text}",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "redis-datasource",
+            "uid": "ffct9wgvpkv7kb"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "fixedColor": "#37872D",
+                "mode": "fixed"
+              },
+              "custom": {
+                "axisBorderShow": false,
+                "axisCenteredZero": false,
+                "axisColorMode": "text",
+                "axisLabel": "",
+                "axisPlacement": "auto",
+                "barAlignment": 0,
+                "barWidthFactor": 0.6,
+                "drawStyle": "line",
+                "fillOpacity": 8,
+                "gradientMode": "opacity",
+                "hideFrom": {
+                  "legend": false,
+                  "tooltip": false,
+                  "viz": false
+                },
+                "insertNulls": false,
+                "lineInterpolation": "linear",
+                "lineWidth": 2,
+                "pointSize": 3,
+                "scaleDistribution": {
+                  "type": "linear"
+                },
+                "showPoints": "never",
+                "showValues": false,
+                "spanNulls": false,
+                "stacking": {
+                  "group": "A",
+                  "mode": "none"
+                },
+                "thresholdsStyle": {
+                  "mode": "off"
+                }
+              },
+              "decimals": 3,
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": 0
+                  }
+                ]
+              },
+              "unit": "short"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 10,
+            "w": 8,
+            "x": 16,
+            "y": 1
+          },
+          "id": 23,
+          "options": {
+            "legend": {
+              "calcs": [
+                "lastNotNull",
+                "min",
+                "max"
+              ],
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "hideZeros": false,
+              "mode": "single",
+              "sort": "none"
+            }
+          },
+          "pluginVersion": "12.3.2",
+          "targets": [
+            {
+              "command": "ts.range",
+              "datasource": {
+                "type": "redis-datasource",
+                "uid": "ffct9wgvpkv7kb"
+              },
+              "keyName": "ts:${etf3}:mid",
+              "legend": "Mid",
+              "refId": "A"
+            }
+          ],
+          "title": "Mid — ${etf3:text}",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "redis-datasource",
+            "uid": "ffct9wgvpkv7kb"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "fixedColor": "#C4162A",
+                "mode": "fixed"
+              },
+              "custom": {
+                "axisBorderShow": false,
+                "axisCenteredZero": false,
+                "axisColorMode": "text",
+                "axisLabel": "",
+                "axisPlacement": "auto",
+                "barAlignment": 0,
+                "barWidthFactor": 0.6,
+                "drawStyle": "line",
+                "fillOpacity": 8,
+                "gradientMode": "opacity",
+                "hideFrom": {
+                  "legend": false,
+                  "tooltip": false,
+                  "viz": false
+                },
+                "insertNulls": false,
+                "lineInterpolation": "linear",
+                "lineWidth": 2,
+                "pointSize": 3,
+                "scaleDistribution": {
+                  "type": "linear"
+                },
+                "showPoints": "never",
+                "showValues": false,
+                "spanNulls": false,
+                "stacking": {
+                  "group": "A",
+                  "mode": "none"
+                },
+                "thresholdsStyle": {
+                  "mode": "off"
+                }
+              },
+              "decimals": 3,
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": 0
+                  }
+                ]
+              },
+              "unit": "short"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 10,
+            "w": 8,
+            "x": 0,
+            "y": 49
+          },
+          "id": 24,
+          "options": {
+            "legend": {
+              "calcs": [
+                "lastNotNull",
+                "min",
+                "max"
+              ],
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "hideZeros": false,
+              "mode": "single",
+              "sort": "none"
+            }
+          },
+          "pluginVersion": "12.3.2",
+          "targets": [
+            {
+              "command": "ts.range",
+              "datasource": {
+                "type": "redis-datasource",
+                "uid": "ffct9wgvpkv7kb"
+              },
+              "keyName": "ts:${etf4}:mid",
+              "legend": "Mid",
+              "refId": "A"
+            }
+          ],
+          "title": "Mid — ${etf4:text}",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "redis-datasource",
+            "uid": "ffct9wgvpkv7kb"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "fixedColor": "#8F3BB8",
+                "mode": "fixed"
+              },
+              "custom": {
+                "axisBorderShow": false,
+                "axisCenteredZero": false,
+                "axisColorMode": "text",
+                "axisLabel": "",
+                "axisPlacement": "auto",
+                "barAlignment": 0,
+                "barWidthFactor": 0.6,
+                "drawStyle": "line",
+                "fillOpacity": 8,
+                "gradientMode": "opacity",
+                "hideFrom": {
+                  "legend": false,
+                  "tooltip": false,
+                  "viz": false
+                },
+                "insertNulls": false,
+                "lineInterpolation": "linear",
+                "lineWidth": 2,
+                "pointSize": 3,
+                "scaleDistribution": {
+                  "type": "linear"
+                },
+                "showPoints": "never",
+                "showValues": false,
+                "spanNulls": false,
+                "stacking": {
+                  "group": "A",
+                  "mode": "none"
+                },
+                "thresholdsStyle": {
+                  "mode": "off"
+                }
+              },
+              "decimals": 3,
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": 0
+                  }
+                ]
+              },
+              "unit": "short"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 10,
+            "w": 8,
+            "x": 8,
+            "y": 49
+          },
+          "id": 25,
+          "options": {
+            "legend": {
+              "calcs": [
+                "lastNotNull",
+                "min",
+                "max"
+              ],
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "hideZeros": false,
+              "mode": "single",
+              "sort": "none"
+            }
+          },
+          "pluginVersion": "12.3.2",
+          "targets": [
+            {
+              "command": "ts.range",
+              "datasource": {
+                "type": "redis-datasource",
+                "uid": "ffct9wgvpkv7kb"
+              },
+              "keyName": "ts:${etf5}:mid",
+              "legend": "Mid",
+              "refId": "A"
+            }
+          ],
+          "title": "Mid — ${etf5:text}",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "redis-datasource",
+            "uid": "ffct9wgvpkv7kb"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "fixedColor": "#FF9830",
+                "mode": "fixed"
+              },
+              "custom": {
+                "axisBorderShow": false,
+                "axisCenteredZero": false,
+                "axisColorMode": "text",
+                "axisLabel": "",
+                "axisPlacement": "auto",
+                "barAlignment": 0,
+                "barWidthFactor": 0.6,
+                "drawStyle": "line",
+                "fillOpacity": 8,
+                "gradientMode": "opacity",
+                "hideFrom": {
+                  "legend": false,
+                  "tooltip": false,
+                  "viz": false
+                },
+                "insertNulls": false,
+                "lineInterpolation": "linear",
+                "lineWidth": 2,
+                "pointSize": 3,
+                "scaleDistribution": {
+                  "type": "linear"
+                },
+                "showPoints": "never",
+                "showValues": false,
+                "spanNulls": false,
+                "stacking": {
+                  "group": "A",
+                  "mode": "none"
+                },
+                "thresholdsStyle": {
+                  "mode": "off"
+                }
+              },
+              "decimals": 3,
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": 0
+                  }
+                ]
+              },
+              "unit": "short"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 10,
+            "w": 8,
+            "x": 16,
+            "y": 49
+          },
+          "id": 26,
+          "options": {
+            "legend": {
+              "calcs": [
+                "lastNotNull",
+                "min",
+                "max"
+              ],
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "hideZeros": false,
+              "mode": "single",
+              "sort": "none"
+            }
+          },
+          "pluginVersion": "12.3.2",
+          "targets": [
+            {
+              "command": "ts.range",
+              "datasource": {
+                "type": "redis-datasource",
+                "uid": "ffct9wgvpkv7kb"
+              },
+              "keyName": "ts:${etf6}:mid",
+              "legend": "Mid",
+              "refId": "A"
+            }
+          ],
+          "title": "Mid — ${etf6:text}",
+          "type": "timeseries"
+        }
+      ],
+      "title": "Multi-ETF Mid Comparativo",
+      "type": "row"
+    },
+    {
+      "collapsed": true,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 1
+      },
+      "id": 1,
+      "panels": [
+        {
+          "datasource": {
+            "type": "redis-datasource",
+            "uid": "ffct9wgvpkv7kb"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "fixedColor": "blue",
+                "mode": "fixed"
+              },
+              "decimals": 3,
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "blue",
+                    "value": 0
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 2,
+            "w": 4,
+            "x": 0,
+            "y": 2
+          },
+          "id": 2,
+          "options": {
+            "colorMode": "value",
+            "graphMode": "area",
+            "justifyMode": "auto",
+            "orientation": "auto",
+            "percentChangeColorMode": "standard",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "showPercentChange": false,
+            "textMode": "auto",
+            "wideLayout": true
+          },
+          "pluginVersion": "12.3.2",
+          "targets": [
+            {
+              "command": "ts.get",
+              "datasource": {
+                "type": "redis-datasource",
+                "uid": "ffct9wgvpkv7kb"
+              },
+              "keyName": "ts:${isin}:mid",
+              "legend": "Mid",
+              "refId": "A"
+            }
+          ],
+          "title": "Mid Price (EUR)",
+          "type": "stat"
+        },
+        {
+          "datasource": {
+            "type": "redis-datasource",
+            "uid": "ffct9wgvpkv7kb"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "decimals": 4,
+              "mappings": [],
+              "max": 1,
+              "min": 0,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "red",
+                    "value": 0
+                  },
+                  {
+                    "color": "orange",
+                    "value": -0.005
+                  },
+                  {
+                    "color": "green",
+                    "value": -0.002
+                  },
+                  {
+                    "color": "green",
+                    "value": 0.002
+                  },
+                  {
+                    "color": "orange",
+                    "value": 0.005
+                  },
+                  {
+                    "color": "red",
+                    "value": 0.01
+                  }
+                ]
+              },
+              "unit": "percentunit"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 2,
+            "w": 4,
+            "x": 4,
+            "y": 2
+          },
+          "id": 3,
+          "options": {
+            "colorMode": "background",
+            "graphMode": "area",
+            "justifyMode": "auto",
+            "orientation": "auto",
+            "percentChangeColorMode": "standard",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "showPercentChange": false,
+            "textMode": "auto",
+            "wideLayout": true
+          },
+          "pluginVersion": "12.3.2",
+          "targets": [
+            {
+              "command": "ts.get",
+              "datasource": {
+                "type": "redis-datasource",
+                "uid": "ffct9wgvpkv7kb"
+              },
+              "keyName": "ts:${isin}:live_idx_mis",
+              "legend": "Index Mis",
+              "refId": "A"
+            }
+          ],
+          "title": "Misalignment — Index Cluster",
+          "type": "stat"
+        },
+        {
+          "datasource": {
+            "type": "redis-datasource",
+            "uid": "ffct9wgvpkv7kb"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "decimals": 4,
+              "mappings": [],
+              "max": 1,
+              "min": 0,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "red",
+                    "value": 0
+                  },
+                  {
+                    "color": "orange",
+                    "value": -0.005
+                  },
+                  {
+                    "color": "green",
+                    "value": -0.002
+                  },
+                  {
+                    "color": "green",
+                    "value": 0.002
+                  },
+                  {
+                    "color": "orange",
+                    "value": 0.005
+                  },
+                  {
+                    "color": "red",
+                    "value": 0.01
+                  }
+                ]
+              },
+              "unit": "percentunit"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 2,
+            "w": 4,
+            "x": 8,
+            "y": 2
+          },
+          "id": 4,
+          "options": {
+            "colorMode": "background",
+            "graphMode": "area",
+            "justifyMode": "auto",
+            "orientation": "auto",
+            "percentChangeColorMode": "standard",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "showPercentChange": false,
+            "textMode": "auto",
+            "wideLayout": true
+          },
+          "pluginVersion": "12.3.2",
+          "targets": [
+            {
+              "command": "ts.get",
+              "datasource": {
+                "type": "redis-datasource",
+                "uid": "ffct9wgvpkv7kb"
+              },
+              "keyName": "ts:${isin}:live_clust_mis",
+              "legend": "Cluster Mis",
+              "refId": "A"
+            }
+          ],
+          "title": "Misalignment — Cluster",
+          "type": "stat"
+        },
+        {
+          "datasource": {
+            "type": "redis-datasource",
+            "uid": "ffct9wgvpkv7kb"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "decimals": 4,
+              "mappings": [],
+              "max": 1,
+              "min": 0,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "red",
+                    "value": 0
+                  },
+                  {
+                    "color": "orange",
+                    "value": -0.005
+                  },
+                  {
+                    "color": "green",
+                    "value": -0.002
+                  },
+                  {
+                    "color": "green",
+                    "value": 0.002
+                  },
+                  {
+                    "color": "orange",
+                    "value": 0.005
+                  },
+                  {
+                    "color": "red",
+                    "value": 0.01
+                  }
+                ]
+              },
+              "unit": "percentunit"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 2,
+            "w": 4,
+            "x": 12,
+            "y": 2
+          },
+          "id": 5,
+          "options": {
+            "colorMode": "background",
+            "graphMode": "area",
+            "justifyMode": "auto",
+            "orientation": "auto",
+            "percentChangeColorMode": "standard",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "showPercentChange": false,
+            "textMode": "auto",
+            "wideLayout": true
+          },
+          "pluginVersion": "12.3.2",
+          "targets": [
+            {
+              "command": "ts.get",
+              "datasource": {
+                "type": "redis-datasource",
+                "uid": "ffct9wgvpkv7kb"
+              },
+              "keyName": "ts:${isin}:intraday_mis",
+              "legend": "Intraday Mis",
+              "refId": "A"
+            }
+          ],
+          "title": "Misalignment — Intraday",
+          "type": "stat"
+        },
+        {
+          "datasource": {
+            "type": "redis-datasource",
+            "uid": "ffct9wgvpkv7kb"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "axisBorderShow": false,
+                "axisCenteredZero": false,
+                "axisColorMode": "text",
+                "axisLabel": "",
+                "axisPlacement": "auto",
+                "barAlignment": 0,
+                "barWidthFactor": 0.6,
+                "drawStyle": "line",
+                "fillOpacity": 5,
+                "gradientMode": "none",
+                "hideFrom": {
+                  "legend": false,
+                  "tooltip": false,
+                  "viz": false
+                },
+                "insertNulls": false,
+                "lineInterpolation": "linear",
+                "lineWidth": 2,
+                "pointSize": 3,
+                "scaleDistribution": {
+                  "type": "linear"
+                },
+                "showPoints": "never",
+                "showValues": false,
+                "spanNulls": false,
+                "stacking": {
+                  "group": "A",
+                  "mode": "none"
+                },
+                "thresholdsStyle": {
+                  "mode": "off"
+                }
+              },
+              "decimals": 5,
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": 0
+                  },
+                  {
+                    "color": "red",
+                    "value": 80
+                  }
+                ]
+              },
+              "unit": "short"
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "Mid"
+                },
+                "properties": [
+                  {
+                    "id": "custom.lineWidth",
+                    "value": 3
+                  },
+                  {
+                    "id": "color",
+                    "value": {
+                      "fixedColor": "#1F60C4",
+                      "mode": "fixed"
+                    }
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "Index Cluster"
+                },
+                "properties": [
+                  {
+                    "id": "custom.lineStyle",
+                    "value": {
+                      "dash": [
+                        8,
+                        4
+                      ],
+                      "fill": "dash"
+                    }
+                  },
+                  {
+                    "id": "color",
+                    "value": {
+                      "fixedColor": "#E0B400",
+                      "mode": "fixed"
+                    }
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "Cluster"
+                },
+                "properties": [
+                  {
+                    "id": "custom.lineStyle",
+                    "value": {
+                      "dash": [
+                        8,
+                        4
+                      ],
+                      "fill": "dash"
+                    }
+                  },
+                  {
+                    "id": "color",
+                    "value": {
+                      "fixedColor": "#37872D",
+                      "mode": "fixed"
+                    }
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "Intraday"
+                },
+                "properties": [
+                  {
+                    "id": "custom.lineStyle",
+                    "value": {
+                      "dash": [
+                        4,
+                        4
+                      ],
+                      "fill": "dash"
+                    }
+                  },
+                  {
+                    "id": "color",
+                    "value": {
+                      "fixedColor": "#C4162A",
+                      "mode": "fixed"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "gridPos": {
+            "h": 18,
+            "w": 10,
+            "x": 0,
+            "y": 22
+          },
+          "id": 7,
+          "options": {
+            "legend": {
+              "calcs": [
+                "lastNotNull",
+                "min",
+                "max"
+              ],
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "hideZeros": false,
+              "mode": "multi",
+              "sort": "none"
+            }
+          },
+          "pluginVersion": "12.3.2",
+          "targets": [
+            {
+              "command": "ts.range",
+              "datasource": {
+                "type": "redis-datasource",
+                "uid": "ffct9wgvpkv7kb"
+              },
+              "keyName": "ts:${isin}:mid",
+              "legend": "Mid",
+              "refId": "A"
+            },
+            {
+              "command": "ts.range",
+              "datasource": {
+                "type": "redis-datasource",
+                "uid": "ffct9wgvpkv7kb"
+              },
+              "keyName": "ts:${isin}:live_idx",
+              "legend": "Index Cluster",
+              "refId": "B"
+            },
+            {
+              "command": "ts.range",
+              "datasource": {
+                "type": "redis-datasource",
+                "uid": "ffct9wgvpkv7kb"
+              },
+              "keyName": "ts:${isin}:live_clust",
+              "legend": "Cluster",
+              "refId": "C"
+            },
+            {
+              "command": "ts.range",
+              "datasource": {
+                "type": "redis-datasource",
+                "uid": "ffct9wgvpkv7kb"
+              },
+              "keyName": "ts:${isin}:intraday",
+              "legend": "Intraday",
+              "refId": "D"
+            }
+          ],
+          "title": "Mid vs Prezzi Teorici — ${isin:text}",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "redis-datasource",
+            "uid": "ffct9wgvpkv7kb"
+          },
+          "description": "Scarto % del prezzo teorico rispetto al mid. Verde = allineato (±20bps), Arancione = ±50bps, Rosso = >100bps",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "axisBorderShow": false,
+                "axisCenteredZero": false,
+                "axisColorMode": "text",
+                "axisLabel": "",
+                "axisPlacement": "auto",
+                "barAlignment": 0,
+                "barWidthFactor": 0.6,
+                "drawStyle": "line",
+                "fillOpacity": 10,
+                "gradientMode": "none",
+                "hideFrom": {
+                  "legend": false,
+                  "tooltip": false,
+                  "viz": false
+                },
+                "insertNulls": false,
+                "lineInterpolation": "linear",
+                "lineWidth": 2,
+                "pointSize": 3,
+                "scaleDistribution": {
+                  "type": "linear"
+                },
+                "showPoints": "never",
+                "showValues": false,
+                "spanNulls": false,
+                "stacking": {
+                  "group": "A",
+                  "mode": "none"
+                },
+                "thresholdsStyle": {
+                  "mode": "area"
+                }
+              },
+              "decimals": 4,
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "red",
+                    "value": 0
+                  },
+                  {
+                    "color": "orange",
+                    "value": -0.005
+                  },
+                  {
+                    "color": "green",
+                    "value": -0.002
+                  },
+                  {
+                    "color": "green",
+                    "value": 0.002
+                  },
+                  {
+                    "color": "orange",
+                    "value": 0.005
+                  },
+                  {
+                    "color": "red",
+                    "value": 0.01
+                  }
+                ]
+              },
+              "unit": "percentunit"
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "Index Mis"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "fixedColor": "#E0B400",
+                      "mode": "fixed"
+                    }
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "Cluster Mis"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "fixedColor": "#37872D",
+                      "mode": "fixed"
+                    }
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "Intraday Mis"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "fixedColor": "#C4162A",
+                      "mode": "fixed"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "gridPos": {
+            "h": 18,
+            "w": 14,
+            "x": 10,
+            "y": 22
+          },
+          "id": 9,
+          "options": {
+            "legend": {
+              "calcs": [
+                "lastNotNull",
+                "min",
+                "max",
+                "mean"
+              ],
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "hideZeros": false,
+              "mode": "multi",
+              "sort": "none"
+            }
+          },
+          "pluginVersion": "12.3.2",
+          "targets": [
+            {
+              "command": "ts.range",
+              "datasource": {
+                "type": "redis-datasource",
+                "uid": "ffct9wgvpkv7kb"
+              },
+              "keyName": "ts:${isin}:live_idx_mis",
+              "legend": "Index Mis",
+              "refId": "A"
+            },
+            {
+              "command": "ts.range",
+              "datasource": {
+                "type": "redis-datasource",
+                "uid": "ffct9wgvpkv7kb"
+              },
+              "keyName": "ts:${isin}:live_clust_mis",
+              "legend": "Cluster Mis",
+              "refId": "B"
+            },
+            {
+              "command": "ts.range",
+              "datasource": {
+                "type": "redis-datasource",
+                "uid": "ffct9wgvpkv7kb"
+              },
+              "keyName": "ts:${isin}:intraday_mis",
+              "legend": "Intraday Mis",
+              "refId": "C"
+            }
+          ],
+          "title": "Misalignment % — ${isin:text}",
+          "type": "timeseries"
+        }
+      ],
+      "title": "Valori Correnti — ${isin:text}",
+      "type": "row"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 2
+      },
+      "id": 10,
+      "panels": [],
+      "title": "Beta — ${isin:text}",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "redis-datasource",
+        "uid": "ffct9wgvpkv7kb"
+      },
+      "description": "Andamento del campo Redis selezionato per i driver con beta non nullo + ETF principale. Seleziona 'Mid Normalizzato' per confrontare tutti gli ETF sulla stessa scala (mid / primo prezzo del giorno).",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": true,
+            "axisCenteredZero": false,
+            "axisColorMode": "series",
+            "axisGridShow": true,
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "showValues": false,
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "decimals": 4,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "B"
+            },
+            "properties": [
+              {
+                "id": "custom.lineWidth",
+                "value": 6
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "blue",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 18,
+        "w": 19,
+        "x": 0,
+        "y": 3
+      },
+      "id": 12,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "right",
+          "showLegend": true,
+          "sortBy": "Name",
+          "sortDesc": false
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "12.3.2",
+      "targets": [
+        {
+          "aggregation": "",
+          "bucket": 10000,
+          "command": "ts.mrange",
+          "datasource": {
+            "type": "redis-datasource",
+            "uid": "ffct9wgvpkv7kb"
+          },
+          "filter": "isin=(${isin},${drivers:csv}) field=${ts_field}",
+          "legend": "",
+          "query": "",
+          "refId": "A",
+          "tsGroupByLabel": "",
+          "tsReducer": "avg",
+          "type": "timeSeries",
+          "value": ""
+        }
+      ],
+      "title": "Andamento ${ts_field} — ${isin:text} + Drivers",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "frser-sqlite-datasource",
+        "uid": "cfc1j5nq56ry8b"
+      },
+      "description": "Drivers con beta != 0 per l'ISIN selezionato, snapshot piu recente",
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "footer": {
+              "reducers": []
+            },
+            "inspect": false
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Beta"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percentunit"
+              },
+              {
+                "id": "decimals",
+                "value": 4
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "mode": "basic",
+                  "type": "color-background"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "red",
+                      "value": 0
+                    },
+                    {
+                      "color": "light-red",
+                      "value": -0.5
+                    },
+                    {
+                      "color": "light-green",
+                      "value": -0.1
+                    },
+                    {
+                      "color": "green",
+                      "value": 0.1
+                    },
+                    {
+                      "color": "light-green",
+                      "value": 0.5
+                    },
+                    {
+                      "color": "red",
+                      "value": 1
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Driver"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 180
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 18,
+        "w": 5,
+        "x": 19,
+        "y": 3
+      },
+      "id": 11,
+      "options": {
+        "cellHeight": "sm",
+        "showHeader": true,
+        "sortBy": [
+          {
+            "desc": true,
+            "displayName": "Beta"
+          }
+        ]
+      },
+      "pluginVersion": "12.3.2",
+      "targets": [
+        {
+          "datasource": {
+            "type": "frser-sqlite-datasource",
+            "uid": "cfc1j5nq56ry8b"
+          },
+          "queryText": "\r\nSELECT \r\n COALESCE(t.TICKER, b.DRIVER) as \"Driver\",\r\n ROUND(b.BETA, 4) as \"Beta\"\r\nFROM beta_large_cluster b\r\nLEFT JOIN VW_ISIN_TICKER t ON b.DRIVER = t.ISIN\r\nWHERE b.ISIN = '${isin}'\r\n AND ABS(b.BETA) > 0.0001\r\n AND b.DATETIME = (SELECT MAX(DATETIME) FROM beta_large_cluster WHERE ISIN = '${isin}')\r\n\r\nORDER BY ABS(\"Beta\") DESC",
+          "queryType": "table",
+          "rawQueryText": "\r\nSELECT \r\n COALESCE(t.TICKER, b.DRIVER) as \"Driver\",\r\n ROUND(b.BETA, 4) as \"Beta\"\r\nFROM beta_large_cluster b\r\nLEFT JOIN VW_ISIN_TICKER t ON b.DRIVER = t.ISIN\r\nWHERE b.ISIN = '${isin}'\r\n AND ABS(b.BETA) > 0.0001\r\n AND b.DATETIME = (SELECT MAX(DATETIME) FROM beta_large_cluster WHERE ISIN = '${isin}')\r\n\r\nORDER BY ABS(\"Beta\") DESC",
+          "refId": "A",
+          "timeColumns": []
+        }
+      ],
+      "title": "Beta drivers (ultimo aggiornamento)",
+      "type": "table"
+    }
+  ],
+  "preload": false,
+  "refresh": "5s",
+  "schemaVersion": 42,
+  "tags": [
+    "etf",
+    "equities",
+    "redis-ts",
+    "live"
+  ],
+  "templating": {
+    "list": [
+      {
+        "current": {
+          "text": "XZEZ",
+          "value": "IE00BNC1G699"
+        },
+        "datasource": {
+          "type": "frser-sqlite-datasource",
+          "uid": "cfc1j5nq56ry8b"
+        },
+        "includeAll": false,
+        "label": "ETF",
+        "name": "isin",
+        "options": [],
+        "query": "SELECT TICKER as __text, ISIN as __value FROM VW_ISIN_TICKER ORDER BY TICKER",
+        "refresh": 1,
+        "type": "query"
+      },
+      {
+        "current": {
+          "text": "Cluster Misalignment",
+          "value": "live_clust_mis"
+        },
+        "includeAll": false,
+        "label": "field",
+        "name": "ts_field",
+        "options": [
+          {
+            "selected": false,
+            "text": "Mid Price",
+            "value": "mid"
+          },
+          {
+            "selected": false,
+            "text": "Index Cluster Price",
+            "value": "live_idx"
+          },
+          {
+            "selected": false,
+            "text": "Cluster Price",
+            "value": "live_clust"
+          },
+          {
+            "selected": false,
+            "text": "Intraday Price",
+            "value": "intraday"
+          },
+          {
+            "selected": false,
+            "text": "Index Cluster Misalignment",
+            "value": "live_idx_mis"
+          },
+          {
+            "selected": true,
+            "text": "Cluster Misalignment",
+            "value": "live_clust_mis"
+          },
+          {
+            "selected": false,
+            "text": "Intraday Misalignment",
+            "value": "intraday_mis"
+          },
+          {
+            "selected": false,
+            "text": "Mid Normalizzato (% primo prezzo del giorno)",
+            "value": "mid_norm"
+          }
+        ],
+        "query": "Mid Price : mid, Index Cluster Price : live_idx, Cluster Price : live_clust, Intraday Price : intraday, Index Cluster Misalignment : live_idx_mis, Cluster Misalignment : live_clust_mis, Intraday Misalignment : intraday_mis, Mid Normalizzato : mid_norm",
+        "type": "custom"
+      },
+      {
+        "current": {
+          "text": [
+            "ENMU"
+          ],
+          "value": [
+            "IE00BHZPJ015"
+          ]
+        },
+        "datasource": {
+          "type": "frser-sqlite-datasource",
+          "uid": "cfc1j5nq56ry8b"
+        },
+        "definition": "SELECT __value, __text\nFROM (\n SELECT \n '${isin}' as __value, \n COALESCE((SELECT TICKER FROM VW_ISIN_TICKER WHERE ISIN = '${isin}'), '${isin}') as __text,\n 999 as sort_order \n\n UNION ALL\n SELECT \n b.DRIVER as __value, \n COALESCE(t.TICKER, b.DRIVER) as __text,\n ABS(b.BETA) as sort_order\n FROM beta_large_cluster b\n LEFT JOIN VW_ISIN_TICKER t ON b.DRIVER = t.ISIN\n WHERE b.ISIN = '${isin}'\n AND ABS(b.BETA) > 0.0001\n AND b.DATETIME = (SELECT MAX(DATETIME) FROM beta_large_cluster WHERE ISIN = '${isin}')\n) sub\nORDER BY sort_order DESC",
+        "includeAll": false,
+        "label": "Drivers",
+        "multi": true,
+        "name": "drivers",
+        "options": [],
+        "query": "SELECT __value, __text\nFROM (\n SELECT \n '${isin}' as __value, \n COALESCE((SELECT TICKER FROM VW_ISIN_TICKER WHERE ISIN = '${isin}'), '${isin}') as __text,\n 999 as sort_order \n\n UNION ALL\n SELECT \n b.DRIVER as __value, \n COALESCE(t.TICKER, b.DRIVER) as __text,\n ABS(b.BETA) as sort_order\n FROM beta_large_cluster b\n LEFT JOIN VW_ISIN_TICKER t ON b.DRIVER = t.ISIN\n WHERE b.ISIN = '${isin}'\n AND ABS(b.BETA) > 0.0001\n AND b.DATETIME = (SELECT MAX(DATETIME) FROM beta_large_cluster WHERE ISIN = '${isin}')\n) sub\nORDER BY sort_order DESC",
+        "refresh": 1,
+        "type": "query"
+      },
+      {
+        "current": {
+          "text": "SWDA",
+          "value": "IE00B4L5Y983"
+        },
+        "datasource": {
+          "type": "frser-sqlite-datasource",
+          "uid": "cfc1j5nq56ry8b"
+        },
+        "includeAll": false,
+        "label": "ETF 1",
+        "name": "etf1",
+        "options": [],
+        "query": "SELECT TICKER as __text, ISIN as __value FROM VW_ISIN_TICKER ORDER BY TICKER",
+        "refresh": 1,
+        "type": "query"
+      },
+      {
+        "current": {
+          "text": "AEEM",
+          "value": "LU1681045370"
+        },
+        "datasource": {
+          "type": "frser-sqlite-datasource",
+          "uid": "cfc1j5nq56ry8b"
+        },
+        "includeAll": false,
+        "label": "ETF 2",
+        "name": "etf2",
+        "options": [],
+        "query": "SELECT TICKER as __text, ISIN as __value FROM VW_ISIN_TICKER ORDER BY TICKER",
+        "refresh": 1,
+        "type": "query"
+      },
+      {
+        "current": {
+          "text": "C50",
+          "value": "LU1681047236"
+        },
+        "datasource": {
+          "type": "frser-sqlite-datasource",
+          "uid": "cfc1j5nq56ry8b"
+        },
+        "includeAll": false,
+        "label": "ETF 3",
+        "name": "etf3",
+        "options": [],
+        "query": "SELECT TICKER as __text, ISIN as __value FROM VW_ISIN_TICKER ORDER BY TICKER",
+        "refresh": 1,
+        "type": "query"
+      },
+      {
+        "current": {
+          "text": "INDI",
+          "value": "FR0010361683"
+        },
+        "datasource": {
+          "type": "frser-sqlite-datasource",
+          "uid": "cfc1j5nq56ry8b"
+        },
+        "includeAll": false,
+        "label": "ETF 4",
+        "name": "etf4",
+        "options": [],
+        "query": "SELECT TICKER as __text, ISIN as __value FROM VW_ISIN_TICKER ORDER BY TICKER",
+        "refresh": 1,
+        "type": "query"
+      },
+      {
+        "current": {
+          "text": "BRA",
+          "value": "LU1900066207"
+        },
+        "datasource": {
+          "type": "frser-sqlite-datasource",
+          "uid": "cfc1j5nq56ry8b"
+        },
+        "includeAll": false,
+        "label": "ETF 5",
+        "name": "etf5",
+        "options": [],
+        "query": "SELECT TICKER as __text, ISIN as __value FROM VW_ISIN_TICKER ORDER BY TICKER",
+        "refresh": 1,
+        "type": "query"
+      },
+      {
+        "current": {
+          "text": "FXC",
+          "value": "IE00B02KXK85"
+        },
+        "datasource": {
+          "type": "frser-sqlite-datasource",
+          "uid": "cfc1j5nq56ry8b"
+        },
+        "includeAll": false,
+        "label": "ETF 6",
+        "name": "etf6",
+        "options": [],
+        "query": "SELECT TICKER as __text, ISIN as __value FROM VW_ISIN_TICKER ORDER BY TICKER",
+        "refresh": 1,
+        "type": "query"
+      }
+    ]
+  },
+  "time": {
+    "from": "now-30m",
+    "to": "now"
+  },
+  "timepicker": {
+    "refresh_intervals": [
+      "5s",
+      "10s",
+      "30s",
+      "1m",
+      "5m"
+    ]
+  },
+  "timezone": "browser",
+  "title": "ETF Monitor",
+  "uid": "etf-price-monitor-v2",
+  "version": 49
+}

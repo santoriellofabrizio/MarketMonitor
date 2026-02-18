@@ -148,6 +148,8 @@ class EtfEquityPriceEngine(StrategyUI):
         days = self.holidays.get_business_days(start=start, end=end)
         snapshot_time = time(16, 45)
         self.last_storage_time = datetime.now()
+        self._day_open_mid: Optional[Dict] = None
+        self._day_open_date: Optional[date] = None
 
         fx_composition = self.API.info.get_fx_composition(self.etfs, fx_fxfwrd="fx",
                                                           reference_date=date(2026, 2, 9))
@@ -444,8 +446,19 @@ class EtfEquityPriceEngine(StrategyUI):
             return
 
         # 2. CREAZIONE TIMESERIES - Una sola volta per ISIN
-        field_names = ['live_idx_mis', 'live_clust_mis', 'intraday_mis']
+        field_names = ['live_idx_mis', 'live_clust_mis', 'intraday_mis', 'mid', 'mid_norm']
         self._ensure_timeseries_exist(all_isins, field_names)
+
+        # 2b. AGGIORNAMENTO DAY OPEN MID (primo prezzo del giorno per ogni ISIN)
+        today_date = current_time.date()
+        mid_prices = normalized_prices['mid']
+        if self._day_open_date != today_date or self._day_open_mid is None:
+            self._day_open_date = today_date
+            self._day_open_mid = {}
+            for isin in all_isins:
+                val = mid_prices.get(isin)
+                if val is not None and val != 0 and not np.isnan(float(val)):
+                    self._day_open_mid[isin] = float(val)
 
         # 3. PREPARAZIONE MISALIGNMENTS - Pre-elaborati
         misalignments = self._calculate_misalignments(
@@ -453,11 +466,31 @@ class EtfEquityPriceEngine(StrategyUI):
             all_isins
         )
 
+        # 3b. AGGIUNTA MID E MID_NORM (mid / primo_prezzo_del_giorno)
+        extra_data = []
+        for isin in all_isins:
+            try:
+                mid_val = mid_prices.get(isin)
+                if mid_val is None or mid_val == 0 or np.isnan(float(mid_val)):
+                    continue
+                mid_val = float(mid_val)
+                extra_data.append((isin, 'mid', mid_val))
+
+                day_open = self._day_open_mid.get(isin)
+                if day_open is None:
+                    self._day_open_mid[isin] = mid_val
+                    day_open = mid_val
+                mid_norm = float(np.round(mid_val / day_open, 6))
+                extra_data.append((isin, 'mid_norm', mid_norm))
+            except (TypeError, ZeroDivisionError, ValueError) as e:
+                logger.warning(f"Error computing mid_norm for {isin}: {e}")
+                continue
+
         # 4. BATCH PUBLISHING - Una sola volta
-        self._batch_publish_misalignments(misalignments)
+        self._batch_publish_misalignments(misalignments + extra_data)
 
         self.last_storage_time = current_time
-        logger.info(f"Storage published {len(misalignments)} entries")
+        logger.info(f"Storage published {len(misalignments) + len(extra_data)} entries")
 
     def _ensure_timeseries_exist(self, isins: Set[str], field_names: list):
         """
