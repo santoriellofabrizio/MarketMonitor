@@ -47,7 +47,6 @@ from PyQt5.QtWidgets import (
     QSizePolicy,
 )
 
-from market_monitor.gui.implementations.GUI import GUI
 from market_monitor.gui.implementations.StrategyControlPanel.redis_status_thread import RedisStatusThread
 
 logger = logging.getLogger(__name__)
@@ -89,9 +88,12 @@ class QTextEditLogger(logging.Handler):
 # Main window
 # ---------------------------------------------------------------------------
 
-class StrategyControlPanel(QMainWindow, GUI):
+class StrategyControlPanel(QMainWindow):
     """
     PyQt5 control panel that works with *any* strategy.
+
+    Implements the GUI interface via duck typing (export_data / close / start)
+    to avoid the metaclass conflict between PyQt5's sip.wrappertype and ABCMeta.
 
     Register it via builder YAML or programmatically:
 
@@ -112,7 +114,6 @@ class StrategyControlPanel(QMainWindow, GUI):
         **kwargs,
     ):
         QMainWindow.__init__(self)
-        GUI.__init__(self)
 
         self._commands_channel = commands_channel
         self._status_channel = status_channel
