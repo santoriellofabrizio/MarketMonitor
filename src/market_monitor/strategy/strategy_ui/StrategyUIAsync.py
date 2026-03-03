@@ -85,6 +85,7 @@ class StrategyUIAsync(ABC):
             "trade": self._async_check_trade_queue,
             "update_HF": self._async_update_HF,
             "command_listener": self._async_command_listener,
+            "lifecycle_publisher": self._async_lifecycle_publisher,
         }
 
         try:
@@ -441,13 +442,64 @@ class StrategyUIAsync(ABC):
     def export_data(self, *args, **kwargs):
         pass
 
+    async def _async_lifecycle_publisher(self, redis_client_attr: str,
+                                          channel: str = "engine:lifecycle", **kwargs):
+        """
+        Configures Redis publishing for lifecycle events so a standalone
+        StrategyControlPanel (running in a separate process) can receive them.
+
+        Config example:
+            tasks:
+              lifecycle_publisher:
+                activate: true
+                redis_client_attr: publisher.gui.redis_client
+                channel: engine:lifecycle
+        """
+        redis_client = self
+        for attr in redis_client_attr.split("."):
+            redis_client = getattr(redis_client, attr)
+
+        self._lifecycle_redis_client = redis_client
+        self._lifecycle_channel = channel
+        logger.info(f"Lifecycle publisher configured on channel '{channel}'")
+
+        try:
+            while not self.running:
+                await asyncio.sleep(5)
+        finally:
+            self._lifecycle_redis_client = None
+
     def _broadcast_lifecycle_event(self, event_name: str, data=None) -> None:
-        """Notify all registered GUIs of a lifecycle event (non-blocking, best-effort)."""
+        """
+        Notify all registered GUIs of a lifecycle event (non-blocking, best-effort).
+        Also publishes to Redis if lifecycle_publisher task is configured, allowing
+        a standalone StrategyControlPanel to receive events from a separate process.
+        """
+        import json
+        from datetime import datetime, timezone
+
+        # In-process GUIs (integrated mode)
         for gui in self.GUIs.values():
             try:
                 gui.export_data(event_name=event_name, data=data)
             except Exception as e:
                 logger.debug(f"GUI lifecycle broadcast error for '{event_name}': {e}")
+
+        # Redis publish (standalone mode — only when lifecycle_publisher task is active)
+        redis_client = getattr(self, "_lifecycle_redis_client", None)
+        if redis_client:
+            try:
+                payload = json.dumps({
+                    "event": event_name,
+                    "data": data,
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                })
+                redis_client.publish(
+                    getattr(self, "_lifecycle_channel", "engine:lifecycle"),
+                    payload,
+                )
+            except Exception as e:
+                logger.debug(f"Redis lifecycle publish error for '{event_name}': {e}")
 
     def stop(self):
         """Stop non bloccante."""

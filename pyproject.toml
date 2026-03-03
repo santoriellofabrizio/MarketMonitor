@@ -38,6 +38,7 @@ dependencies = [
 run-strategy = "market_monitor.entry.run_strategy:main"
 run-mock = "market_monitor.entry.run_mock:main"
 run-dashboard = "market_monitor.entry.run_dashboard:main"
+run-control-panel = "market_monitor.entry.run_control_panel:main"
 
 
 [build-system]

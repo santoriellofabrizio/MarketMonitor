@@ -110,6 +110,7 @@ class StrategyControlPanel(QMainWindow):
         redis_config: Optional[dict] = None,
         commands_channel: str = "engine:commands",
         status_channel: str = "engine:status",
+        lifecycle_channel: Optional[str] = None,
         strategy_ref=None,
         **kwargs,
     ):
@@ -117,9 +118,11 @@ class StrategyControlPanel(QMainWindow):
 
         self._commands_channel = commands_channel
         self._status_channel = status_channel
+        self._lifecycle_channel = lifecycle_channel
         self._strategy = strategy_ref
         self._redis_client: Optional[redis.StrictRedis] = None
         self._status_thread: Optional[RedisStatusThread] = None
+        self._lifecycle_thread: Optional[RedisStatusThread] = None
         self._log_handler: Optional[QTextEditLogger] = None
         self._log_level_filter: int = logging.DEBUG
 
@@ -132,6 +135,8 @@ class StrategyControlPanel(QMainWindow):
 
         if self._status_thread:
             self._status_thread.start()
+        if self._lifecycle_thread:
+            self._lifecycle_thread.start()
 
         logger.info("StrategyControlPanel initialized")
 
@@ -154,9 +159,10 @@ class StrategyControlPanel(QMainWindow):
     def close(self) -> None:
         """Stop background threads and close the window."""
         self._uninstall_log_handler()
-        if self._status_thread and self._status_thread.isRunning():
-            self._status_thread.stop()
-            self._status_thread.wait(2000)
+        for thread in (self._status_thread, self._lifecycle_thread):
+            if thread and thread.isRunning():
+                thread.stop()
+                thread.wait(2000)
         super().close()
 
     def start(self) -> None:
@@ -205,6 +211,11 @@ class StrategyControlPanel(QMainWindow):
                 redis_client=self._redis_client,
                 channel=self._status_channel,
             )
+            if self._lifecycle_channel:
+                self._lifecycle_thread = RedisStatusThread(
+                    redis_client=self._redis_client,
+                    channel=self._lifecycle_channel,
+                )
         except redis.RedisError as e:
             logger.warning(f"Redis not available: {e}. Commands tab will be disabled.")
             self._redis_client = None
@@ -395,6 +406,9 @@ class StrategyControlPanel(QMainWindow):
         if self._status_thread:
             self._status_thread.status_received.connect(self._on_status_received)
             self._status_thread.connection_error.connect(self._on_redis_error)
+        if self._lifecycle_thread:
+            self._lifecycle_thread.status_received.connect(self._on_lifecycle_redis_message)
+            self._lifecycle_thread.connection_error.connect(self._on_redis_error)
 
     # ------------------------------------------------------------------
     # Slot implementations
@@ -484,6 +498,12 @@ class StrategyControlPanel(QMainWindow):
         cursor.insertText(line + "\n")
         self._log_edit.setTextCursor(cursor)
         self._log_edit.ensureCursorVisible()
+
+    def _on_lifecycle_redis_message(self, data: dict) -> None:
+        """Handle a lifecycle event arriving from the Redis lifecycle channel."""
+        event_name = data.get("event", "unknown")
+        payload = data.get("data")
+        self._signals.lifecycle_event.emit(event_name, payload)
 
     def _on_redis_error(self, error: str) -> None:
         self._cmd_error_label.setText(f"Redis error: {error}")
