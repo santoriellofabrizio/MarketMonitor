@@ -53,9 +53,12 @@ class StrategyUIAsync(ABC):
         self.synchronous_trade_handling: bool = True
         self.GUIs: dict[str, GUI] = {}
         self.market_data: RTData = market_data
-        self.trade_subscription_manager: Optional[SubscriptionService] = None
+        self.global_subscription_service: Optional[SubscriptionService] = None
         self.running = False
         self.kwargs = kwargs
+
+    def set_subscription_service(self, subscription_service: SubscriptionService):
+        self.global_subscription_service = subscription_service
 
     def start(self):
         """ Starts the strategy"""
@@ -116,7 +119,7 @@ class StrategyUIAsync(ABC):
 
     async def _async_command_listener(self, redis_client_attr: str = "publisher.gui.redis_client",
                                       channel: str = "engine:commands",
-                                      status_channel: str = "engine:status"):
+                                      status_channel: str = "engine:status", **kwargs):
         """
         Avvia un CommandListener su un canale Redis pub/sub.
         Il listener gira in un daemon thread e invoca on_command per ogni comando ricevuto.

@@ -1,69 +1,62 @@
-import datetime
-import json
+# scripts/alter_ts_labels.py
+import redis
+from market_monitor.publishers.timeseries_publisher import TimeSeriesPublisher
 
-import pandas as pd
-import numpy as np
-import pickle
-import time
-from market_monitor.publishers.redis_publisher import RedisMessaging
+def alter_all_ts_labels(host="localhost", port=6380, isin_to_ticker: dict = None):
+    """
+    Script one-shot: aggiorna labels su tutte le TimeSeries esistenti.
+    Legge le label attuali via TS.INFO e aggiunge/sovrascrive quelle mancanti.
+    """
+    r = redis.Redis(host=host, port=port, decode_responses=True)
+    isin_to_ticker = isin_to_ticker or {}
 
-# 1. Inizializzazione
-gui = RedisMessaging()
-path_to_pickle = r"C:\AFMachineLearning\Libraries\MarketMonitor\src\market_monitor\testing\isin_to_ticker.pkl"
+    # Trova tutte le chiavi TS
+    keys = list(r.scan_iter(match="ts:*:*", _type="TSDB-TYPE"))
+    print(f"Found {len(keys)} TimeSeries keys")
 
-with open(path_to_pickle, "rb") as f:
-    isin_data = pickle.load(f)
-    isins_800 = list(isin_data.keys())
+    altered = 0
+    errors = 0
 
-# 2. Generazione e Pubblicazione DATI STATICI (Storico)
-# Supponiamo che return_1 sia il live, mentre da 2 a 8 siano storici
-num_static_periods = 7
-static_columns = [f"return_{i+1}" for i in range(num_static_periods)]
-isins_800 = isins_800
-df_static = pd.DataFrame(
-    np.random.randn(len(isins_800), num_static_periods) * 0.02,
-    index=isins_800,
-    columns=static_columns
-)
+    for key in keys:
+        try:
+            # Leggi info esistenti
+            raw = r.execute_command("TS.INFO", key)
+            info = dict(zip(raw[::2], raw[1::2]))
 
-print("Pubblicazione dati storici (statici)...")
-for col in df_static.columns:
-    channel_name = f"market:{col}"
-    # export_static_data invia il dato una volta sola
+            # Estrai labels attuali
+            raw_labels = info.get("labels", [])
+            current_labels = dict(zip(raw_labels[::2], raw_labels[1::2])) if raw_labels else {}
 
-    gui.export_static_data(**{channel_name: (df_static[col]*100).round(2)})
-df_static*=100
-df_static=df_static.round(2)
-time.sleep(10)
-gui.export_static_data(big_df=json.dumps(df_static.to_dict(orient="split")))
-# 3. Loop Real-Time (Solo per l'ultimo ritorno)
-print("Inizio streaming real-time su market:last_return...")
+            # Estrai isin e field dalla chiave (ts:{isin}:{field})
+            parts = key.split(":")
+            if len(parts) < 3:
+                continue
+            isin = parts[1]
+            field = parts[2]
 
-try:
-    while True:
-        # Generiamo il ritorno "live" (es. variazione giornaliera)
-        # Usiamo Series per avere ISIN come chiavi nel JSON
-        import pandas as pd
-        import datetime
+            # Costruisci nuove label (merge)
+            new_labels = {
+                "isin": isin,
+                "ticker": isin_to_ticker.get(isin, isin),
+                **current_labels,  # mantieni esistenti
+            }
 
-        # Definiamo la data base di Excel
-        excel_base_date = datetime.datetime(1899, 12, 30)
-        now = datetime.datetime.now()
+            # Applica
+            r.execute_command(
+                "TS.ALTER", key,
+                "LABELS", *[item for pair in new_labels.items() for item in pair]
+            )
+            print(f"  OK {key} -> {new_labels}")
+            altered += 1
 
-        # Calcolo del valore seriale
-        # (Differenza totale in giorni tra oggi e la base di Excel)
-        excel_serial_now = (now - excel_base_date).total_seconds() / 86400
+        except Exception as e:
+            print(f"  ERR {key}: {e}")
+            errors += 1
 
-        last_returns = pd.Series(
-            excel_serial_now,
-            index=isins_800
-        )
+    print(f"\nDone: {altered} altered, {errors} errors")
 
-        # Pubblicazione sul canale live
-        gui.export_message("market:return_0", last_returns)
 
-        print(f"Update RT inviato alle {time.strftime('%H:%M:%S')}")
-        time.sleep(1)
-
-except KeyboardInterrupt:
-    print("Stopping...")
+if __name__ == "__main__":
+    from market_monitor.config import load_isin_to_ticker  # adatta al tuo config
+    isin_to_ticker = load_isin_to_ticker()
+    alter_all_ts_labels(host="localhost", port=6380, isin_to_ticker=isin_to_ticker)

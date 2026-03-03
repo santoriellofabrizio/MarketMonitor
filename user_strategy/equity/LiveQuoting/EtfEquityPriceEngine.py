@@ -1,4 +1,5 @@
 import logging
+import os
 import sqlite3
 import time as sleep_time
 from collections import deque
@@ -23,9 +24,13 @@ from market_monitor.publishers.timeseries_publisher import TimeSeriesPublisher
 from market_monitor.strategy.strategy_ui.StrategyUI import StrategyUI
 
 from user_strategy.equity.LiveQuoting.InputParamsQuoting import InputParamsQuoting
+from user_strategy.equity.LiveQuoting.price_publisher import PricePublisherHub
+from user_strategy.equity.LiveQuoting.pricing_engine import PricingModelRegistry
+from user_strategy.equity.LiveQuoting.utils import filter_outliers, round_series_to_tick
 from user_strategy.utils.bloomberg_subscription_utils.SubscriptionManager import SubscriptionManager
 from user_strategy.utils.pricing_models.AggregationFunctions import ForecastAggregator, TrimmedMean
 from user_strategy.utils.pricing_models.PricingModel import ClusterPricingModel
+from user_strategy.utils.bloomberg_subscription_utils.SubscriptionManager import SubscriptionManager
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +86,7 @@ class EtfEquityPriceEngine(StrategyUI):
         self.input_params = InputParamsQuoting(**kwargs)
 
         # Filtra ETF attivi dall'universo beta
-        self.etfs = self._filter_active_etfs(kwargs.get("isin_list", []))
+        self.etfs = self._filter_active_etps(kwargs.get("isin_list", []))
 
         self.instruments = list({*self.etfs, *self.currencies})
         self._isins_etf_equity = list(isins_etf_equity)
@@ -91,12 +96,14 @@ class EtfEquityPriceEngine(StrategyUI):
         self.book_mid_threshold = 0.5
         self.book_eur: pd.DataFrame = pd.DataFrame()
         self.book_storage: deque = deque(maxlen=3)
+        self.bloomberg_subscription_manager = SubscriptionManager(self.etfs,
+                                                                  kwargs.get('bloomberg_subscription_config_path'))
         self.position: Optional[pd.Series] = None
         self.return_to_publish: list = [1, 2, 3, 4, 5, 6, 7, 8]
         self.today = pd.Timestamp.today().normalize()
         self.yesterday = HolidayManager().previous_business_day(self.today)
 
-    def _filter_active_etfs(self, isin_list: list) -> list:
+    def _filter_active_etps(self, isin_list: list) -> list:
         """
         Filtra gli ETF attivi dall'universo delle matrici beta.
 
@@ -113,6 +120,12 @@ class EtfEquityPriceEngine(StrategyUI):
             *self.input_params.beta_cluster_index.columns,
         })
 
+        etp_type = self.API.info.get_etp_fields(isin=raw_etfs,
+                                                fields="ETP_TYPE")["ETP_TYPE"].to_dict()
+
+        leverage = self.API.info.get_etp_fields(isin=raw_etfs, source='bloomberg',
+                                                fields="FUND_LEVERAGE")["FUND_LEVERAGE"].to_dict()
+
         valid_etfs = []
         for etf in raw_etfs:
             if isin_list and etf not in isin_list:
@@ -120,6 +133,15 @@ class EtfEquityPriceEngine(StrategyUI):
             if self.active_isin.get(etf, "NOT_PRESENT") != "ACTV":
                 logger.warning(f"{etf} ({self.ticker_to_isin.get(etf)}) is not ACTV.")
                 continue
+
+            if etp_type.get(etf, "ETP") != "ETF":
+                logger.warning(f"{etf} ({self.ticker_to_isin.get(etf)}) is not an ETP.")
+                continue
+
+            if leverage.get(etf, "N") == "Y":
+                logger.warning(f"{etf} ({self.ticker_to_isin.get(etf)}) is leveraged.")
+                continue
+
             valid_etfs.append(etf)
 
         return sorted(valid_etfs)
@@ -135,9 +157,9 @@ class EtfEquityPriceEngine(StrategyUI):
         snapshot_time = time(16, 45)
 
         fx_composition = self.API.info.get_fx_composition(
-            self.etfs, fx_fxfwrd="fx", reference_date=date(2026, 2, 9))
+            self.etfs, fx_fxfwrd='fx', reference_date=date(2026,3,2))
         fx_forward = self.API.info.get_fx_composition(
-            self.etfs, fx_fxfwrd="fxfwrd", reference_date=date(2026, 2, 9))
+            self.etfs, fx_fxfwrd="fxfwrd", reference_date=date(2026,3,2))
 
         for isin, isin_proxy in kwargs.get("fx_mapping", {}).items():
             fx_composition.loc[isin] = fx_composition.loc[isin_proxy]
@@ -228,9 +250,6 @@ class EtfEquityPriceEngine(StrategyUI):
         """Configura la sottoscrizione Bloomberg e pubblica i ritorni storici iniziali."""
         self.all_etf_plus_securities = list(set(self.currencies + self._isins_etf_equity))
         self.bloomberg_subscription_config_path = kwargs.get("bloomberg_subscription_config_path")
-        self.subscription_manager = SubscriptionManager(
-            self.all_etf_plus_securities, self.bloomberg_subscription_config_path)
-
         logger.info("=" * 70)
         logger.info("Price analytics: http://localhost:3000/d/etf-price-monitor-v2/")
         logger.info("=" * 70)
@@ -242,15 +261,61 @@ class EtfEquityPriceEngine(StrategyUI):
     # Usage: redis-cli PUBLISH engine:commands '{"action": "reload_beta"}'
     # =========================================================================
 
-    def on_command(self, action: str, payload: dict):
-        """Gestisce comandi ricevuti via Redis pub/sub."""
+    # EtfEquityPriceEngine.on_command — sostituire il metodo esistente
+
+    def on_command(self, action: str, payload: dict) -> None:
+        """Gestisce comandi ricevuti via Redis pub/sub.
+
+        Esempi:
+            redis-cli PUBLISH engine:commands '{"action": "reload_beta"}'
+            redis-cli PUBLISH engine:commands '{"action": "update_forecaster", "model": "cluster", "type": "ewma_outlier", "params": {"halflife": 3, "outlier_std": 2.5}}'
+            redis-cli PUBLISH engine:commands '{"action": "update_forecaster", "model": "all", "type": "trimmed_mean", "params": {"perc_outlier": 0.1}}'
+        """
         if action == "reload_beta":
             logger.info("Beta reload triggered via command channel")
             self._reload_beta_matrices()
             self.models.predict_all(self.mid_eur)
             logger.info("Beta reload completed successfully")
+
+        elif action == "update_forecaster":
+            self._handle_update_forecaster(payload)
+
         else:
             logger.warning(f"Unknown command: '{action}'")
+
+    def _handle_update_forecaster(self, payload: dict) -> None:
+        """Costruisce e applica un nuovo ForecastAggregator dai parametri del payload."""
+        from user_strategy.utils.pricing_models.AggregationFunctions import forecast_aggregation
+
+        forecaster_type = payload.get("type")
+        params = payload.get("params", {})
+        model_name = payload.get("model", "all")  # "all" aggiorna tutti i modelli
+
+        if forecaster_type not in forecast_aggregation:
+            logger.error(
+                f"Unknown forecaster type '{forecaster_type}'. "
+                f"Valid options: {list(forecast_aggregation.keys())}"
+            )
+            return
+
+        try:
+            forecaster = forecast_aggregation[forecaster_type](**params)
+        except TypeError as e:
+            logger.error(f"Invalid params for '{forecaster_type}': {e}")
+            return
+
+        target_models = self.models.model_names if model_name == "all" else [model_name]
+
+        for name in target_models:
+            if name not in self.models:
+                logger.warning(f"Model '{name}' not found, skipping")
+                continue
+            self.models.update_forecaster(name, forecaster)
+
+        logger.info(
+            f"Forecaster updated → type={forecaster_type}, "
+            f"params={params}, models={target_models}"
+        )
 
     # =========================================================================
     # Market data setup
@@ -262,14 +327,12 @@ class EtfEquityPriceEngine(StrategyUI):
         self.book_eur = pd.DataFrame(columns=["BID", "ASK"])
         self.market_data.set_securities(self.all_etf_plus_securities)
 
-        bloomberg_subscriptions = self.subscription_manager.get_subscription_dict()
-        currency_info = self.subscription_manager.get_currency_informations()
+        bloomberg_subscriptions = self.bloomberg_subscription_manager.get_subscription_dict()
+        currency_info = self.bloomberg_subscription_manager.get_currency_informations()
         self.market_data.currency_information = currency_info
 
-        subscription_manager = self.market_data.get_subscription_manager()
-
         for isin in self.etfs:
-            subscription_manager.subscribe_bloomberg(
+            self.global_subscription_service.subscribe_bloomberg(
                 id=isin,
                 subscription_string=bloomberg_subscriptions.get(isin, isin),
                 fields=["BID", "ASK"],
@@ -277,7 +340,7 @@ class EtfEquityPriceEngine(StrategyUI):
             )
 
         for ccy in self.currencies:
-            subscription_manager.subscribe_bloomberg(
+            self.global_subscription_service.subscribe_bloomberg(
                 id=ccy,
                 subscription_string=f"{ccy} CURNCY",
                 fields=["BID", "ASK"],
@@ -298,16 +361,15 @@ class EtfEquityPriceEngine(StrategyUI):
         while self.market_data.get_pending_subscriptions("bloomberg"):
             sleep_time.sleep(1)
 
-        subscription_manager = self.market_data.get_subscription_manager()
-        for sub in subscription_manager.get_failed_subscriptions():
+        for sub in self.global_subscription_service.get_failed_subscriptions():
             isin = sub.get("id")
             if isin in self.etfs:
                 ticker = self.isin_to_ticker.get(isin)
-                subscription_manager.subscribe_bloomberg(isin, f"{ticker} IM EQUITY", ["BID", "ASK"])
+                self.global_subscription_service.subscribe_bloomberg(isin, f"{ticker} IM EQUITY", ["BID", "ASK"])
 
         sleep_time.sleep(5)
 
-        for sub in subscription_manager.get_failed_subscriptions():
+        for sub in self.global_subscription_service.get_failed_subscriptions():
             isin = sub.get("id")
             logger.warning(f"failed subscription: '{isin} IM EQUITY' ({self.isin_to_ticker.get(isin)})")
             self.failed_isin.append(isin)

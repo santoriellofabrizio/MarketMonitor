@@ -102,7 +102,6 @@ class CBTradeAnalysis(StrategyUI):
 
 
     def publish_trades_on_dashboard(self, new_trades):
-
         start = time()
         new_trades["description"] = new_trades["isin"].map(self.isin_to_des)
         if self.columns_dashboard:

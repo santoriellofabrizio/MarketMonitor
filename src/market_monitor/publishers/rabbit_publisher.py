@@ -51,7 +51,6 @@ class RabbitPublisher:
             rabbit_vhost: str = DEFAULT_RABBIT_VHOST,
             **kwargs
     ):
-        super().__init__(*args, **kwargs)
 
         self._rabbit_params = pika.ConnectionParameters(
             host=rabbit_host,

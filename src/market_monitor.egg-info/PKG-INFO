@@ -16,17 +16,19 @@ Requires-Dist: httpx>=0.28.1
 Requires-Dist: joblib>=1.3.0
 Requires-Dist: matplotlib>=3.9.0
 Requires-Dist: openpyxl>=3.1.2
-Requires-Dist: pika>=1.3.2
 Requires-Dist: pyarrow>=14.0.0
 Requires-Dist: pyqt5>=5.15.11
 Requires-Dist: questionary>=2.0.0
 Requires-Dist: redis>=6.2.0
 Requires-Dist: ruamel-yaml>=0.18.6
 Requires-Dist: scipy>=1.16.0
-Requires-Dist: sfm-data-provider>=1.2.76735
+Requires-Dist: sfm-data-provider==1.2.76738
+Requires-Dist: sfm-pcf-db-library>=1.0.72038
+Requires-Dist: sfm-return-adjustment-lib>=1.0.75641
 Requires-Dist: sfm-timescaledb-queries>=1.0.72117
 Requires-Dist: tqdm>=4.64.0
 Requires-Dist: watchdog>=2.2.1
+Requires-Dist: xbbg>=0.7.7
 Requires-Dist: xlwings>=0.31.4
 
 # MarketMonitor

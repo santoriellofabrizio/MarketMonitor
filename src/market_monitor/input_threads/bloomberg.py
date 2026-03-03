@@ -4,8 +4,10 @@ import time
 from typing import Union
 
 from blpapi import SessionOptions, Session, SubscriptionList, CorrelationId
+
 from market_monitor.input_threads.event_handler.BBGEventHandler import BBGEventHandler
 from market_monitor.live_data_hub.real_time_data_hub import RTData
+from market_monitor.live_data_hub.subscription_service import SubscriptionService
 
 logging.getLogger()
 
@@ -40,7 +42,7 @@ class BloombergStreamingThread(threading.Thread):
     _port = 8194
     _service = "//blp/mktdata"
 
-    def __init__(self, event_processor: BBGEventHandler, **kwargs):
+    def __init__(self, subscription_service: SubscriptionService, event_processor: BBGEventHandler, **kwargs):
         """
         Initializes the bloomberg.
 
@@ -64,7 +66,7 @@ class BloombergStreamingThread(threading.Thread):
         self.name = "bloomberg"
         self.event_handler = event_processor
         self.real_time_data: RTData = event_processor.real_time_data
-        self.subscription_service = self.real_time_data.get_subscription_manager()
+        self.subscription_service = subscription_service
         self.options = kwargs.get("options", None)
 
     def run(self):

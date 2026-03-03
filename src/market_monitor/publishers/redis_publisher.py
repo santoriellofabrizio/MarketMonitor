@@ -1,5 +1,6 @@
 import json
 import logging
+import time
 from typing import Any, Dict, Optional, Set, Tuple
 from copy import deepcopy
 
@@ -349,15 +350,9 @@ class RedisPublisher:
             redis_port: Porta del server RedisPublisher
             redis_db: Database RedisPublisher da utilizzare
         """
-        super().__init__(*args, **kwargs)
 
-        # RedisPublisher connection
-        self.redis_client = redis.StrictRedis(
-            host=redis_host,
-            port=redis_port,
-            db=redis_db,
-            decode_responses=True
-        )
+        self.redis_client = self._init_client(redis_host, redis_port, redis_db)
+
         self.redis_client.config_set('notify-keyspace-events', 'KEA')
 
         # Internal components
@@ -367,6 +362,25 @@ class RedisPublisher:
 
         # Tracking
         self.available_channels: Set[str] = set()
+
+    @staticmethod
+    def _init_client(redis_host: str, redis_port: int, redis_db: int, max_tries: int = 10, sleep_time: float = 5):
+
+        # RedisPublisher connection
+        while (retry := 0) <= max_tries:
+            try:
+                redis_client = redis.StrictRedis(
+                    host=redis_host,
+                    port=redis_port,
+                    db=redis_db,
+                    decode_responses=True
+                )
+                return redis_client
+            except ConnectionError as e:
+                logger.warning(f"cannot connect to RedisPublisher: {e}, retrying {retry}/5")
+                retry += 1
+                time.sleep(sleep_time)
+        return None
 
     def export_data(self, skip_if_unchanged: bool = False, **data) -> None:
         """

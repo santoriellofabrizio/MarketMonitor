@@ -224,16 +224,12 @@ class TradeDashboard(BasePyQt5Dashboard, TradeDashboardExtensions):
             self.pause_btn.setText("▶️ Resume")
 
     def _on_data_received(self, df: pd.DataFrame):
-        """
-        Ricezione nuovi dati dal worker thread.
-        Esegue SEMPRE nel main thread Qt.
-        """
         if self.paused:
             return
 
         self.logger.debug(f"Received {len(df)} new trades")
 
-        # NORMALIZZAZIONE TIMESTAMP: Assicurati che timestamp sia SEMPRE datetime pandas
+        # Normalizzazione timestamp (invariata)
         if 'timestamp' in df.columns:
             if df['timestamp'].dtype != 'datetime64[ns]':
                 df['timestamp'] = pd.to_datetime(df['timestamp'], errors='coerce')
@@ -241,44 +237,33 @@ class TradeDashboard(BasePyQt5Dashboard, TradeDashboardExtensions):
         if self.all_trades.empty:
             self.all_trades = df.copy()
         else:
-            # NORMALIZZA anche all_trades se necessario
             if 'timestamp' in self.all_trades.columns:
                 if self.all_trades['timestamp'].dtype != 'datetime64[ns]':
                     self.logger.info("Normalizing all_trades timestamps to datetime")
-                    self.all_trades['timestamp'] = pd.to_datetime(self.all_trades['timestamp'], errors='coerce')
-            
-            self.all_trades = safe_concat(
-                [self.all_trades, df],
-                ignore_index=True
-            )
+                    self.all_trades['timestamp'] = pd.to_datetime(
+                        self.all_trades['timestamp'], errors='coerce'
+                    )
+
+            self.all_trades = safe_concat([self.all_trades, df], ignore_index=True)
 
             if 'trade_index' in self.all_trades.columns:
-                self.all_trades = (
-                    self.all_trades
-                    .drop_duplicates(
-                        subset=['trade_index'],
-                        keep='last'
-                    )
+                self.all_trades = self.all_trades.drop_duplicates(
+                    subset=['trade_index'], keep='last'
                 )
-                
-                # Sort per timestamp
-                if 'timestamp' in self.all_trades.columns:
-                    try:
-                        self.all_trades = self.all_trades.sort_values(
-                            by="timestamp",
-                            ascending=False
-                        )
-                    except Exception as e:
-                        # Log errore se fallisce
-                        self.logger.error(f"Failed to sort by timestamp: {e}")
-                        # DEBUG: mostra tipi se fallisce
-                        ts_types = self.all_trades['timestamp'].apply(type).value_counts()
-                        self.logger.error(f"Timestamp types: {ts_types.to_dict()}")
+            # RIMOSSO: sort_values su all_trades (era O(n log n) ad ogni update)
 
-        self.trade_table.update_data(self.all_trades)
-        self._update_metrics()
-        self._update_all_detached_pivots(self.all_trades)
-        self._update_all_detached_charts(self.all_trades)
+        # FIX 1: Per il display, usa nlargest (O(n)) invece di sort (O(n log n)).
+        # Passa solo una slice bounded alla table; all_trades rimane completo per metriche/pivot.
+        max_display = self.config.get('max_display_rows', 5_000)
+        if 'timestamp' in self.all_trades.columns and len(self.all_trades) > max_display:
+            display_df = self.all_trades.nlargest(max_display, 'timestamp')
+        else:
+            display_df = self.all_trades
+
+        self.trade_table.update_data(display_df)  # slice bounded
+        self._update_metrics()  # usa all_trades completo
+        self._update_all_detached_pivots(self.all_trades)  # storico completo
+        self._update_all_detached_charts(self.all_trades)  # storico completo
 
     def _on_filtered_data_changed(self, filtered_df: pd.DataFrame):
         """Callback su cambio filtri tabella."""

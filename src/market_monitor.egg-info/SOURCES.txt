@@ -75,6 +75,7 @@ src/market_monitor/testing/mock_bloomberg.py
 src/market_monitor/testing/mock_market_trades_viewer.py
 src/market_monitor/testing/test_subscription_lifecycle.py
 src/market_monitor/utils/__init__.py
+src/market_monitor/utils/command_listener.py
 src/market_monitor/utils/config_helpers.py
 src/market_monitor/utils/config_observer.py
 src/market_monitor/utils/decorators.py

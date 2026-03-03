@@ -15,8 +15,8 @@ from user_strategy.utils.SvnDownloader import download_fxdincomedb_from_svn
 
 from user_strategy.utils.InputParams import InputParams
 from sfm_pcf_db_library.PCFDBManager import PCFDBManager
-from sfm_dbconnections.DbConnectionParameters import DbConnectionParameters, OracleConnectionParameters
-from sfm_dbconnections.OracleConnection import OracleConnection
+from sfm_datalibrary.queries import OracleDynamicDataQuery
+from sfm_datalibrary.connections.db_connections import DbConnectionParameters, OracleConnectionParameters, OracleConnection
 
 logger = logging.getLogger()
 
@@ -64,7 +64,7 @@ class InputParamsFI(InputParams):
         self.Oracle_DB_connection = None
         self.sql_db_fi_file = None
         self._sql_db_manager = None
-        self._pcf_db_manager: Optional[PCFDBManager] = None
+        self._pcf_db_manager: Optional[OracleDynamicDataQuery] = None
 
         # Attributes for storing data like TER, hedge ratios, currency exposure, etc.
         self.use_cache_ts: bool = True
@@ -424,7 +424,7 @@ class InputParamsFI(InputParams):
         self._sql_db_manager = InstrumentDbManager(self.sql_db_fi_file)
 
     def _initialize_pcf_db_manager(self):
-        self._pcf_db_manager = PCFDBManager()
+        self._pcf_db_manager = OracleDynamicDataQuery(self.Oracle_DB_connection)
 
     @staticmethod
     def _check_hedge_ratios(hedge_ratios):

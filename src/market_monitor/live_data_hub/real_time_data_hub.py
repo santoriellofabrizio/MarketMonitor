@@ -113,7 +113,7 @@ class RTData:
         self._blob_store = BlobStore(locker)
 
         # Subscription service
-        self._subscription_service = subscription_service or SubscriptionService()
+        self._subscription_service = subscription_service
 
         # Currency information
         self._currency_information: Dict[str, str] = {}
@@ -542,6 +542,9 @@ class RTData:
         for ccy in self.currencies_in_book:
             if ccy not in self._securities:
                 self._securities.add(ccy)
+
+    def set_currency_for_id(self, id: str, currency: id):
+        self._currency_information[id] = currency
 
     def get_instruments_with_missing_ccy(self) -> List[str]:
         """Get list of instruments with missing/unknown currencies"""

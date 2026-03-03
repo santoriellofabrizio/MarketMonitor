@@ -101,8 +101,14 @@ class RetentionPolicy:
     # Preset comuni
     @classmethod
     def intraday(cls) -> 'RetentionPolicy':
-        """24 ore, nessuna compaction."""
-        return cls(retention_ms=86400000)
+        """Intraday completo + 15min per 3gg + 1h per 7gg."""
+        return cls(
+            retention_ms=86400000,  # 24h intraday raw
+            compaction_rules=[
+                CompactionRule(AggregationType.LAST, 15 * 60 * 1000, "_15min", 3 * 86400000),
+                CompactionRule(AggregationType.LAST, 3600000, "_hourly", 7 * 86400000),
+            ]
+        )
 
     @classmethod
     def weekly(cls) -> 'RetentionPolicy':
@@ -296,14 +302,13 @@ class TimeSeriesPublisher(RedisPublisher):
                 return int(ts)
 
     def _ensure_timeseries_exists(
-        self,
-        key: str,
-        identifier: str,
-        field: str,
-        labels: Optional[Dict[str, str]] = None,
-        policy: Optional[RetentionPolicy] = None
+            self,
+            key: str,
+            identifier: str,
+            field: str,
+            labels: Optional[Dict[str, str]] = None,
+            policy: Optional[RetentionPolicy] = None
     ):
-        """Crea TimeSeries se non esiste (con caching)."""
         if not self.auto_create:
             return
 
@@ -313,12 +318,13 @@ class TimeSeriesPublisher(RedisPublisher):
 
         policy = policy or self.default_policy
 
-        # Labels di default
+        # Labels: isin, field, ticker (da labels passate) + extra
         default_labels = {
-            "identifier": identifier,
-            "field": field
+            "isin": identifier,
+            "field": field,
         }
         if labels:
+            # ticker e altri campi arrivano da _build_ts_labels in PricePublisherHub
             default_labels.update(labels)
 
         try:
@@ -330,11 +336,8 @@ class TimeSeriesPublisher(RedisPublisher):
                 "LABELS", *[item for pair in default_labels.items() for item in pair]
             )
 
-            # Crea compaction rules
             for rule in policy.compaction_rules:
                 dest_key = f"{key}{rule.destination_key_suffix}"
-
-                # Crea serie destinazione
                 try:
                     dest_labels = {**default_labels, "aggregation": rule.aggregation.value}
                     self.redis_client.execute_command(
@@ -343,25 +346,32 @@ class TimeSeriesPublisher(RedisPublisher):
                         "LABELS", *[item for pair in dest_labels.items() for item in pair]
                     )
                 except redis.ResponseError:
-                    pass  # Già esiste
+                    pass
 
-                # Crea regola
                 try:
                     self.redis_client.execute_command(
                         "TS.CREATERULE", key, dest_key,
                         "AGGREGATION", rule.aggregation.value, rule.bucket_duration_ms
                     )
                 except redis.ResponseError:
-                    pass  # Regola già esiste
+                    pass
 
             with self._existing_ts_keys_lock:
                 self._existing_ts_keys.add(key)
 
             self.ts_stats["timeseries_created"] += 1
-            logger.debug(f"Created TimeSeries: {key}")
+            logger.debug(f"Created TimeSeries: {key} labels={default_labels}")
 
         except redis.ResponseError as e:
             if "already exists" in str(e).lower():
+                # Allinea duplicate policy nel caso fosse stata creata con policy diversa
+                try:
+                    self.redis_client.execute_command(
+                        "TS.ALTER", key,
+                        "DUPLICATE_POLICY", policy.duplicate_policy.value.lower()
+                    )
+                except Exception:
+                    pass
                 with self._existing_ts_keys_lock:
                     self._existing_ts_keys.add(key)
             else:

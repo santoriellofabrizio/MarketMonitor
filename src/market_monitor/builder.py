@@ -23,6 +23,8 @@ from market_monitor.input_threads.excel import ExcelStreamingThread
 from market_monitor.input_threads.redis import RedisStreamingThread
 from market_monitor.input_threads.kafka import KafkaStreamingThread, KafkaTradeStreamingThread
 from market_monitor.live_data_hub.real_time_data_hub import RTData
+from market_monitor.live_data_hub.subscription_service import SubscriptionService
+from market_monitor.strategy.strategy_ui.StrategyUIAsync import StrategyUIAsync
 
 
 class FlushFileHandler(logging.FileHandler):
@@ -209,9 +211,15 @@ class Builder:
             logging.error(f"Errore durante il caricamento dinamico della strategia: {e}")
             raise
 
-    def _set_real_time_data(self, monitor, lock):
-        market_data = RTData(lock, **self.config.get("market_data_distributor", {}).get("book_params", {}))
-        monitor.set_market_data(market_data)
+    def _set_real_time_data(self, strategy: StrategyUIAsync, lock):
+        self.global_subscription_service = SubscriptionService()
+
+        market_data = RTData(lock,
+                             subscription_service=self.global_subscription_service,
+                             **self.config.get("market_data_distributor", {}).get("book_params", {}))
+
+        strategy.set_subscription_service(self.global_subscription_service)
+        strategy.set_market_data(market_data)
 
     def _setup_trade_distributor(self, threads, monitor, lock, logger):
         q_trade = Queue() if self.config["market_monitor"]["tasks"]["trade"]["synchronous"] else asyncio.Queue()
@@ -223,7 +231,7 @@ class Builder:
     def _setup_bloomberg_distributor(self, threads, monitor):
         market_data = monitor.market_data
         event_handler = BBGEventHandler(market_data)
-        bloomberg_distributor_thread = BloombergStreamingThread(event_handler,
+        bloomberg_distributor_thread = BloombergStreamingThread(self.global_subscription_service, event_handler,
                                                                 **self.config["bloomberg_data_distributor"].get(
                                                                     "bloomberg_params", {}))
         threads.append(bloomberg_distributor_thread)
@@ -243,24 +251,23 @@ class Builder:
         kafka_params = self.config.get("kafka_data_distributor", {}).get("kafka_params", {})
 
         # SubscriptionService condiviso: vive in RTData, usato da entrambi i thread
-        subscription_service = monitor.market_data.get_subscription_manager()
 
         # Book thread: usa RTData (già impostato)
-        book_thread = KafkaStreamingThread(real_time_data=monitor.market_data, **kafka_params)
+        book_thread = KafkaStreamingThread(subscription_service=self.global_subscription_service,
+                                           real_time_data=monitor.market_data,
+                                           **kafka_params)
         threads.append(book_thread)
 
         # Trade thread: riceve il SubscriptionService condiviso (filtra *.PublicDeal / *.Trade)
         trade_queue = Queue()
         trade_thread = KafkaTradeStreamingThread(
             queue=trade_queue,
-            subscription_service=subscription_service,
+            subscription_service=self.global_subscription_service,
             **kafka_params,
         )
 
         # Espone il SubscriptionService condiviso alla strategia per registrare trade subscriptions
-        monitor.set_trade_subscription_manager(subscription_service)
         monitor.set_q_trade(trade_queue)
-
         threads.append(trade_thread)
 
     def _setup_gui(self, threads, monitor):

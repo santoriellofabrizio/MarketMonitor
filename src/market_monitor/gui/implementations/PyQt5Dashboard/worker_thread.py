@@ -76,7 +76,8 @@ class BaseDashboardThread(QThread):
         super().__init__()
         self.running = False
 
-    def _to_dataframe(self, data):
+    @staticmethod
+    def _to_dataframe(data):
         """Convert data to DataFrame"""
         if isinstance(data, pd.DataFrame):
             df = data
@@ -92,10 +93,10 @@ class BaseDashboardThread(QThread):
                 return None
         else:
             return None
-        
+
         # CONVERSIONE TIMESTAMP: Converti colonne timestamp in datetime pandas
         timestamp_cols = ['timestamp', 'time', 'datetime', 'last_update']
-        
+
         for col in timestamp_cols:
             if col in df.columns:
                 try:

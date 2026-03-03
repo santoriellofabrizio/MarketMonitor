@@ -5,11 +5,13 @@ trade_manager ottimizzato con miglioramenti chiave.
 import datetime
 import logging
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple
 from threading import RLock
 
+import numpy as np
 import pandas as pd
 
+from market_monitor.strategy.common.trade_manager.book_memory import FairvaluePrice
 from market_monitor.strategy.common.trade_manager.time_zero_pl import TimeZeroPLManager
 from market_monitor.strategy.common.trade_manager.trade_templates import TradeStorage, TradeFactory, Trade, MyTrade
 
@@ -108,7 +110,7 @@ class TradeManager:
                     snapshot = self.book_storage.get_last_before(trade.timestamp)
                     if snapshot:
                         _, mid_prices = snapshot
-                        mid = mid_prices.get(trade.isin)
+                        mid = self._get_mid_by_snapshot(snapshot, trade)
                         if mid is not None:
                             trade.spread_pl = self.time_zero_pl_manager.calculate_time_zero_pl(
                                 trade, mid
@@ -163,9 +165,9 @@ class TradeManager:
 
         if snapshot:
             snapshot_time, mid_prices = snapshot
-            mid = mid_prices.get(trade.isin)
+            mid = self._get_mid_by_snapshot(snapshot, trade)
             logger.info(f"matched side: snapshot time: {snapshot_time}, trade_time: {trade.timestamp}")
-            if mid is not None:
+            if mid is not None and not np.isnan(mid):
                 trade.side = "bid" if trade.price < mid else "ask"
 
     # ========================================================================
@@ -173,6 +175,16 @@ class TradeManager:
     # ========================================================================
 
     from datetime import datetime
+
+    @staticmethod
+    def _get_mid_by_snapshot(snapshot: tuple, trade: Trade) -> float | None:
+        snapshot_time, mid_prices = snapshot
+        entry = mid_prices.get(trade.isin)
+        if entry is None:
+            return None
+        if isinstance(entry, FairvaluePrice):
+            return entry.get(currency=trade.currency, market=trade.market)
+        return entry  # backward compat: float grezzo
 
     def get_trades(
             self, n_seconds: int | None = None, n_of_trades: int | None = None, use_cache: bool = True

@@ -13,3 +13,4 @@ logs
 grafana
 dist
 build
+*egg*

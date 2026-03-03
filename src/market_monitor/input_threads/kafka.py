@@ -83,6 +83,7 @@ class KafkaStreamingThread(threading.Thread):
 
     def __init__(self,
                  real_time_data: RTData,
+                 subscription_service: SubscriptionService,
                  bootstrap_servers: Optional[str] = None,
                  schema_registry_url: Optional[str] = None,
                  start_mode: str = "latest",
@@ -90,11 +91,12 @@ class KafkaStreamingThread(threading.Thread):
                  **kwargs):
 
         super().__init__(daemon=True)
+        self.symbol_filter_by_topic: dict = defaultdict(dict)
         self.name = "kafka"
 
         # RTData reference
         self.real_time_data = real_time_data
-        self.subscription_service = real_time_data.get_subscription_manager()
+        self.subscription_service = subscription_service
 
         # Kafka configuration
         self.bootstrap_servers = bootstrap_servers or self.DEFAULT_BOOTSTRAP_SERVERS
@@ -109,9 +111,9 @@ class KafkaStreamingThread(threading.Thread):
         self.avro_deserializer = None
 
         # Subscriptions indexed by topic for fast lookup
-        self._subscriptions_by_topic: Dict[str, List[KafkaSubscription]] = {}
+        self._subscriptions_by_topic = {}
         self._topics: Set[str] = set()
-        
+
         # FAST LOOKUP: isin -> (subscription_id, KafkaSubscription) per O(1) match
         self._isin_to_sub: Dict[str, KafkaSubscription] = {}
 
@@ -191,12 +193,14 @@ class KafkaStreamingThread(threading.Thread):
         deserializer = self.avro_deserializer
         stop_event = self.stop_event
         consumer = self.consumer
-        
+
+        for tpc in self._topics:
+            self.symbol_filter_by_topic[tpc] = {sub.symbol_filter: sub for sub in self._subscriptions_by_topic[tpc]}
+
         try:
             while not stop_event.is_set():
                 # Poll for messages (0.1s = più reattivo)
                 msg = consumer.poll(timeout=0.1)
-
                 if msg is None:
                     # Check for new subscriptions periodically
                     self._check_new_subscriptions()
@@ -216,16 +220,11 @@ class KafkaStreamingThread(threading.Thread):
                 # FAST PATH: O(1) lookup by ISIN
                 instrument = value.get('instrument')
                 if instrument:
-                    isin = instrument.get('isin')
-                    if isin:
-                        sub = isin_to_sub.get(isin)
-                        if sub:
+                    subs = self.symbol_filter_by_topic.get(msg.topic())
+                    for k,v in instrument.items():
+                        if sub := subs.get(v):
                             self._process_matched_message(sub, value, real_time_data)
-                            continue
-                
-                # SLOW PATH: fallback per subscription senza symbol_filter
-                topic = msg.topic()
-                self._handle_message(topic, value)
+
 
         except Exception as e:
             logger.error(f"Error in KafkaStreamingThread: {e}", exc_info=True)
@@ -302,7 +301,7 @@ class KafkaStreamingThread(threading.Thread):
             real_time_data: RTData instance (passato per evitare self lookup)
         """
         store = sub.store
-        ticker = sub.id
+        id_ = sub.id
 
         if store == "market":
             # Extract fields using subscription's mapping
@@ -313,16 +312,17 @@ class KafkaStreamingThread(threading.Thread):
                 data = self._extract_default_market_fields(value)
 
             if data:
-                real_time_data.update(ticker, data, store="market")
+                real_time_data.update(id_, data, store="market")
+                real_time_data.set_currency_for_id(id_, value.get("instrument",{}).get("currency"))
 
         elif store == "state":
-            real_time_data.update(ticker, value, store="state")
+            real_time_data.update(id_, value, store="state")
 
         elif store == "events":
-            real_time_data._event_store.append(ticker, value)
+            real_time_data._event_store.append(id_, value)
 
         elif store == "blob":
-            real_time_data._blob_store.store(ticker, value)
+            real_time_data._blob_store.store(id_, value)
 
     def _extract_default_market_fields(self, value: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -668,7 +668,7 @@ class KafkaTradeStreamingThread(threading.Thread):
             if not pending_queue:
                 continue
             for df in pending_queue:
-                self.queue_trade.put((TradeType.MARKET, df))
+                self.queue_trade.put((TradeType.MARKET, df.set_index("ticker")))
 
     def _handle_public_vs_own_deal(self, data: Dict[str, Any]) -> None:
         """
@@ -699,8 +699,8 @@ class KafkaTradeStreamingThread(threading.Thread):
         ]]
 
         if is_own:
-            self.queue_trade.put((TradeType.OWN, df))
-            self.queue_trade.put((TradeType.MARKET, df))
+            self.queue_trade.put((TradeType.OWN, df.set_index("ticker")))
+            self.queue_trade.put((TradeType.MARKET, df.set_index("ticker")))
             self._seen_own_trades.add(key)
             # Cancella il primo public deal bufferizzato corrispondente
             if key in self._pending_publicdeals and self._pending_publicdeals[key]:

@@ -52,8 +52,10 @@ class MultiPeriodLinearPricingModel(LinearPricingModel, ABC):
 
         super().__init__(returns=returns, beta=beta)
 
-        self.theoretical_returns_matrix: pd.DataFrame = pd.DataFrame(index=self.target_variables, columns=self.timestamps)
-        self.theoretical_prices_matrix: pd.DataFrame = pd.DataFrame(index=self.target_variables, columns=self.timestamps)
+        self.theoretical_returns_matrix: pd.DataFrame = pd.DataFrame(index=self.target_variables,
+                                                                     columns=self.timestamps)
+        self.theoretical_prices_matrix: pd.DataFrame = pd.DataFrame(index=self.target_variables,
+                                                                    columns=self.timestamps)
         self.theoretical_price: pd.Series = pd.Series(dtype=float, index=self.target_variables)
 
         self.forecast_aggregator = forecast_aggregator or EwmaOutlier(5, 3)
@@ -173,6 +175,7 @@ class DriverPricingModel(MultiPeriodLinearPricingModel):
         all_predictions = (1 + misalignment) * book[self.target_variables]
         return all_predictions
 
+
 #------------------------------------------------------------------------------------#
 
 class RatePricingModel:
@@ -194,7 +197,6 @@ class RatePricingModel:
     def get_price_prediction(self,
                              book: pd.DataFrame,
                              all_returns: pd.DataFrame) -> pd.Series:
-
         self._dates = all_returns.index.tolist()
         prediction = self._predict_prices(book, all_returns)
         self._theoretical_prices.update(prediction)
@@ -217,7 +219,9 @@ class CreditFuturesCalendarSpreadPricingModel(RatePricingModel):
     def _predict_prices(self, book: pd.DataFrame, all_returns: pd.DataFrame) -> pd.DataFrame:
         self._calculate_rate(book)
         book.name = 'Value'
-        proxy_prices = self._variables_proxy.loc[self._target_variables].merge(book, left_on='Future Proxy', right_index=True)[book.name]
+        proxy_prices = \
+        self._variables_proxy.loc[self._target_variables].merge(book, left_on='Future Proxy', right_index=True)[
+            book.name]
         all_predictions = (1 + self._rate.loc[self._target_variables]).mul(proxy_prices, axis=0)
         return all_predictions.T
 

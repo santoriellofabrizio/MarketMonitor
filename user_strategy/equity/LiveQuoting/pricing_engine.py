@@ -90,3 +90,17 @@ class PricingModelRegistry:
 
     def __contains__(self, name: str) -> bool:
         return name in self._entries
+
+    # pricing_engine.py — aggiungere a PricingModelRegistry
+
+    def update_forecaster(self, name: str, forecaster: "ForecastAggregator") -> None:
+        """Sostituisce il forecast aggregator di un modello a runtime."""
+        entry = self._entries.get(name)
+        if entry is None:
+            logger.error(f"Model '{name}' not found in registry")
+            return
+        if not hasattr(entry.model, "forecast_aggregator"):
+            logger.warning(f"Model '{name}' does not support forecast_aggregator")
+            return
+        entry.model.forecast_aggregator = forecaster
+        logger.info(f"Model '{name}' forecaster updated to {type(forecaster).__name__}")

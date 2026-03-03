@@ -8,13 +8,30 @@ market_monitor:
 
   path_db: etc/input/EtfEquityDB.db
   bloomberg_subscription_config_path: C:\AFMachineLearning\Libraries\MarketMonitor\etc\config\bbg_subscription\config_bloomberg_subscription.yaml
-  price_source: "bloomberg"
-  min_ctv_trades_excel: 20000
+  price_source: "kafka"
+
+  rabbit_data_export:
+    activate: true      # Impostare true (e redis activate: false) per usare RabbitMQ
+    rabbit_params:
+      rabbit_host: 'rabbitmq.af.tst'
+      rabbit_port: 5672
+      rabbit_user: 'mqclient'
+      rabbit_password: 'Mqclient-00'
+      rabbit_vhost: 'TestCredEQEtf'
+      channel_rabbit: trades_rabbit
+
+  redis_data_export:
+    channel_redis: trades_redis
+    activate: true       # Impostare false se si usa rabbit_data_distributor
+    redis_params:
+      redis_host: 'localhost'
+      redis_port: 6379
+      redis_db: 0
+
+
   trade_manager:
     show_my_trades: True
     output_trade_columns: ["ticker","last_update","price","quantity","ctv","side","own_trade","spread_pl"]
-    min_ctv_to_show_trades: 5000
-    number_of_trades_to_show: 200
 
 
   tasks:
@@ -35,7 +52,7 @@ market_monitor:
 
 
 bloomberg_data_distributor:
-  activate: true
+  activate: false
   interval: 1
 
 
@@ -48,7 +65,7 @@ kafka_data_distributor:
 
 
 trade_distributor:
-  activate: false
+  activate: true
 #  path: C:\AFMachineLearning\Libraries\MarketMonitor\etc\marketrades.db
   path: "C:\\Users\\gbs09316\\Documents\\marketTradeFolder\\markettrades.db"
 
@@ -59,14 +76,6 @@ redis_data_distributor:
     redis_port: 6379
     redis_db: 0
 
-rabbit_data_distributor:
-  activate: false      # Impostare true (e redis activate: false) per usare RabbitMQ
-  rabbit_params:
-    rabbit_host: 'rabbitmq.af.tst'
-    rabbit_port: 5672
-    rabbit_user: 'mqclient'
-    rabbit_password: 'Mqclient-00'
-    rabbit_vhost: '/'
 
 logging:
   log_level: INFO
