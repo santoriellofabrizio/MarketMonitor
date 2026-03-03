@@ -325,6 +325,7 @@ class StrategyUIAsync(ABC):
             await asyncio.sleep(3)
             logger.info("Waiting for _real_time_data initialization...")
         self.on_book_initialized()
+        self._broadcast_lifecycle_event("on_book_initialized")
         return True
 
     def wait_for_book_initialization(self):
@@ -379,6 +380,7 @@ class StrategyUIAsync(ABC):
             logger.debug("Entering _on_trade method.")
             if trade_type == TradeType.MARKET:
                 self.on_trade(trade)
+                self._broadcast_lifecycle_event("on_trade", len(trade))
             elif trade_type == TradeType.OWN:
                 self._on_my_trade(trade)
             else:
@@ -391,6 +393,7 @@ class StrategyUIAsync(ABC):
     def _on_my_trade(self, trade: pd.DataFrame):
         logger.info("Entering on_my_trade method.")
         self.on_my_trade(trade)
+        self._broadcast_lifecycle_event("on_my_trade", len(trade))
 
     def _on_market_data_setting(self):
         self.on_market_data_setting()
@@ -404,6 +407,7 @@ class StrategyUIAsync(ABC):
 
         logger.debug("Entering _on_start_monitor method.")
         self.on_start_strategy()
+        self._broadcast_lifecycle_event("on_start_strategy")
 
     @abstractmethod
     def update_HF(self, *args, **kwargs):
@@ -437,9 +441,18 @@ class StrategyUIAsync(ABC):
     def export_data(self, *args, **kwargs):
         pass
 
+    def _broadcast_lifecycle_event(self, event_name: str, data=None) -> None:
+        """Notify all registered GUIs of a lifecycle event (non-blocking, best-effort)."""
+        for gui in self.GUIs.values():
+            try:
+                gui.export_data(event_name=event_name, data=data)
+            except Exception as e:
+                logger.debug(f"GUI lifecycle broadcast error for '{event_name}': {e}")
+
     def stop(self):
         """Stop non bloccante."""
         self.on_stop()
+        self._broadcast_lifecycle_event("on_stop")
         logger.debug("Entering stop method.")
 
         # Se hai un event loop attivo
