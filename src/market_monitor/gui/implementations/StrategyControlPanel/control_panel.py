@@ -326,6 +326,18 @@ class StrategyControlPanel(QMainWindow):
             self._update_target_combo()
 
     def _add_instance(self, config_name: str) -> None:
+        # If no quick-commands loaded yet, pull them from this config's YAML
+        if not self._panel_config.get("commands"):
+            try:
+                from market_monitor.utils.config_helpers import find_config, load_config
+                cfg = load_config(find_config(config_name))
+                panel_cfg = cfg.get("control_panel", {})
+                if panel_cfg.get("commands"):
+                    self._panel_config = panel_cfg
+                    self._rebuild_quick_commands(panel_cfg["commands"])
+            except Exception:
+                pass
+
         channels = self._channels_for_config(config_name)
         inst = StrategyInstance(
             config_name=config_name,
@@ -408,29 +420,12 @@ class StrategyControlPanel(QMainWindow):
 
     def _build_commands_tab(self) -> QWidget:
         w = QWidget()
-        layout = QVBoxLayout(w)
+        self._commands_tab_layout = QVBoxLayout(w)
+        self._quick_commands_widget = None
 
-        # Quick Commands section (populated from panel_config)
-        commands = self._panel_config.get("commands", [])
-        if commands:
-            quick_grp = QGroupBox("Quick Commands")
-            quick_layout = QHBoxLayout(quick_grp)
-            quick_layout.setAlignment(Qt.AlignLeft)
-            for cmd in commands:
-                label = cmd.get("label", cmd.get("action", "?"))
-                action = cmd.get("action", "")
-                payload = dict(cmd.get("payload", {}))
-                description = cmd.get("description", "")
-                btn = QPushButton(label)
-                btn.setFixedHeight(32)
-                if description:
-                    btn.setToolTip(description)
-                btn.clicked.connect(
-                    lambda _checked, a=action, p=payload: self._send_quick_command(a, p)
-                )
-                quick_layout.addWidget(btn)
-            quick_layout.addStretch()
-            layout.addWidget(quick_grp)
+        self._rebuild_quick_commands(self._panel_config.get("commands", []))
+
+        layout = self._commands_tab_layout
 
         # Target strategy selector
         target_row = QHBoxLayout()
@@ -487,6 +482,35 @@ class StrategyControlPanel(QMainWindow):
         self._response_table.setSelectionBehavior(QTableWidget.SelectRows)
         layout.addWidget(self._response_table)
         return w
+
+    def _rebuild_quick_commands(self, commands: list) -> None:
+        """Replace the Quick Commands group with buttons built from `commands`."""
+        layout = self._commands_tab_layout
+        if self._quick_commands_widget is not None:
+            layout.removeWidget(self._quick_commands_widget)
+            self._quick_commands_widget.deleteLater()
+            self._quick_commands_widget = None
+        if not commands:
+            return
+        quick_grp = QGroupBox("Quick Commands")
+        quick_layout = QHBoxLayout(quick_grp)
+        quick_layout.setAlignment(Qt.AlignLeft)
+        for cmd in commands:
+            label = cmd.get("label", cmd.get("action", "?"))
+            action = cmd.get("action", "")
+            payload = dict(cmd.get("payload", {}))
+            description = cmd.get("description", "")
+            btn = QPushButton(label)
+            btn.setFixedHeight(32)
+            if description:
+                btn.setToolTip(description)
+            btn.clicked.connect(
+                lambda _checked, a=action, p=payload: self._send_quick_command(a, p)
+            )
+            quick_layout.addWidget(btn)
+        quick_layout.addStretch()
+        layout.insertWidget(0, quick_grp)
+        self._quick_commands_widget = quick_grp
 
     def _update_target_combo(self) -> None:
         if not hasattr(self, "_target_combo"):
