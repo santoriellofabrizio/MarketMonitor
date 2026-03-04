@@ -16,9 +16,8 @@ from __future__ import annotations
 import json
 import logging
 import re
-from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import redis
 from PyQt5.QtCore import Qt, pyqtSignal, QObject, QProcess, QTimer
@@ -27,8 +26,8 @@ from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QTabWidget, QLabel, QPushButton, QScrollArea,
     QTextEdit, QTableWidget, QTableWidgetItem, QHeaderView,
-    QComboBox, QGroupBox, QListWidget, QListWidgetItem,
-    QInputDialog, QApplication,
+    QComboBox, QGroupBox,
+    QApplication,
 )
 
 from market_monitor.gui.implementations.StrategyControlPanel.redis_status_thread import RedisStatusThread
@@ -73,14 +72,6 @@ _BTN_NEUTRAL = (
     "border-radius:5px;padding:5px 14px;}"
     "QPushButton:hover{background:#4a4a6c;}"
 )
-
-
-# ---------------------------------------------------------------------------
-# Qt signal bridge
-# ---------------------------------------------------------------------------
-
-class _Signals(QObject):
-    lifecycle_event = pyqtSignal(str, object)   # (event_name, data)
 
 
 # ---------------------------------------------------------------------------
@@ -193,9 +184,7 @@ class StrategyControlPanel(QMainWindow):
         self._default_status_channel = status_channel
         self._lifecycle_channel = lifecycle_channel
         self._redis_client: Optional[redis.StrictRedis] = None
-        self._lifecycle_thread: Optional[RedisStatusThread] = None
         self._status_threads: Dict[str, RedisStatusThread] = {}
-        self._signals = _Signals()
         self._instances: List[StrategyInstance] = []
         self._all_configs: List[str] = []
 
@@ -209,10 +198,6 @@ class StrategyControlPanel(QMainWindow):
 
         self._build_redis_client(redis_config or {})
         self._setup_ui(initial_config)
-        self._connect_signals()
-
-        if self._lifecycle_thread:
-            self._lifecycle_thread.start()
 
         # Restore previously saved configs (skip initial_config which is already added)
         for cfg in self._settings.get("configs", []):
@@ -235,9 +220,6 @@ class StrategyControlPanel(QMainWindow):
 
     def closeEvent(self, event) -> None:
         self._save_settings()
-        if self._lifecycle_thread and self._lifecycle_thread.isRunning():
-            self._lifecycle_thread.stop()
-            self._lifecycle_thread.wait(2000)
         for thread in self._status_threads.values():
             if thread.isRunning():
                 thread.stop()
@@ -289,10 +271,6 @@ class StrategyControlPanel(QMainWindow):
             self._redis_client.ping()
             logger.info(f"Redis connected: {host}:{port}/{db}")
             self._ensure_status_thread(self._default_status_channel)
-            if self._lifecycle_channel:
-                self._lifecycle_thread = RedisStatusThread(
-                    self._redis_client, self._lifecycle_channel
-                )
         except redis.RedisError as e:
             logger.warning(f"Redis not available: {e}. Commands will be disabled.")
             self._redis_client = None
@@ -403,10 +381,6 @@ class StrategyControlPanel(QMainWindow):
                 background: #12121e; color: #d0d0d0;
                 border: 1px solid #3a3a5c; border-radius: 4px;
             }
-            QListWidget {
-                background: #12121e; color: #d0d0d0;
-                border: 1px solid #3a3a5c; border-radius: 4px;
-            }
             QStatusBar { color: #888; font-size: 11px; }
             QLabel { color: #d0d0d0; }
         """)
@@ -452,7 +426,6 @@ class StrategyControlPanel(QMainWindow):
         root.addWidget(self._tabs)
         self._tabs.addTab(self._build_control_tab(initial_config), "Control")
         self._tabs.addTab(self._build_commands_tab(),               "Commands")
-        self._tabs.addTab(self._build_events_tab(),                 "Events")
         self._tabs.addTab(self._build_logs_tab(),                   "Logs")
 
         # Status bar
@@ -467,16 +440,28 @@ class StrategyControlPanel(QMainWindow):
         layout = QVBoxLayout(w)
         layout.setSpacing(8)
 
+        try:
+            from market_monitor.utils.config_helpers import find_all_configs
+            self._all_configs = list(find_all_configs())
+        except Exception as e:
+            logger.debug(f"Could not load config list: {e}")
+
         toolbar = QHBoxLayout()
-        add_btn = QPushButton("+ Add Strategy")
+        toolbar.addWidget(QLabel("Config:"))
+        self._config_combo = QComboBox()
+        self._config_combo.setMinimumWidth(280)
+        self._config_combo.setEditable(True)
+        self._config_combo.addItems(self._all_configs)
+        toolbar.addWidget(self._config_combo)
+        add_btn = QPushButton("+ Add")
         add_btn.setStyleSheet(_BTN_SUCCESS)
         add_btn.clicked.connect(self._on_add_strategy)
         remove_btn = QPushButton("Remove")
         remove_btn.setStyleSheet(_BTN_DANGER)
         remove_btn.clicked.connect(self._on_remove_strategy)
         toolbar.addWidget(add_btn)
-        toolbar.addWidget(remove_btn)
         toolbar.addStretch()
+        toolbar.addWidget(remove_btn)
         layout.addLayout(toolbar)
 
         self._strategy_table = QTableWidget(0, 5)
@@ -495,26 +480,15 @@ class StrategyControlPanel(QMainWindow):
         self._strategy_table.setShowGrid(False)
         layout.addWidget(self._strategy_table)
 
-        try:
-            from market_monitor.utils.config_helpers import find_all_configs
-            self._all_configs = list(find_all_configs())
-        except Exception as e:
-            logger.debug(f"Could not load config list: {e}")
-
         if initial_config:
             self._add_instance(initial_config)
 
         return w
 
     def _on_add_strategy(self) -> None:
-        if self._all_configs:
-            name, ok = QInputDialog.getItem(
-                self, "Add Strategy", "Select config:", self._all_configs, 0, True
-            )
-        else:
-            name, ok = QInputDialog.getText(self, "Add Strategy", "Config name:")
-        if ok and name.strip():
-            self._add_instance(name.strip())
+        name = self._config_combo.currentText().strip()
+        if name:
+            self._add_instance(name)
 
     def _on_remove_strategy(self) -> None:
         rows = self._strategy_table.selectionModel().selectedRows()
@@ -629,7 +603,7 @@ class StrategyControlPanel(QMainWindow):
 
         # Target strategy selector
         target_row = QHBoxLayout()
-        target_row.addWidget(QLabel("Target (free-form send):"))
+        target_row.addWidget(QLabel("Target:"))
         self._target_combo = QComboBox()
         self._target_combo.setMinimumWidth(260)
         self._target_combo.addItem("(all / default channel)")
@@ -637,10 +611,18 @@ class StrategyControlPanel(QMainWindow):
         target_row.addStretch()
         layout.addLayout(target_row)
 
-        # Send Command form
-        send_grp = QGroupBox("Send Command")
-        send_layout = QVBoxLayout(send_grp)
-        send_layout.setSpacing(6)
+        # Send Command — collapsible section
+        self._send_toggle_btn = QPushButton("▶  Send Command (manuale)")
+        self._send_toggle_btn.setStyleSheet(
+            _BTN_NEUTRAL + "QPushButton{text-align:left;padding-left:10px;}"
+        )
+        self._send_toggle_btn.clicked.connect(self._toggle_send_command)
+        layout.addWidget(self._send_toggle_btn)
+
+        self._send_cmd_body = QWidget()
+        body_layout = QVBoxLayout(self._send_cmd_body)
+        body_layout.setContentsMargins(0, 0, 0, 0)
+        body_layout.setSpacing(6)
 
         action_row = QHBoxLayout()
         action_row.addWidget(QLabel("Action:"))
@@ -651,14 +633,14 @@ class StrategyControlPanel(QMainWindow):
         self._cmd_action_combo.currentIndexChanged.connect(self._on_command_selected)
         action_row.addWidget(self._cmd_action_combo)
         action_row.addStretch()
-        send_layout.addLayout(action_row)
+        body_layout.addLayout(action_row)
 
-        send_layout.addWidget(QLabel("JSON Payload:"))
+        body_layout.addWidget(QLabel("JSON Payload:"))
         self._cmd_payload_edit = QTextEdit()
         self._cmd_payload_edit.setPlaceholderText("{}")
         self._cmd_payload_edit.setMaximumHeight(90)
         self._cmd_payload_edit.setFont(QFont("Courier New", 9))
-        send_layout.addWidget(self._cmd_payload_edit)
+        body_layout.addWidget(self._cmd_payload_edit)
 
         btn_row = QHBoxLayout()
         self._send_btn = QPushButton("Send")
@@ -671,8 +653,10 @@ class StrategyControlPanel(QMainWindow):
         btn_row.addWidget(self._send_btn)
         btn_row.addWidget(self._cmd_error_label)
         btn_row.addStretch()
-        send_layout.addLayout(btn_row)
-        layout.addWidget(send_grp)
+        body_layout.addLayout(btn_row)
+
+        self._send_cmd_body.setVisible(False)  # collapsed by default
+        layout.addWidget(self._send_cmd_body)
 
         layout.addWidget(QLabel("Command Responses:"))
         self._response_table = QTableWidget(0, 5)
@@ -748,29 +732,12 @@ class StrategyControlPanel(QMainWindow):
             return self._instances[idx - 1].commands_channel
         return self._default_commands_channel
 
-    # --- Events tab ---
-
-    def _build_events_tab(self) -> QWidget:
-        w = QWidget()
-        layout = QVBoxLayout(w)
-        layout.setSpacing(6)
-
-        btn_row = QHBoxLayout()
-        lbl = QLabel("Lifecycle Events")
-        lbl.setFont(QFont("Arial", 10, QFont.Bold))
-        btn_row.addWidget(lbl)
-        btn_row.addStretch()
-        clear_btn = QPushButton("Clear")
-        clear_btn.setFixedWidth(80)
-        clear_btn.setStyleSheet(_BTN_NEUTRAL)
-        clear_btn.clicked.connect(lambda: self._event_list.clear())
-        btn_row.addWidget(clear_btn)
-        layout.addLayout(btn_row)
-
-        self._event_list = QListWidget()
-        self._event_list.setFont(QFont("Courier New", 9))
-        layout.addWidget(self._event_list)
-        return w
+    def _toggle_send_command(self) -> None:
+        visible = not self._send_cmd_body.isVisible()
+        self._send_cmd_body.setVisible(visible)
+        self._send_toggle_btn.setText(
+            "▼  Send Command (manuale)" if visible else "▶  Send Command (manuale)"
+        )
 
     # --- Logs tab ---
 
@@ -935,16 +902,6 @@ class StrategyControlPanel(QMainWindow):
         self._strategy_status_lbl.setText(f"Strategies: {running} running / {total} loaded")
 
     # ------------------------------------------------------------------
-    # Signal wiring
-    # ------------------------------------------------------------------
-
-    def _connect_signals(self) -> None:
-        self._signals.lifecycle_event.connect(self._on_lifecycle_event)
-        if self._lifecycle_thread:
-            self._lifecycle_thread.status_received.connect(self._on_lifecycle_redis_message)
-            self._lifecycle_thread.connection_error.connect(self._on_redis_connection_error)
-
-    # ------------------------------------------------------------------
     # Slots — Commands
     # ------------------------------------------------------------------
 
@@ -998,29 +955,8 @@ class StrategyControlPanel(QMainWindow):
             self._cmd_payload_edit.setText(json.dumps(payload, indent=2) if payload else "{}")
 
     # ------------------------------------------------------------------
-    # Slots — Redis / lifecycle
+    # Slots — Redis
     # ------------------------------------------------------------------
-
-    def _on_lifecycle_event(self, event_name: str, data: Any) -> None:
-        ts = datetime.now().strftime("%H:%M:%S.%f")[:-3]
-        extra = ""
-        if data is not None:
-            extra = f" — {data} trade(s)" if isinstance(data, int) else f" — {data}"
-        item = QListWidgetItem(f"[{ts}]  {event_name}{extra}")
-        colour_map = {
-            "on_start_strategy":   "#27ae60",
-            "on_book_initialized": "#2980b9",
-            "on_stop":             "#c0392b",
-            "on_trade":            "#8e44ad",
-            "on_my_trade":         "#d35400",
-        }
-        if colour := colour_map.get(event_name):
-            item.setForeground(QColor(colour))
-        self._event_list.addItem(item)
-        self._event_list.scrollToBottom()
-
-    def _on_lifecycle_redis_message(self, data: dict) -> None:
-        self._signals.lifecycle_event.emit(data.get("event", "unknown"), data.get("data"))
 
     def _on_status_received(self, data: dict) -> None:
         row = self._response_table.rowCount()
