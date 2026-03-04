@@ -20,18 +20,6 @@ from pathlib import Path
 from market_monitor.entry._base import BaseRunner, shutdown_threads
 
 
-# GUI types that require a Qt event loop in the main thread
-_QT_GUI_TYPES = {"StrategyControlPanel"}
-
-
-def _has_qt_gui(config: dict) -> bool:
-    """Return True if any GUI in the config requires a Qt event loop."""
-    return any(
-        p.get("gui_type") in _QT_GUI_TYPES
-        for p in config.get("gui", {}).values()
-    )
-
-
 class StrategyRunner(BaseRunner):
     """Runner per l'esecuzione delle strategie."""
 
@@ -42,19 +30,9 @@ class StrategyRunner(BaseRunner):
         super().__init__()
         self.threads: List = []
         self.monitor = None
-        self._qt_app = None
 
     def run(self) -> None:
         from market_monitor.builder import Builder
-
-        # If any GUI requires Qt, create QApplication BEFORE builder.build()
-        # so that QMainWindow can be instantiated safely.
-        use_qt = _has_qt_gui(self.config)
-        if use_qt:
-            import sys
-            from PyQt5.QtWidgets import QApplication
-            self._qt_app = QApplication.instance() or QApplication(sys.argv)
-            self._qt_app.setStyle("Fusion")
 
         builder = Builder(self.config)
         self.threads, self.monitor = builder.build()
@@ -62,37 +40,12 @@ class StrategyRunner(BaseRunner):
         for t in self.threads:
             t.start()
 
-        if use_qt:
-            import sys
-            import threading
+        self.monitor.start()
 
-            # Run the asyncio strategy loop in a background thread so that
-            # the main thread is free to run the Qt event loop.
-            strategy_thread = threading.Thread(
-                target=self.monitor.start,
-                daemon=True,
-                name="StrategyThread",
-            )
-            strategy_thread.start()
+        config_name = self.config.get('name', 'N/A')
+        print(f"\n✅ Strategia attiva. [Config: {config_name}]")
 
-            # Show all Qt windows registered as GUIs
-            for gui in self.monitor.GUIs.values():
-                if hasattr(gui, "show"):
-                    gui.show()
-
-            config_name = self.config.get("name", "N/A")
-            print(f"\n✅ Strategia attiva. [Config: {config_name}]")
-
-            # Qt event loop blocks the main thread until all windows are closed
-            sys.exit(self._qt_app.exec_())
-        else:
-            # Original behaviour: asyncio loop runs in the main thread
-            self.monitor.start()
-
-            config_name = self.config.get("name", "N/A")
-            print(f"\n✅ Strategia attiva. [Config: {config_name}]")
-
-            self.monitor.join()
+        self.monitor.join()
 
     def cleanup(self) -> None:
         shutdown_threads(self.threads, self.monitor)
@@ -101,9 +54,6 @@ class StrategyRunner(BaseRunner):
 # =============================================================================
 # PUBLIC API
 # =============================================================================
-
-_runner = StrategyRunner()
-
 
 def run_strategy(
     config: Optional[Union[str, dict, Path]] = None,

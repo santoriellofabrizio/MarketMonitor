@@ -3,13 +3,14 @@ Entry point per il StrategyControlPanel standalone.
 
 Avvia il control panel come processo separato: si connette a Redis e
 interagisce con qualsiasi strategia già in esecuzione (in un altro processo).
+Può anche lanciare la strategia direttamente dal pannello tramite il pulsante
+"Start Strategy" (che usa QProcess internamente).
 
 Uso CLI:
     run-control-panel
+    run-control-panel --config my_strategy_config
     run-control-panel --host localhost --port 6379 --db 0
-    run-control-panel --commands-channel engine:commands
-                      --status-channel   engine:status
-                      --lifecycle-channel engine:lifecycle
+    run-control-panel --lifecycle-channel engine:lifecycle
     run-control-panel --title "My Strategy"
 
 Uso programmatico:
@@ -23,11 +24,15 @@ import sys
 def _parse_args(argv=None):
     parser = argparse.ArgumentParser(
         prog="run-control-panel",
-        description="Avvia il StrategyControlPanel standalone (senza strategia).",
+        description="Avvia il StrategyControlPanel standalone.",
     )
-    parser.add_argument("--host",              default="localhost",      help="Redis host (default: localhost)")
-    parser.add_argument("--port",              type=int, default=6379,   help="Redis port (default: 6379)")
-    parser.add_argument("--db",                type=int, default=0,      help="Redis DB (default: 0)")
+    parser.add_argument(
+        "--config", default=None,
+        help="Preseleziona un config nella lista (es. my_strategy_config)",
+    )
+    parser.add_argument("--host",              default="localhost",       help="Redis host (default: localhost)")
+    parser.add_argument("--port",              type=int, default=6379,    help="Redis port (default: 6379)")
+    parser.add_argument("--db",                type=int, default=0,       help="Redis DB (default: 0)")
     parser.add_argument("--commands-channel",  default="engine:commands", help="Canale comandi Redis")
     parser.add_argument("--status-channel",    default="engine:status",   help="Canale risposte Redis")
     parser.add_argument("--lifecycle-channel", default="engine:lifecycle", help="Canale eventi lifecycle Redis")
@@ -42,6 +47,7 @@ def launch_control_panel(
     commands_channel: str = "engine:commands",
     status_channel: str = "engine:status",
     lifecycle_channel: str = "engine:lifecycle",
+    initial_config: str = None,
     title: str = "Strategy Control Panel",
 ) -> None:
     """
@@ -56,7 +62,8 @@ def launch_control_panel(
         db: Redis database index
         commands_channel: Canale Redis su cui pubblicare i comandi
         status_channel: Canale Redis da cui ricevere le risposte ai comandi
-        lifecycle_channel: Canale Redis da cui ricevere gli eventi lifecycle della strategia
+        lifecycle_channel: Canale Redis da cui ricevere gli eventi lifecycle
+        initial_config: Config pre-selezionato nel dropdown (opzionale)
         title: Titolo della finestra
     """
     from PyQt5.QtWidgets import QApplication
@@ -70,6 +77,7 @@ def launch_control_panel(
         commands_channel=commands_channel,
         status_channel=status_channel,
         lifecycle_channel=lifecycle_channel,
+        initial_config=initial_config,
     )
     panel.setWindowTitle(title)
     panel.show()
@@ -87,6 +95,7 @@ def main() -> None:
         commands_channel=args.commands_channel,
         status_channel=args.status_channel,
         lifecycle_channel=args.lifecycle_channel,
+        initial_config=args.config,
         title=args.title,
     )
 

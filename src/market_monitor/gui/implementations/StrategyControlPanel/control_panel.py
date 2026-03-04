@@ -1,33 +1,15 @@
 """
-StrategyControlPanel — PyQt5 control panel for any MarketMonitor strategy.
+StrategyControlPanel — standalone PyQt5 control panel for MarketMonitor strategies.
 
-Provides four tabs:
-  - Control  : strategy status + Stop button
-  - Commands : form to send Redis commands + response log
-  - Events   : real-time lifecycle event log
-  - Logs     : Python logging stream
+Fully decoupled from strategy code. Communicates exclusively via Redis.
+Can optionally launch a strategy as a subprocess.
 
-Integration (zero code required for existing strategies):
-    Add to your YAML config:
+Usage:
+    run-control-panel [--host HOST] [--port PORT] [--config CONFIG_NAME]
+                      [--lifecycle-channel engine:lifecycle]
 
-        gui:
-          control_panel:
-            gui_type: "StrategyControlPanel"
-            redis_config:
-              host: localhost
-              port: 6379
-              db: 0
-            commands_channel: "engine:commands"
-            status_channel:   "engine:status"
-
-Optional command registry (for richer Commands tab):
-    Add to your strategy class:
-
-        CONTROL_PANEL_COMMANDS = [
-            {"action": "reload_beta", "description": "Reload beta matrices", "payload": {}},
-            {"action": "update_forecaster", "description": "Update forecaster",
-             "payload": {"model": "cluster", "type": "ewma_outlier", "params": {}}},
-        ]
+Or connect to an already-running strategy:
+    run-control-panel   (panel shows up; strategy running elsewhere)
 """
 from __future__ import annotations
 
@@ -37,14 +19,13 @@ from datetime import datetime
 from typing import Any, Optional
 
 import redis
-from PyQt5.QtCore import Qt, pyqtSignal, QObject
+from PyQt5.QtCore import Qt, pyqtSignal, QObject, QProcess, QTimer
 from PyQt5.QtGui import QFont, QColor, QTextCharFormat, QTextCursor
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QTabWidget, QLabel, QPushButton, QLineEdit,
+    QTabWidget, QLabel, QPushButton,
     QTextEdit, QTableWidget, QTableWidgetItem, QHeaderView,
-    QComboBox, QGroupBox, QSplitter, QListWidget, QListWidgetItem,
-    QSizePolicy,
+    QComboBox, QGroupBox, QListWidget, QListWidgetItem,
 )
 
 from market_monitor.gui.implementations.StrategyControlPanel.redis_status_thread import RedisStatusThread
@@ -53,35 +34,11 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Qt signal bridge (must live in a QObject)
+# Qt signal bridge (must live in a QObject to support pyqtSignal)
 # ---------------------------------------------------------------------------
 
-class _ControlPanelSignals(QObject):
+class _Signals(QObject):
     lifecycle_event = pyqtSignal(str, object)   # (event_name, data)
-    status_update   = pyqtSignal(dict)           # response from engine:status
-    log_message     = pyqtSignal(str, str)       # (level_name, formatted_line)
-
-
-# ---------------------------------------------------------------------------
-# Custom logging handler that routes records to the Qt log panel
-# ---------------------------------------------------------------------------
-
-class QTextEditLogger(logging.Handler):
-    """
-    Logging handler that emits log records through a Qt signal so they can
-    be displayed safely in the main thread.
-    """
-
-    def __init__(self, signals: _ControlPanelSignals):
-        super().__init__()
-        self._signals = signals
-
-    def emit(self, record: logging.LogRecord) -> None:
-        try:
-            line = self.format(record)
-            self._signals.log_message.emit(record.levelname, line)
-        except Exception:
-            self.handleError(record)
 
 
 # ---------------------------------------------------------------------------
@@ -90,20 +47,17 @@ class QTextEditLogger(logging.Handler):
 
 class StrategyControlPanel(QMainWindow):
     """
-    PyQt5 control panel that works with *any* strategy.
+    Standalone PyQt5 control panel.
 
-    Implements the GUI interface via duck typing (export_data / close / start)
-    to avoid the metaclass conflict between PyQt5's sip.wrappertype and ABCMeta.
+    Does NOT depend on StrategyUIAsync, Builder, or any strategy class.
+    All communication with the strategy happens via Redis pub/sub:
 
-    Register it via builder YAML or programmatically:
+        engine:commands   → sends user commands
+        engine:status     → receives command responses
+        engine:lifecycle  → receives lifecycle events (opt-in, see lifecycle_publisher task)
 
-        strategy.set_gui("control", panel)
-        panel.load_commands_from_strategy(strategy)
+    The panel can also launch and kill a strategy subprocess via QProcess.
     """
-
-    # ------------------------------------------------------------------
-    # Construction
-    # ------------------------------------------------------------------
 
     def __init__(
         self,
@@ -111,7 +65,7 @@ class StrategyControlPanel(QMainWindow):
         commands_channel: str = "engine:commands",
         status_channel: str = "engine:status",
         lifecycle_channel: Optional[str] = None,
-        strategy_ref=None,
+        initial_config: Optional[str] = None,
         **kwargs,
     ):
         QMainWindow.__init__(self)
@@ -119,19 +73,15 @@ class StrategyControlPanel(QMainWindow):
         self._commands_channel = commands_channel
         self._status_channel = status_channel
         self._lifecycle_channel = lifecycle_channel
-        self._strategy = strategy_ref
         self._redis_client: Optional[redis.StrictRedis] = None
         self._status_thread: Optional[RedisStatusThread] = None
         self._lifecycle_thread: Optional[RedisStatusThread] = None
-        self._log_handler: Optional[QTextEditLogger] = None
-        self._log_level_filter: int = logging.DEBUG
-
-        self._signals = _ControlPanelSignals()
+        self._process: Optional[QProcess] = None
+        self._signals = _Signals()
 
         self._build_redis_client(redis_config or {})
-        self._setup_ui()
+        self._setup_ui(initial_config)
         self._connect_signals()
-        self._install_log_handler()
 
         if self._status_thread:
             self._status_thread.start()
@@ -141,58 +91,23 @@ class StrategyControlPanel(QMainWindow):
         logger.info("StrategyControlPanel initialized")
 
     # ------------------------------------------------------------------
-    # GUI interface
+    # Window lifecycle
     # ------------------------------------------------------------------
 
-    def export_data(self, **kwargs) -> None:
-        """
-        Called by the strategy for lifecycle event notifications.
+    def closeEvent(self, event) -> None:
+        self._stop_redis_threads()
+        if self._process and self._process.state() != QProcess.NotRunning:
+            self._process.kill()
+        super().closeEvent(event)
 
-        Expected kwargs:
-            event_name (str): e.g. 'on_trade', 'on_book_initialized'
-            data (Any): optional payload (e.g. trade count)
-        """
-        event_name = kwargs.get("event_name", "unknown")
-        data = kwargs.get("data", None)
-        self._signals.lifecycle_event.emit(event_name, data)
-
-    def close(self) -> None:
-        """Stop background threads and close the window."""
-        self._uninstall_log_handler()
+    def _stop_redis_threads(self) -> None:
         for thread in (self._status_thread, self._lifecycle_thread):
             if thread and thread.isRunning():
                 thread.stop()
                 thread.wait(2000)
-        super().close()
-
-    def start(self) -> None:
-        """Show the window (called by builder after strategy threads are started)."""
-        self.show()
 
     # ------------------------------------------------------------------
-    # Public helpers
-    # ------------------------------------------------------------------
-
-    def load_commands_from_strategy(self, strategy) -> None:
-        """
-        Read CONTROL_PANEL_COMMANDS from *strategy* (if defined) and populate
-        the command dropdown with pre-filled entries.
-
-        Safe to call even if the attribute is absent.
-        """
-        commands = getattr(strategy, "CONTROL_PANEL_COMMANDS", None)
-        if not commands:
-            return
-        for cmd in commands:
-            action = cmd.get("action", "")
-            description = cmd.get("description", "")
-            payload = cmd.get("payload", {})
-            label = f"{action}" + (f"  —  {description}" if description else "")
-            self._cmd_action_combo.addItem(label, userData=(action, payload))
-        logger.debug(f"Loaded {len(commands)} commands from strategy")
-
-    # ------------------------------------------------------------------
-    # Redis client
+    # Redis setup
     # ------------------------------------------------------------------
 
     def _build_redis_client(self, redis_config: dict) -> None:
@@ -206,90 +121,127 @@ class StrategyControlPanel(QMainWindow):
             )
             self._redis_client.ping()
             logger.info(f"Redis connected: {host}:{port}/{db}")
-
-            self._status_thread = RedisStatusThread(
-                redis_client=self._redis_client,
-                channel=self._status_channel,
-            )
+            self._status_thread = RedisStatusThread(self._redis_client, self._status_channel)
             if self._lifecycle_channel:
-                self._lifecycle_thread = RedisStatusThread(
-                    redis_client=self._redis_client,
-                    channel=self._lifecycle_channel,
-                )
+                self._lifecycle_thread = RedisStatusThread(self._redis_client, self._lifecycle_channel)
         except redis.RedisError as e:
-            logger.warning(f"Redis not available: {e}. Commands tab will be disabled.")
+            logger.warning(f"Redis not available: {e}. Commands will be disabled.")
             self._redis_client = None
 
     # ------------------------------------------------------------------
     # UI construction
     # ------------------------------------------------------------------
 
-    def _setup_ui(self) -> None:
+    def _setup_ui(self, initial_config: Optional[str] = None) -> None:
         self.setWindowTitle("Strategy Control Panel")
-        self.setGeometry(200, 200, 900, 650)
-        self.setMinimumSize(700, 500)
+        self.setGeometry(200, 200, 950, 700)
+        self.setMinimumSize(750, 520)
 
         central = QWidget()
         self.setCentralWidget(central)
-        root_layout = QVBoxLayout(central)
-        root_layout.setContentsMargins(6, 6, 6, 6)
+        root = QVBoxLayout(central)
+        root.setContentsMargins(6, 6, 6, 6)
 
-        # ---- header ----
+        # Header
         header = QHBoxLayout()
-        title = QLabel("Strategy Control Panel")
-        title.setFont(QFont("Arial", 13, QFont.Bold))
+        title_lbl = QLabel("Strategy Control Panel")
+        title_lbl.setFont(QFont("Arial", 13, QFont.Bold))
         self._status_badge = QLabel("STOPPED")
         self._status_badge.setFixedWidth(140)
         self._status_badge.setAlignment(Qt.AlignCenter)
         self._set_status("STOPPED")
-        header.addWidget(title)
+        header.addWidget(title_lbl)
         header.addStretch()
         header.addWidget(QLabel("Status:"))
         header.addWidget(self._status_badge)
-        root_layout.addLayout(header)
+        root.addLayout(header)
 
-        # ---- tabs ----
+        # Tabs
         self._tabs = QTabWidget()
-        root_layout.addWidget(self._tabs)
-
-        self._tabs.addTab(self._build_control_tab(),  "Control")
-        self._tabs.addTab(self._build_commands_tab(), "Commands")
-        self._tabs.addTab(self._build_events_tab(),   "Events")
-        self._tabs.addTab(self._build_logs_tab(),     "Logs")
+        root.addWidget(self._tabs)
+        self._tabs.addTab(self._build_control_tab(initial_config), "Control")
+        self._tabs.addTab(self._build_commands_tab(),              "Commands")
+        self._tabs.addTab(self._build_events_tab(),                "Events")
+        self._tabs.addTab(self._build_logs_tab(),                  "Logs")
 
     # --- Control tab ---
 
-    def _build_control_tab(self) -> QWidget:
+    def _build_control_tab(self, initial_config: Optional[str] = None) -> QWidget:
         w = QWidget()
         layout = QVBoxLayout(w)
         layout.setAlignment(Qt.AlignTop)
 
-        grp = QGroupBox("Strategy Control")
-        grp_layout = QVBoxLayout(grp)
+        # Launch group
+        launch_grp = QGroupBox("Launch Strategy")
+        launch_layout = QVBoxLayout(launch_grp)
 
-        info_row = QHBoxLayout()
-        info_row.addWidget(QLabel("Current status:"))
-        self._control_status_label = QLabel("STOPPED")
-        self._control_status_label.setFont(QFont("Arial", 11, QFont.Bold))
-        info_row.addWidget(self._control_status_label)
-        info_row.addStretch()
-        grp_layout.addLayout(info_row)
-
-        self._last_event_label = QLabel("Last event: —")
-        grp_layout.addWidget(self._last_event_label)
+        config_row = QHBoxLayout()
+        config_row.addWidget(QLabel("Config:"))
+        self._config_combo = QComboBox()
+        self._config_combo.setEditable(True)
+        self._config_combo.setMinimumWidth(320)
+        self._populate_config_list(initial_config)
+        config_row.addWidget(self._config_combo)
+        config_row.addStretch()
+        launch_layout.addLayout(config_row)
 
         btn_row = QHBoxLayout()
+        self._start_btn = QPushButton("Start Strategy")
+        self._start_btn.setFixedWidth(155)
+        self._start_btn.setStyleSheet(
+            "QPushButton{background:#27ae60;color:white;font-weight:bold;border-radius:4px;padding:4px;}"
+            "QPushButton:hover{background:#2ecc71;}"
+        )
+        self._start_btn.clicked.connect(self._on_start_clicked)
+
         self._stop_btn = QPushButton("Stop Strategy")
-        self._stop_btn.setFixedWidth(150)
-        self._stop_btn.setStyleSheet("QPushButton { background-color: #c0392b; color: white; font-weight: bold; }")
+        self._stop_btn.setFixedWidth(155)
+        self._stop_btn.setStyleSheet(
+            "QPushButton{background:#c0392b;color:white;font-weight:bold;border-radius:4px;padding:4px;}"
+            "QPushButton:hover{background:#e74c3c;}"
+        )
         self._stop_btn.clicked.connect(self._on_stop_clicked)
+
+        btn_row.addWidget(self._start_btn)
         btn_row.addWidget(self._stop_btn)
         btn_row.addStretch()
-        grp_layout.addLayout(btn_row)
+        launch_layout.addLayout(btn_row)
 
-        layout.addWidget(grp)
+        self._pid_label = QLabel("Process: not running")
+        self._pid_label.setStyleSheet("color: #7f8c8d;")
+        launch_layout.addWidget(self._pid_label)
+
+        layout.addWidget(launch_grp)
+
+        # Status group
+        status_grp = QGroupBox("Strategy Status")
+        status_layout = QVBoxLayout(status_grp)
+        self._control_status_label = QLabel("STOPPED")
+        self._control_status_label.setFont(QFont("Arial", 11, QFont.Bold))
+        self._control_status_label.setStyleSheet("color: #c0392b;")
+        self._last_event_label = QLabel("Last event: —")
+        self._last_event_label.setStyleSheet("color: #7f8c8d;")
+        status_layout.addWidget(self._control_status_label)
+        status_layout.addWidget(self._last_event_label)
+        layout.addWidget(status_grp)
+
         layout.addStretch()
         return w
+
+    def _populate_config_list(self, initial_config: Optional[str] = None) -> None:
+        try:
+            from market_monitor.utils.config_helpers import find_all_configs
+            for name in find_all_configs():
+                self._config_combo.addItem(name)
+        except Exception as e:
+            logger.debug(f"Could not load config list: {e}")
+
+        if initial_config:
+            idx = self._config_combo.findText(initial_config)
+            if idx >= 0:
+                self._config_combo.setCurrentIndex(idx)
+            else:
+                self._config_combo.setCurrentText(initial_config)
 
     # --- Commands tab ---
 
@@ -300,7 +252,6 @@ class StrategyControlPanel(QMainWindow):
         send_grp = QGroupBox("Send Command")
         send_layout = QVBoxLayout(send_grp)
 
-        # Action row: combo (for CONTROL_PANEL_COMMANDS) + free text
         action_row = QHBoxLayout()
         action_row.addWidget(QLabel("Action:"))
         self._cmd_action_combo = QComboBox()
@@ -312,7 +263,6 @@ class StrategyControlPanel(QMainWindow):
         action_row.addStretch()
         send_layout.addLayout(action_row)
 
-        # Payload editor
         send_layout.addWidget(QLabel("JSON Payload:"))
         self._cmd_payload_edit = QTextEdit()
         self._cmd_payload_edit.setPlaceholderText("{}")
@@ -320,7 +270,6 @@ class StrategyControlPanel(QMainWindow):
         self._cmd_payload_edit.setFont(QFont("Courier New", 9))
         send_layout.addWidget(self._cmd_payload_edit)
 
-        # Send button
         btn_row = QHBoxLayout()
         self._send_btn = QPushButton("Send")
         self._send_btn.setFixedWidth(100)
@@ -332,10 +281,8 @@ class StrategyControlPanel(QMainWindow):
         btn_row.addWidget(self._cmd_error_label)
         btn_row.addStretch()
         send_layout.addLayout(btn_row)
-
         layout.addWidget(send_grp)
 
-        # Response table
         layout.addWidget(QLabel("Command Responses:"))
         self._response_table = QTableWidget(0, 5)
         self._response_table.setHorizontalHeaderLabels(
@@ -345,7 +292,6 @@ class StrategyControlPanel(QMainWindow):
         self._response_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self._response_table.setSelectionBehavior(QTableWidget.SelectRows)
         layout.addWidget(self._response_table)
-
         return w
 
     # --- Events tab ---
@@ -366,7 +312,6 @@ class StrategyControlPanel(QMainWindow):
         self._event_list = QListWidget()
         self._event_list.setFont(QFont("Courier New", 9))
         layout.addWidget(self._event_list)
-
         return w
 
     # --- Logs tab ---
@@ -376,24 +321,18 @@ class StrategyControlPanel(QMainWindow):
         layout = QVBoxLayout(w)
 
         ctrl_row = QHBoxLayout()
-        ctrl_row.addWidget(QLabel("Min level:"))
-        self._log_level_combo = QComboBox()
-        self._log_level_combo.addItems(["DEBUG", "INFO", "WARNING", "ERROR"])
-        self._log_level_combo.setCurrentText("DEBUG")
-        self._log_level_combo.currentTextChanged.connect(self._on_log_level_changed)
-        ctrl_row.addWidget(self._log_level_combo)
+        ctrl_row.addWidget(QLabel("Strategy Process Output:"))
         ctrl_row.addStretch()
-        clear_log_btn = QPushButton("Clear")
-        clear_log_btn.setFixedWidth(80)
-        clear_log_btn.clicked.connect(lambda: self._log_edit.clear())
-        ctrl_row.addWidget(clear_log_btn)
+        clear_btn = QPushButton("Clear")
+        clear_btn.setFixedWidth(80)
+        clear_btn.clicked.connect(lambda: self._log_edit.clear())
+        ctrl_row.addWidget(clear_btn)
         layout.addLayout(ctrl_row)
 
         self._log_edit = QTextEdit()
         self._log_edit.setReadOnly(True)
         self._log_edit.setFont(QFont("Courier New", 9))
         layout.addWidget(self._log_edit)
-
         return w
 
     # ------------------------------------------------------------------
@@ -402,145 +341,152 @@ class StrategyControlPanel(QMainWindow):
 
     def _connect_signals(self) -> None:
         self._signals.lifecycle_event.connect(self._on_lifecycle_event)
-        self._signals.log_message.connect(self._on_log_message)
         if self._status_thread:
             self._status_thread.status_received.connect(self._on_status_received)
-            self._status_thread.connection_error.connect(self._on_redis_error)
+            self._status_thread.connection_error.connect(self._on_redis_connection_error)
         if self._lifecycle_thread:
             self._lifecycle_thread.status_received.connect(self._on_lifecycle_redis_message)
-            self._lifecycle_thread.connection_error.connect(self._on_redis_error)
+            self._lifecycle_thread.connection_error.connect(self._on_redis_connection_error)
 
     # ------------------------------------------------------------------
-    # Slot implementations
+    # Slots — process management
+    # ------------------------------------------------------------------
+
+    def _on_start_clicked(self) -> None:
+        config_name = self._config_combo.currentText().strip()
+        if not config_name:
+            self._log_edit.append("[ERROR] Select a config first.")
+            return
+
+        if self._process and self._process.state() != QProcess.NotRunning:
+            self._log_edit.append("[WARN] Strategy already running — stop it first.")
+            return
+
+        self._log_edit.clear()
+        self._log_edit.append(f"[INFO] Starting: run-strategy {config_name}\n")
+
+        self._process = QProcess(self)
+        self._process.setProcessChannelMode(QProcess.MergedChannels)
+        self._process.readyReadStandardOutput.connect(self._on_process_output)
+        self._process.finished.connect(self._on_process_finished)
+        self._process.start("run-strategy", [config_name])
+
+        if self._process.waitForStarted(3000):
+            pid = self._process.processId()
+            self._pid_label.setText(f"Process PID: {pid}")
+            self._pid_label.setStyleSheet("color: #27ae60;")
+            self._set_status("RUNNING")
+        else:
+            self._log_edit.append("[ERROR] Failed to start. Is run-strategy in PATH?")
+            self._pid_label.setText("Process: failed to start")
+            self._pid_label.setStyleSheet("color: #c0392b;")
+
+    def _on_stop_clicked(self) -> None:
+        if self._redis_client:
+            try:
+                self._redis_client.publish(
+                    self._commands_channel, json.dumps({"action": "stop"})
+                )
+                self._log_edit.append("[INFO] Stop command sent via Redis.")
+            except redis.RedisError as e:
+                self._log_edit.append(f"[WARN] Redis error sending stop: {e}")
+
+        if self._process and self._process.state() != QProcess.NotRunning:
+            QTimer.singleShot(3000, self._kill_process_if_running)
+
+    def _kill_process_if_running(self) -> None:
+        if self._process and self._process.state() != QProcess.NotRunning:
+            self._process.kill()
+            self._log_edit.append("[INFO] Process killed (timeout).")
+            self._pid_label.setText("Process: killed")
+            self._pid_label.setStyleSheet("color: #c0392b;")
+
+    def _on_process_output(self) -> None:
+        data = self._process.readAllStandardOutput().data().decode(errors="replace")
+        cursor = self._log_edit.textCursor()
+        cursor.movePosition(QTextCursor.End)
+        self._log_edit.setTextCursor(cursor)
+        self._log_edit.insertPlainText(data)
+        self._log_edit.ensureCursorVisible()
+
+    def _on_process_finished(self, exit_code: int, _exit_status) -> None:
+        self._log_edit.append(f"\n[INFO] Process finished (exit code: {exit_code})")
+        self._pid_label.setText("Process: not running")
+        self._pid_label.setStyleSheet("color: #7f8c8d;")
+        self._set_status("STOPPED")
+
+    # ------------------------------------------------------------------
+    # Slots — Redis / lifecycle
     # ------------------------------------------------------------------
 
     def _on_lifecycle_event(self, event_name: str, data: Any) -> None:
         ts = datetime.now().strftime("%H:%M:%S.%f")[:-3]
-
-        # Compose display text
         extra = ""
         if data is not None:
-            if isinstance(data, int):
-                extra = f" — {data} trade(s)"
-            elif data:
-                extra = f" — {data}"
-        item_text = f"[{ts}]  {event_name}{extra}"
-        item = QListWidgetItem(item_text)
-
-        # Colour-code by event
+            extra = f" — {data} trade(s)" if isinstance(data, int) else f" — {data}"
+        item = QListWidgetItem(f"[{ts}]  {event_name}{extra}")
         colour_map = {
-            "on_start_strategy":    "#27ae60",
-            "on_book_initialized":  "#2980b9",
-            "on_stop":              "#c0392b",
-            "on_trade":             "#8e44ad",
-            "on_my_trade":          "#d35400",
+            "on_start_strategy":   "#27ae60",
+            "on_book_initialized": "#2980b9",
+            "on_stop":             "#c0392b",
+            "on_trade":            "#8e44ad",
+            "on_my_trade":         "#d35400",
         }
-        colour = colour_map.get(event_name)
-        if colour:
+        if colour := colour_map.get(event_name):
             item.setForeground(QColor(colour))
-
         self._event_list.addItem(item)
         self._event_list.scrollToBottom()
         self._last_event_label.setText(f"Last event: {event_name}  [{ts}]")
-
-        # Update status badge based on event
-        status_transitions = {
+        status_map = {
             "on_book_initialized": "BOOK READY",
             "on_start_strategy":   "RUNNING",
             "on_stop":             "STOPPED",
         }
-        if event_name in status_transitions:
-            self._set_status(status_transitions[event_name])
+        if status := status_map.get(event_name):
+            self._set_status(status)
+
+    def _on_lifecycle_redis_message(self, data: dict) -> None:
+        self._signals.lifecycle_event.emit(data.get("event", "unknown"), data.get("data"))
 
     def _on_status_received(self, data: dict) -> None:
-        """Adds a row to the response table for each engine:status message."""
         row = self._response_table.rowCount()
         self._response_table.insertRow(row)
-
         ts = data.get("timestamp", "")
         if ts and "T" in ts:
-            ts = ts.split("T")[1][:12]   # HH:MM:SS.mmm
-
+            ts = ts.split("T")[1][:12]
         cols = [
-            ts,
-            data.get("action", ""),
-            data.get("status", ""),
-            str(round(data.get("elapsed_seconds", 0), 3)),
-            data.get("error", ""),
+            ts, data.get("action", ""), data.get("status", ""),
+            str(round(data.get("elapsed_seconds", 0), 3)), data.get("error", ""),
         ]
         for col, val in enumerate(cols):
             cell = QTableWidgetItem(val)
             if data.get("status") == "error":
                 cell.setForeground(QColor("#c0392b"))
             self._response_table.setItem(row, col, cell)
-
         self._response_table.scrollToBottom()
 
-    def _on_log_message(self, level_name: str, line: str) -> None:
-        level = getattr(logging, level_name, logging.DEBUG)
-        if level < self._log_level_filter:
-            return
-
-        colour_map = {
-            "DEBUG":    "#7f8c8d",
-            "INFO":     "#2c3e50",
-            "WARNING":  "#e67e22",
-            "ERROR":    "#c0392b",
-            "CRITICAL": "#922b21",
-        }
-        colour = colour_map.get(level_name, "#2c3e50")
-
-        cursor = self._log_edit.textCursor()
-        cursor.movePosition(QTextCursor.End)
-        fmt = QTextCharFormat()
-        fmt.setForeground(QColor(colour))
-        cursor.mergeCharFormat(fmt)
-        cursor.insertText(line + "\n")
-        self._log_edit.setTextCursor(cursor)
-        self._log_edit.ensureCursorVisible()
-
-    def _on_lifecycle_redis_message(self, data: dict) -> None:
-        """Handle a lifecycle event arriving from the Redis lifecycle channel."""
-        event_name = data.get("event", "unknown")
-        payload = data.get("data")
-        self._signals.lifecycle_event.emit(event_name, payload)
-
-    def _on_redis_error(self, error: str) -> None:
-        self._cmd_error_label.setText(f"Redis error: {error}")
+    def _on_redis_connection_error(self, error: str) -> None:
+        self._cmd_error_label.setText(f"Redis: {error}")
         self._send_btn.setEnabled(False)
 
-    def _on_stop_clicked(self) -> None:
-        if self._strategy is not None:
-            try:
-                self._strategy.stop()
-            except Exception as e:
-                logger.error(f"Error stopping strategy: {e}")
-        elif self._redis_client:
-            try:
-                self._redis_client.publish(
-                    self._commands_channel,
-                    json.dumps({"action": "stop"}),
-                )
-            except redis.RedisError as e:
-                logger.error(f"Redis publish error on stop: {e}")
+    # ------------------------------------------------------------------
+    # Slots — Commands tab
+    # ------------------------------------------------------------------
 
     def _on_send_command(self) -> None:
         self._cmd_error_label.setText("")
-        action_text = self._cmd_action_combo.currentText().strip()
-        payload_text = self._cmd_payload_edit.toPlainText().strip() or "{}"
-
-        # If a predefined command is selected, use its stored action
         idx = self._cmd_action_combo.currentIndex()
         user_data = self._cmd_action_combo.itemData(idx)
         if user_data and isinstance(user_data, tuple):
-            action, _default_payload = user_data
+            action, _ = user_data
         else:
-            action = action_text.split("  —  ")[0].strip()
+            action = self._cmd_action_combo.currentText().split("  —  ")[0].strip()
 
-        if not action:
-            self._cmd_error_label.setText("Action is required")
+        if not action or action == "(free text)":
+            self._cmd_error_label.setText("Action required")
             return
 
+        payload_text = self._cmd_payload_edit.toPlainText().strip() or "{}"
         try:
             payload = json.loads(payload_text)
         except json.JSONDecodeError as e:
@@ -548,11 +494,9 @@ class StrategyControlPanel(QMainWindow):
             return
 
         payload["action"] = action
-
         if not self._redis_client:
             self._cmd_error_label.setText("Redis not connected")
             return
-
         try:
             self._redis_client.publish(self._commands_channel, json.dumps(payload))
             logger.info(f"Command sent: {payload}")
@@ -561,54 +505,28 @@ class StrategyControlPanel(QMainWindow):
             logger.error(f"Redis publish error: {e}")
 
     def _on_command_selected(self, index: int) -> None:
-        """Pre-fill the payload editor when a predefined command is selected."""
         user_data = self._cmd_action_combo.itemData(index)
         if user_data and isinstance(user_data, tuple):
-            _action, payload = user_data
-            self._cmd_payload_edit.setText(
-                json.dumps(payload, indent=2) if payload else "{}"
-            )
-
-    def _on_log_level_changed(self, level_name: str) -> None:
-        self._log_level_filter = getattr(logging, level_name, logging.DEBUG)
-        if self._log_handler:
-            self._log_handler.setLevel(self._log_level_filter)
+            _, payload = user_data
+            self._cmd_payload_edit.setText(json.dumps(payload, indent=2) if payload else "{}")
 
     # ------------------------------------------------------------------
     # Status badge
     # ------------------------------------------------------------------
 
     _STATUS_STYLES = {
-        "STOPPED":    "background:#c0392b; color:white; border-radius:4px; padding:2px 8px; font-weight:bold;",
-        "BOOK READY": "background:#e67e22; color:white; border-radius:4px; padding:2px 8px; font-weight:bold;",
-        "RUNNING":    "background:#27ae60; color:white; border-radius:4px; padding:2px 8px; font-weight:bold;",
+        "STOPPED":    "background:#c0392b;color:white;border-radius:4px;padding:2px 8px;font-weight:bold;",
+        "BOOK READY": "background:#e67e22;color:white;border-radius:4px;padding:2px 8px;font-weight:bold;",
+        "RUNNING":    "background:#27ae60;color:white;border-radius:4px;padding:2px 8px;font-weight:bold;",
+    }
+    _STATUS_TEXT_COLOURS = {
+        "RUNNING": "#27ae60", "BOOK READY": "#e67e22", "STOPPED": "#c0392b",
     }
 
     def _set_status(self, status: str) -> None:
-        style = self._STATUS_STYLES.get(status, self._STATUS_STYLES["STOPPED"])
         self._status_badge.setText(status)
-        self._status_badge.setStyleSheet(style)
+        self._status_badge.setStyleSheet(self._STATUS_STYLES.get(status, self._STATUS_STYLES["STOPPED"]))
         if hasattr(self, "_control_status_label"):
+            colour = self._STATUS_TEXT_COLOURS.get(status, "#c0392b")
             self._control_status_label.setText(status)
-            self._control_status_label.setStyleSheet(f"color: {self._badge_text_colour(status)};")
-
-    @staticmethod
-    def _badge_text_colour(status: str) -> str:
-        return {"RUNNING": "#27ae60", "BOOK READY": "#e67e22"}.get(status, "#c0392b")
-
-    # ------------------------------------------------------------------
-    # Log handler management
-    # ------------------------------------------------------------------
-
-    def _install_log_handler(self) -> None:
-        self._log_handler = QTextEditLogger(self._signals)
-        self._log_handler.setLevel(logging.DEBUG)
-        fmt = logging.Formatter("%(asctime)s  %(name)-20s  %(levelname)-8s  %(message)s",
-                                datefmt="%H:%M:%S")
-        self._log_handler.setFormatter(fmt)
-        logging.getLogger().addHandler(self._log_handler)
-
-    def _uninstall_log_handler(self) -> None:
-        if self._log_handler:
-            logging.getLogger().removeHandler(self._log_handler)
-            self._log_handler = None
+            self._control_status_label.setStyleSheet(f"color: {colour};")

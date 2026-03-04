@@ -285,10 +285,6 @@ class Builder:
                     q_gui = Queue(gui_config.get("thread_queue_size", 5))
                     gui = GUIQueue(q_gui)
                     threads.append(ThreadGUIExcel(queue=q_gui, **params))
-                case "StrategyControlPanel":
-                    from market_monitor.gui.implementations.StrategyControlPanel import StrategyControlPanel
-                    gui = StrategyControlPanel(strategy_ref=monitor, **params)
-                    gui.load_commands_from_strategy(monitor)
                 case _:
                     raise ValueError(f"Unknown GUI type: {params.get('gui_type')}")
             monitor.set_gui(gui_name, gui)
