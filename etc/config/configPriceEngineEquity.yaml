@@ -126,6 +126,53 @@ market_monitor:
     Service Name : OTH_ORABOH.bsella.it
 
 
+control_panel:
+  title: "ETF Equity Price Engine"
+  commands:
+    - label: "Reload Beta"
+      action: "reload_beta"
+      payload: {}
+      description: "Ricarica le matrici beta dal DB e aggiorna le predizioni"
+
+    - label: "EWMA h=3"
+      action: "update_forecaster"
+      payload:
+        model: "all"
+        type: "ewma_outlier"
+        params:
+          halflife: 3
+          outlier_std: 2.5
+      description: "Forecaster reattivo: EWMA halflife=3, outlier_std=2.5"
+
+    - label: "EWMA h=10"
+      action: "update_forecaster"
+      payload:
+        model: "all"
+        type: "ewma_outlier"
+        params:
+          halflife: 10
+          outlier_std: 3
+      description: "Forecaster default: EWMA halflife=10, outlier_std=3"
+
+    - label: "Trim Mean 10%"
+      action: "update_forecaster"
+      payload:
+        model: "all"
+        type: "trimmed_mean"
+        params:
+          perc_outlier: 0.1
+      description: "Trimmed Mean con 10% outlier removal su tutti i modelli"
+
+    - label: "Trim Mean 30%"
+      action: "update_forecaster"
+      payload:
+        model: "all"
+        type: "trimmed_mean"
+        params:
+          perc_outlier: 0.3
+      description: "Trimmed Mean con 30% outlier removal su tutti i modelli"
+
+
 bloomberg_data_distributor:
   activate: true
   interval: 1
