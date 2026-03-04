@@ -40,6 +40,17 @@ def _parse_args(argv=None):
     return parser.parse_args(argv)
 
 
+def _load_panel_config(config_name: str) -> dict:
+    """Load the `control_panel` section from a strategy YAML config."""
+    try:
+        from market_monitor.utils.config_helpers import find_config, load_config
+        path = find_config(config_name)
+        cfg = load_config(path)
+        return cfg.get("control_panel", {})
+    except Exception:
+        return {}
+
+
 def launch_control_panel(
     host: str = "localhost",
     port: int = 6379,
@@ -69,6 +80,8 @@ def launch_control_panel(
     from PyQt5.QtWidgets import QApplication
     from market_monitor.gui.implementations.StrategyControlPanel import StrategyControlPanel
 
+    panel_config = _load_panel_config(initial_config) if initial_config else {}
+
     app = QApplication.instance() or QApplication(sys.argv)
     app.setStyle("Fusion")
 
@@ -78,6 +91,7 @@ def launch_control_panel(
         status_channel=status_channel,
         lifecycle_channel=lifecycle_channel,
         initial_config=initial_config,
+        panel_config=panel_config,
     )
     panel.setWindowTitle(title)
     panel.show()

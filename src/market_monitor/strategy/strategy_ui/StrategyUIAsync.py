@@ -85,7 +85,6 @@ class StrategyUIAsync(ABC):
             "trade": self._async_check_trade_queue,
             "update_HF": self._async_update_HF,
             "command_listener": self._async_command_listener,
-            "lifecycle_publisher": self._async_lifecycle_publisher,
         }
 
         try:
@@ -442,56 +441,8 @@ class StrategyUIAsync(ABC):
     def export_data(self, *args, **kwargs):
         pass
 
-    async def _async_lifecycle_publisher(self, redis_client_attr: str,
-                                          channel: str = "engine:lifecycle", **kwargs):
-        """
-        Configures Redis publishing for lifecycle events so a standalone
-        StrategyControlPanel (running in a separate process) can receive them.
-
-        Config example:
-            tasks:
-              lifecycle_publisher:
-                activate: true
-                redis_client_attr: publisher.gui.redis_client
-                channel: engine:lifecycle
-        """
-        redis_client = self
-        for attr in redis_client_attr.split("."):
-            redis_client = getattr(redis_client, attr)
-
-        self._lifecycle_redis_client = redis_client
-        self._lifecycle_channel = channel
-        logger.info(f"Lifecycle publisher configured on channel '{channel}'")
-
-        try:
-            while not self.running:
-                await asyncio.sleep(5)
-        finally:
-            self._lifecycle_redis_client = None
-
     def _publish_lifecycle_event(self, event_name: str, data=None) -> None:
-        """
-        Publish a lifecycle event to the Redis lifecycle channel.
-        Only active when the lifecycle_publisher task is configured in YAML.
-        The standalone StrategyControlPanel subscribes to this channel.
-        """
-        import json
-        from datetime import datetime, timezone
-
-        redis_client = getattr(self, "_lifecycle_redis_client", None)
-        if redis_client:
-            try:
-                payload = json.dumps({
-                    "event": event_name,
-                    "data": data,
-                    "timestamp": datetime.now(timezone.utc).isoformat(),
-                })
-                redis_client.publish(
-                    getattr(self, "_lifecycle_channel", "engine:lifecycle"),
-                    payload,
-                )
-            except Exception as e:
-                logger.debug(f"Redis lifecycle publish error for '{event_name}': {e}")
+        pass
 
     def stop(self):
         """Stop non bloccante."""
