@@ -86,7 +86,7 @@ def select_config_interactive() -> str:
         import questionary
         from questionary import Style
     except ImportError:
-        print("❌ questionary non installato. Installa con: pip install questionary")
+        print("[ERROR] questionary non installato. Installa con: pip install questionary")
         print("\nConfigurazioni disponibili:")
         list_available()
         sys.exit(1)
@@ -94,7 +94,7 @@ def select_config_interactive() -> str:
     choices = _get_config_choices()
     
     if not choices:
-        print("❌ Nessuna configurazione trovata.")
+        print("[ERROR] Nessuna configurazione trovata.")
         sys.exit(1)
     
     # Stile personalizzato
@@ -118,7 +118,7 @@ def select_config_interactive() -> str:
     ).ask()
     
     if result is None:
-        print("\n❌ Selezione annullata.")
+        print("\n[ERROR] Selezione annullata.")
         sys.exit(1)
     
     # Trova il value corrispondente
@@ -144,7 +144,7 @@ def select_config_with_autocomplete() -> str:
     names = available_names()
     
     if not names:
-        print("❌ Nessuna configurazione trovata.")
+        print("[ERROR] Nessuna configurazione trovata.")
         sys.exit(1)
     
     result = questionary.autocomplete(
@@ -155,7 +155,7 @@ def select_config_with_autocomplete() -> str:
     ).ask()
     
     if result is None:
-        print("\n❌ Selezione annullata.")
+        print("\n[ERROR] Selezione annullata.")
         sys.exit(1)
     
     return result
@@ -310,26 +310,26 @@ def resolve_config(
     if not config_name:
         if interactive or force_interactive:
             if sys.stdin.isatty():
-                print(f"💡 Nessuna config specificata. Avvio selezione interattiva...\n")
+                print(f"[TIP] Nessuna config specificata. Avvio selezione interattiva...\n")
                 config_name = select_config_interactive()
             else:
                 # Non interattivo (es. pipe, script)
-                print(f"❌ Nessuna configurazione specificata.")
+                print(f"[ERROR] Nessuna configurazione specificata.")
                 print(f"   Usa: comando <config_name> oppure imposta ${ENV_DEFAULT_VAR}")
                 print("\nConfigurazioni disponibili:")
                 list_available()
                 sys.exit(1)
         else:
-            print(f"❌ Nessuna configurazione specificata.")
+            print(f"[ERROR] Nessuna configurazione specificata.")
             list_available()
             sys.exit(1)
     
     try:
         entry = resolve_config_entry(config_name)
-        print(f"📁 Config: {entry.path}")
-        print(f"📂 Working dir: {get_project_root()}")
+        print(f"[Config] Config: {entry.path}")
+        print(f"[Dir] Working dir: {get_project_root()}")
     except FileNotFoundError as e:
-        print(f"❌ {e}")
+        print(f"[ERROR] {e}")
         if suggestions := suggest_names(config_name):
             print("\nForse intendevi:")
             for s in suggestions:
@@ -345,7 +345,7 @@ def resolve_config(
     
     if args and args.dry_run:
         print_config_details(entry)
-        print("\n✅ Config validata con successo (dry-run).")
+        print("\n[OK] Config validata con successo (dry-run).")
         sys.exit(0)
     
     return loaded_config
@@ -382,7 +382,7 @@ def shutdown_threads(
         try:
             monitor.stop()
         except Exception as e:
-            print(f"  ⚠️  Errore stop monitor: {e}")
+            print(f"  [WARN]  Errore stop monitor: {e}")
     
     # Stop threads
     for t in threads:
@@ -390,7 +390,7 @@ def shutdown_threads(
             try:
                 t.stop()
             except Exception as e:
-                print(f"  ⚠️  Errore stop thread {t}: {e}")
+                print(f"  [WARN]  Errore stop thread {t}: {e}")
     
     # Join threads
     all_threads = threads + ([monitor] if monitor else [])
@@ -399,9 +399,9 @@ def shutdown_threads(
             try:
                 t.join(timeout=timeout)
             except Exception as e:
-                print(f"  ⚠️  Errore join thread {t}: {e}")
+                print(f"  [WARN]  Errore join thread {t}: {e}")
     
-    print("✅ Shutdown completato.")
+    print("[OK] Shutdown completato.")
 
 
 # =============================================================================
@@ -484,7 +484,7 @@ class BaseRunner:
         try:
             self.run()
         except KeyboardInterrupt:
-            print("\n⚠️  Interruzione manuale.")
+            print("\n[WARN]  Interruzione manuale.")
         except Exception as e:
             self.logger.exception(f"Errore fatale: {e}")
             raise
