@@ -697,7 +697,9 @@ class ColumnChooserDialog(QDialog):
 
         layout = QVBoxLayout(self)
 
-        layout.addWidget(QLabel("Select columns to display:"))
+        layout.addWidget(QLabel(
+            "Select columns to display. Drag items to reorder."
+        ))
 
         btn_layout = QHBoxLayout()
         select_all_btn = QPushButton("Select All")
@@ -711,12 +713,17 @@ class ColumnChooserDialog(QDialog):
         layout.addLayout(btn_layout)
 
         self.list_widget = QListWidget()
+        self.list_widget.setDragDropMode(QListWidget.InternalMove)
+        self.list_widget.setDefaultDropAction(Qt.MoveAction)
 
-        for col in available_columns:
+        # Mostra prima le colonne selezionate (nell'ordine corrente), poi le restanti
+        selected_set = set(selected_columns)
+        ordered = list(selected_columns) + [c for c in available_columns if c not in selected_set]
+        for col in ordered:
             item = QListWidgetItem(col)
-            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+            item.setFlags(item.flags() | Qt.ItemIsUserCheckable | Qt.ItemIsDragEnabled | Qt.ItemIsDropEnabled)
             item.setCheckState(
-                Qt.Checked if col in selected_columns else Qt.Unchecked
+                Qt.Checked if col in selected_set else Qt.Unchecked
             )
             self.list_widget.addItem(item)
 

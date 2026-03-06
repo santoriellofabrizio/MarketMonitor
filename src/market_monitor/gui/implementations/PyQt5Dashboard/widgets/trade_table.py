@@ -153,6 +153,8 @@ class TradeTableWidget(QWidget):
 
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.Interactive)
+        header.setSectionsMovable(True)
+        header.sectionMoved.connect(self._on_section_moved)
         header.setContextMenuPolicy(Qt.CustomContextMenu)
         header.customContextMenuRequested.connect(
             self._show_header_context_menu
@@ -165,6 +167,20 @@ class TradeTableWidget(QWidget):
         )
 
         layout.addWidget(self.table)
+
+    # ==========================================================
+    # COLUMN REORDER (header drag)
+    # ==========================================================
+    def _on_section_moved(self, logical: int, old_visual: int, new_visual: int):
+        """Aggiorna visible_columns quando l'utente trascina un'intestazione di colonna."""
+        header = self.table.horizontalHeader()
+        n = self.table.columnCount()
+        new_order = [
+            self.table.horizontalHeaderItem(header.logicalIndex(vi)).text()
+            for vi in range(n)
+        ]
+        self.visible_columns = new_order
+        self._refresh_view()
 
     # ==========================================================
     # HEADER CONTEXT MENU
