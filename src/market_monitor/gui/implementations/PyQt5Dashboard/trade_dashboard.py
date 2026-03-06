@@ -32,7 +32,8 @@ from market_monitor.gui.implementations.PyQt5Dashboard.dashboard_extension impor
 from market_monitor.gui.implementations.PyQt5Dashboard.detached_windows import (
     DetachedPivotWindow,
     DetachedChartWindow,
-    DetachedFlowWindow
+    DetachedFlowWindow,
+    DetachedGroupByWindow,
 )
 from market_monitor.gui.implementations.PyQt5Dashboard.widgets.dashboard_state import DashboardState
 from market_monitor.gui.implementations.PyQt5Dashboard.widgets.trade_table import TradeTableWidget
@@ -103,11 +104,15 @@ class TradeDashboard(BasePyQt5Dashboard, TradeDashboardExtensions):
         
         self.metric_labels = {}
 
+        # ===== CAMPI CALCOLATI =====
+        self.calculated_fields: Dict[str, str] = {}  # {'margin': 'spread_pl / ctv'}
+
         # ===== DETACHED WINDOWS =====
         self.detached_pivots = []
         self.detached_charts = []
         self.detached_flows = []
-        self.trade_history_windows = []  # ✅ AGGIUNGI QUESTA RIGA
+        self.detached_groupbys = []
+        self.trade_history_windows = []
 
         super().__init__(
             datasource=datasource,
@@ -211,6 +216,10 @@ class TradeDashboard(BasePyQt5Dashboard, TradeDashboardExtensions):
         detach_flow_btn.clicked.connect(self._create_detached_flow)
         layout.addWidget(detach_flow_btn)
 
+        detach_groupby_btn = QPushButton("🪟 New GroupBy Window")
+        detach_groupby_btn.clicked.connect(self._create_detached_groupby)
+        layout.addWidget(detach_groupby_btn)
+
         layout.addStretch()
         return controls
 
@@ -275,10 +284,12 @@ class TradeDashboard(BasePyQt5Dashboard, TradeDashboardExtensions):
                         ts_types = self.all_trades['timestamp'].apply(type).value_counts()
                         self.logger.error(f"Timestamp types: {ts_types.to_dict()}")
 
-        self.trade_table.update_data(self.all_trades)
+        enriched = self._get_enriched_trades()
+        self.trade_table.update_data(enriched)
         self._update_metrics()
-        self._update_all_detached_pivots(self.all_trades)
-        self._update_all_detached_charts(self.all_trades)
+        self._update_all_detached_pivots(enriched)
+        self._update_all_detached_charts(enriched)
+        self._update_all_detached_groupbys(enriched)
 
     def _on_filtered_data_changed(self, filtered_df: pd.DataFrame):
         """Callback su cambio filtri tabella."""
@@ -402,6 +413,10 @@ class TradeDashboard(BasePyQt5Dashboard, TradeDashboardExtensions):
         for flow_window in self.detached_flows:
             if not flow_window.isHidden():
                 flow_window.clear_all()
+
+        for groupby_window in self.detached_groupbys:
+            if not groupby_window.isHidden():
+                groupby_window.clear_data()
 
         # Reset metriche
         if self.metrics_enabled:
@@ -529,6 +544,36 @@ class TradeDashboard(BasePyQt5Dashboard, TradeDashboardExtensions):
         group.setLayout(layout)
         return group
 
+    def _get_enriched_trades(self) -> pd.DataFrame:
+        """Ritorna all_trades arricchito con i campi calcolati definiti dall'utente."""
+        if self.all_trades.empty or not self.calculated_fields:
+            return self.all_trades
+
+        df = self.all_trades.copy()
+        for name, expr in self.calculated_fields.items():
+            try:
+                df[name] = df.eval(expr)
+            except Exception as e:
+                self.logger.warning(f"[CalcField] '{name}' error: {e}")
+        return df
+
+    def _create_detached_groupby(self):
+        """Crea una nuova finestra GroupBy detached."""
+        window = DetachedGroupByWindow(
+            self._get_enriched_trades(),
+            len(self.detached_groupbys) + 1,
+            self
+        )
+        self.detached_groupbys.append(window)
+        window.show()
+        self.logger.info(f"Created detached groupby window #{len(self.detached_groupbys)}")
+
+    def _update_all_detached_groupbys(self, data: pd.DataFrame):
+        """Aggiorna tutte le finestre GroupBy."""
+        for window in self.detached_groupbys:
+            if not window.isHidden():
+                window.update_source_data(data)
+
     def _update_all_detached_pivots(self, data: pd.DataFrame):
         """Aggiorna tutte le finestre Pivot."""
         for window in self.detached_pivots:
@@ -630,7 +675,8 @@ class TradeDashboard(BasePyQt5Dashboard, TradeDashboardExtensions):
         for window in (
             self.detached_pivots +
             self.detached_charts +
-            self.detached_flows
+            self.detached_flows +
+            self.detached_groupbys
         ):
             window.close()
 

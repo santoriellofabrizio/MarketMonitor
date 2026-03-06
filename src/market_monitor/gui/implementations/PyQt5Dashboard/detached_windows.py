@@ -5,6 +5,7 @@ from PyQt5.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QLabel, QMessageB
 from market_monitor.gui.implementations.PyQt5Dashboard.widgets.chart_widget import ChartWidget
 from market_monitor.gui.implementations.PyQt5Dashboard.widgets.flow_monitor_widget import FlowMonitorWidget
 from market_monitor.gui.implementations.PyQt5Dashboard.widgets.pivot_table import PivotTableWidget
+from market_monitor.gui.implementations.PyQt5Dashboard.widgets.groupby_widget import GroupByWidget
 
 
 class DetachedPivotWindow(QMainWindow):
@@ -122,3 +123,40 @@ class DetachedFlowWindow(QMainWindow):
         """Pulisce tutti i flow"""
         self.flow_widget.clear_all()
         self.info_label.setText(f"Flow Monitor #{self.window_number} | Flows: 0")
+
+
+class DetachedGroupByWindow(QMainWindow):
+    """Finestra separata per GroupBy multi-colonna con aggregazioni."""
+
+    def __init__(self, source_data, window_number, parent=None):
+        super().__init__(parent)
+        self.window_number = window_number
+        self.setWindowTitle(f"GroupBy #{window_number}")
+        self.setGeometry(250 + (window_number * 30), 250 + (window_number * 30), 900, 600)
+
+        central = QWidget()
+        self.setCentralWidget(central)
+        layout = QVBoxLayout(central)
+
+        self.info_label = QLabel(f"GroupBy Window #{window_number}")
+        self.info_label.setStyleSheet("font-weight: bold; padding: 5px; background-color: #e8f5e9;")
+        layout.addWidget(self.info_label)
+
+        self.groupby_widget = GroupByWidget()
+        if not isinstance(source_data, pd.DataFrame) or not source_data.empty:
+            if isinstance(source_data, pd.DataFrame):
+                self.groupby_widget.set_source_data(source_data)
+        layout.addWidget(self.groupby_widget)
+
+    def update_source_data(self, data: pd.DataFrame):
+        """Aggiorna i dati sorgente (già arricchiti con campi calcolati)."""
+        self.groupby_widget.set_source_data(data)
+        self.info_label.setText(
+            f"GroupBy Window #{self.window_number} | "
+            f"Source rows: {len(data)}"
+        )
+
+    def clear_data(self):
+        """Pulisce i dati."""
+        self.groupby_widget.clear_groupby()
+        self.groupby_widget.source_data = pd.DataFrame()
