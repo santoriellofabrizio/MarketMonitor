@@ -1,11 +1,10 @@
-import logging
+
 import os
 import sqlite3
 import time as sleep_time
 
 from collections import deque
 from datetime import datetime, time, date
-from typing import Optional, Set
 import numpy as np
 import pandas as pd
 from dateutil.utils import today

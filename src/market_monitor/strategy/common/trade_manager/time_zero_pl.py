@@ -1,15 +1,18 @@
 import datetime
 import logging
 import threading
+from locale import currency
+
 import pandas as pd
-from market_monitor.strategy.common.trade_manager.trade_templates import AbstractTrade, TradeStorage
+from market_monitor.strategy.common.trade_manager.trade_templates import AbstractTrade, TradeStorage, Trade
 
 logger = logging.getLogger(__name__)
 
 
 class TimeZeroPLManager(threading.Thread):
 
-    def __init__(self, trade_storage: TradeStorage,
+    def __init__(self,
+                 trade_storage: TradeStorage,
                  mid_price_storage: pd.Series,
                  model_price: pd.Series | None = None,
                  time_zero_lag: float = 10.):
@@ -147,7 +150,7 @@ class TimeZeroPLManager(threading.Thread):
         logger.debug(f"[CALC_START] Inizio calcolo PL per trade {trade.trade_index}")
 
         # Recupero mid price
-        mid_price, time_snip = self.get_mid(trade.isin)
+        mid_price, time_snip = self.get_mid(trade)
 
         if mid_price is not None:
             logger.info(
@@ -189,49 +192,31 @@ class TimeZeroPLManager(threading.Thread):
                     f"impossibile calcolare model PL"
                 )
 
-    def get_mid(self, isin: str):
-        """
-        Recupera il prezzo di riferimento (mid price) per l'ISIN specificato.
-
-        Restituisce:
-        - (mid_price, time_snip): valori trovati
-        - (None, None): ISIN non trovato o storage vuoto
-        """
+    def get_mid(self, trade: Trade):
         try:
-            if not len(self.mid_price_storage):
-                logger.debug(f"[GET_MID] Storage vuoto per ISIN {isin}")
+            if not self.mid_price_storage:
+                logger.debug(f"[GET_MID] Storage vuoto per ISIN {trade.isin}")
                 return None, None
 
-            time_snip, storage = self.mid_price_storage[-1]
+            time_snip, snapshot = self.mid_price_storage[-1]
 
-            if isin not in storage:
-                logger.debug(f"[GET_MID] ISIN {isin} non presente nel book corrente")
+            mid_entry = snapshot.get(trade.isin)
+            if mid_entry is None:
+                logger.debug(f"[GET_MID] ISIN {trade.isin} non presente nel book corrente")
                 return None, None
 
-            mid_price = storage[isin]
+            mid_price = mid_entry.get(currency=trade.currency, market=trade.market)
 
             if mid_price is None or mid_price <= 0:
                 logger.warning(
-                    f"[GET_MID] Mid price non valido | "
-                    f"isin={isin} | "
-                    f"price={mid_price} | "
-                    f"time={time_snip}"
-                )
+                    f"[GET_MID] Mid price non valido | isin={trade.isin} | price={mid_price} | time={time_snip}")
                 return None, None
 
-            logger.debug(f"[GET_MID] isin={isin} | mid={mid_price} | time={time_snip}")
+            logger.debug(f"[GET_MID] isin={trade.isin} | mid={mid_price} | time={time_snip}")
             return mid_price, time_snip
 
-        except KeyError as e:
-            logger.debug(f"[GET_MID] KeyError per ISIN {isin}: {str(e)}")
-            return None, None
         except Exception as e:
-            logger.error(
-                f"[GET_MID] Eccezione inaspettata | "
-                f"isin={isin} | "
-                f"error={str(e)}",
-                exc_info=e
-            )
+            logger.error(f"[GET_MID] Eccezione inaspettata | isin={trade.isin} | error={str(e)}", exc_info=e)
             return None, None
 
     def get_model_price(self, isin: str):

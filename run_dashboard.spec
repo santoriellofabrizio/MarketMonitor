@@ -262,7 +262,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=None,  # Aggiungi un .ico se vuoi
+    icon=r'C:\AFMachineLearning\Libraries\MarketMonitor\build\tradingDashboardIcon.ico',
 )
 
 # COLLECT non serve in modalità onefile

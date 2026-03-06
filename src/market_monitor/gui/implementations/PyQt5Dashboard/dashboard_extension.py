@@ -9,7 +9,7 @@ from PyQt5.QtWidgets import (QMenu, QAction, QDialog, QVBoxLayout, QHBoxLayout,
                              QListWidget, QPushButton, QGroupBox, QMessageBox,
                              QInputDialog, QFileDialog, QListWidgetItem,
                              QTableWidget, QTableWidgetItem, QHeaderView,
-                             QAbstractItemView)
+                             QAbstractItemView, QFormLayout)
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QKeySequence, QIcon
 from pathlib import Path

@@ -10,9 +10,10 @@ import itertools
 
 
 class AbstractTrade:
-    _id_generator = itertools.count(start=0)
+    _id_generator = itertools.count(start=1)
 
-    def __init__(self, ticker, isin, timestamp, quantity, price, market=None, currency=None, price_multiplier=1):
+    def __init__(self, ticker, isin, timestamp, quantity, price, market=None, currency=None, price_multiplier=1,
+                 **extra):
         self.trade_index: int = next(self._id_generator)
         self.ticker: str = ticker
         self.isin: str = isin
@@ -30,6 +31,7 @@ class AbstractTrade:
         self.lagged_spread_pl_model: float | None = None
         self.own_trade: bool | None = None
         self.is_elaborated: bool = False
+        self.extra: dict = extra or {}
 
     def is_my_trade(self):
         return self.own_trade
@@ -42,21 +44,21 @@ class AbstractTrade:
         # Se timestamp è naive, assumilo UTC
         ts = self.timestamp
         if isinstance(ts, int):
-            ts = datetime.datetime.fromtimestamp(ts/ 1_000_000_000)
+            ts = datetime.datetime.fromtimestamp(ts / 1_000_000_000)
         return (now - ts).total_seconds()
 
 
 class MyTrade(AbstractTrade):
 
-    def __init__(self, ticker, isin, timestamp, quantity, price, market, currency, side, price_multiplier):
-        super().__init__(ticker, isin, timestamp, quantity, price, market, currency, price_multiplier)
+    def __init__(self, ticker, isin, timestamp, quantity, price, market, currency, side, price_multiplier, **extra):
+        super().__init__(ticker, isin, timestamp, quantity, price, market, currency, price_multiplier, **extra)
         self.side = side
         self.own_trade = True
 
 
 class Trade(AbstractTrade):
-    def __init__(self, ticker, isin, timestamp, quantity, price, market, currency, price_multiplier):
-        super().__init__(ticker, isin, timestamp, quantity, price, market, currency, price_multiplier)
+    def __init__(self, ticker, isin, timestamp, quantity, price, market, currency, price_multiplier, **extra):
+        super().__init__(ticker, isin, timestamp, quantity, price, market, currency, price_multiplier, **extra)
         self.own_trade = False
 
 
@@ -67,22 +69,28 @@ class TradeFactory:
 
     @staticmethod
     def build_trades_obj(trades: pd.DataFrame):
+        known_cols = {'own_trade', 'isin', 'last_update', 'quantity', 'price', 'market', 'currency', 'price_multiplier'}
+        extra_cols = [c for c in trades.columns if c not in known_cols]
+
         for row in trades.itertuples():
             ticker = row.Index
+            extra = {col: getattr(row, col, None) for col in extra_cols}
             if row.own_trade != 0:
                 side = 'bid' if row.own_trade == 1 else 'ask'
-                yield MyTrade(ticker, row.isin, row.last_update, row.quantity, row.price, row.market, row.currency,
-                              side, getattr(row, "price_multiplier", 1))
+                yield MyTrade(ticker, row.isin, row.last_update, row.quantity, row.price,
+                              row.market, row.currency, side,
+                              getattr(row, "price_multiplier", 1), **extra)
             else:
-                yield Trade(ticker, row.isin, row.last_update, row.quantity, row.price, row.market, row.currency,
-                            getattr(row, "price_multiplier", 1))
+                yield Trade(ticker, row.isin, row.last_update, row.quantity, row.price,
+                            row.market, row.currency,
+                            getattr(row, "price_multiplier", 1), **extra)
 
 
 class TradeStorage:
 
     def __init__(self):
         self.lock = threading.Lock()
-        self._storage = []  # Contiene tutti i trades
+        self._storage = {}  # Contiene tutti i trades
         self.trade_to_elaborate = queue.Queue()  # Coda dei trades da elaborare
         self._my_trades_indexes = []
 
@@ -91,6 +99,9 @@ class TradeStorage:
             if n is None:
                 return self._storage
             else:
+                if isinstance(self._storage, dict):
+                    storage = [*self._storage.values()]
+                    return storage[-n:] if len(storage) > n else storage
                 return self._storage[-n:] if len(self._storage) > n else self._storage
 
     def add_trade(self, trade: AbstractTrade):
@@ -99,11 +110,8 @@ class TradeStorage:
                 if trade.is_my_trade():
                     self._my_trades_indexes.append(trade.trade_index)
                 self.trade_to_elaborate.put(trade.trade_index)
-            self._storage.append(trade)
+            self._storage[trade.trade_index] = trade
 
-
-    def append(self, value):
-        self._storage.append(value)
 
     def get_trade_index_to_elaborate(self, timeout=None):
         """

@@ -5,11 +5,13 @@ trade_manager ottimizzato con miglioramenti chiave.
 import datetime
 import logging
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple, Union
 from threading import RLock
 
+import numpy as np
 import pandas as pd
 
+from market_monitor.strategy.common.trade_manager.book_memory import FairvaluePrice
 from market_monitor.strategy.common.trade_manager.time_zero_pl import TimeZeroPLManager
 from market_monitor.strategy.common.trade_manager.trade_templates import TradeStorage, TradeFactory, Trade, MyTrade
 
@@ -108,7 +110,7 @@ class TradeManager:
                     snapshot = self.book_storage.get_last_before(trade.timestamp)
                     if snapshot:
                         _, mid_prices = snapshot
-                        mid = mid_prices.get(trade.isin)
+                        mid = self._get_mid_by_snapshot(snapshot, trade)
                         if mid is not None:
                             trade.spread_pl = self.time_zero_pl_manager.calculate_time_zero_pl(
                                 trade, mid
@@ -163,9 +165,9 @@ class TradeManager:
 
         if snapshot:
             snapshot_time, mid_prices = snapshot
-            mid = mid_prices.get(trade.isin)
+            mid = self._get_mid_by_snapshot(snapshot, trade)
             logger.info(f"matched side: snapshot time: {snapshot_time}, trade_time: {trade.timestamp}")
-            if mid is not None:
+            if mid is not None and not np.isnan(mid):
                 trade.side = "bid" if trade.price < mid else "ask"
 
     # ========================================================================
@@ -173,6 +175,16 @@ class TradeManager:
     # ========================================================================
 
     from datetime import datetime
+
+    @staticmethod
+    def _get_mid_by_snapshot(snapshot: tuple, trade: Trade) -> float | None:
+        snapshot_time, mid_prices = snapshot
+        entry = mid_prices.get(trade.isin)
+        if entry is None:
+            return None
+        if isinstance(entry, FairvaluePrice):
+            return entry.get(currency=trade.currency, market=trade.market)
+        return entry  # backward compat: float grezzo
 
     def get_trades(
             self, n_seconds: int | None = None, n_of_trades: int | None = None, use_cache: bool = True
@@ -348,7 +360,7 @@ class TradeManager:
         """Append semplificato che funziona sempre."""
         filepath = self._get_today_filename()
 
-        all_trades = self.trade_storage.get_last_trades()
+        all_trades = [*self.trade_storage.get_last_trades().values()]
         new_trades = all_trades[self._last_saved_index:]
 
         if not new_trades:
@@ -453,7 +465,7 @@ class TradeManager:
 
                 if trade:
                     with self.trade_storage.lock:
-                        self.trade_storage.append(trade)
+                        self.trade_storage.add_trade(trade)
                         if trade.is_my_trade():
                             self._my_trades_index.append(trade.trade_index)
                     loaded_count += 1
@@ -471,7 +483,12 @@ class TradeManager:
         """Ricostruisce Trade object da row."""
 
         try:
+            known_params = {'ticker', 'isin', 'timestamp', 'quantity', 'price', 'market',
+                            'currency', 'price_multiplier', 'side', 'own_trade',
+                            'spread_pl', 'spread_pl_model', 'is_elaborated', 'trade_index', ...}
             trade_dict = row.to_dict()
+            extra = {k: v for k, v in trade_dict.items() if k not in known_params}
+
             TradeClass = MyTrade if trade_dict.get("own_trade", False) else Trade
 
             params = {
@@ -483,6 +500,7 @@ class TradeManager:
                 "market": trade_dict.get("market"),
                 "currency": trade_dict.get("currency"),
                 "price_multiplier": trade_dict.get("price_multiplier", 1),
+                "extra": extra
             }
 
             if TradeClass == MyTrade:
@@ -514,12 +532,17 @@ class TradeManager:
             self._trades_df_cache = None
 
     @staticmethod
-    def _convert_trades_obj_to_df(trades: list) -> pd.DataFrame:
-        """Convert trade objects to DataFrame."""
+    def _convert_trades_obj_to_df(trades: Union[dict, list]) -> pd.DataFrame:
         if not trades:
             return pd.DataFrame()
-        return pd.DataFrame([t.__dict__ for t in trades])
-
+        rows = []
+        if isinstance(trades, dict):
+            trades = [*trades.values()]
+        for t in trades:
+            d = {k: v for k, v in t.__dict__.items() if k != 'extra'}
+            d.update(t.extra)  # flatten
+            rows.append(d)
+        return pd.DataFrame(rows)
     # ========================================================================
     # CLEANUP
     # ========================================================================
