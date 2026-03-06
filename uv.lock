@@ -280,6 +280,7 @@ dependencies = [
     { name = "joblib", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "matplotlib", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "openpyxl", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "pika", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "pyarrow", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "pyqt5", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "questionary", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -315,6 +316,7 @@ requires-dist = [
     { name = "joblib", specifier = ">=1.3.0" },
     { name = "matplotlib", specifier = ">=3.9.0" },
     { name = "openpyxl", specifier = ">=3.1.2" },
+    { name = "pika", specifier = ">=1.3.2" },
     { name = "pyarrow", specifier = ">=14.0.0" },
     { name = "pyqt5", specifier = ">=5.15.11" },
     { name = "questionary", specifier = ">=2.0.0" },
@@ -438,6 +440,14 @@ version = "2024.8.26"
 source = { registry = '\\nas1bes\AreaFinanza/SHARE/PROGETTI ML/Python/python3_11/python packages' }
 wheels = [
     { path = "pefile-2024.8.26-py3-none-any.whl" },
+]
+
+[[package]]
+name = "pika"
+version = "1.3.2"
+source = { registry = '\\nas1bes\AreaFinanza/SHARE/PROGETTI ML/Python/python3_11/python packages' }
+wheels = [
+    { path = "pika-1.3.2-py3-none-any.whl" },
 ]
 
 [[package]]
@@ -757,7 +767,7 @@ wheels = [
 
 [[package]]
 name = "sfm-datalibrary"
-version = "1.0.76723"
+version = "1.0.77543"
 source = { registry = '\\nas1bes\AreaFinanza/SHARE/PROGETTI ML/Python/python3_11/python packages' }
 dependencies = [
     { name = "blpapi", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -773,7 +783,7 @@ dependencies = [
     { name = "sfm-utilities", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
 wheels = [
-    { path = "sfm_datalibrary-1.0.76723-py3-none-any.whl" },
+    { path = "sfm_datalibrary-1.0.77543-py3-none-any.whl" },
 ]
 
 [[package]]

@@ -360,7 +360,7 @@ class TradeManager:
         """Append semplificato che funziona sempre."""
         filepath = self._get_today_filename()
 
-        all_trades = self.trade_storage.get_last_trades()
+        all_trades = [*self.trade_storage.get_last_trades().values()]
         new_trades = all_trades[self._last_saved_index:]
 
         if not new_trades:
@@ -483,7 +483,12 @@ class TradeManager:
         """Ricostruisce Trade object da row."""
 
         try:
+            known_params = {'ticker', 'isin', 'timestamp', 'quantity', 'price', 'market',
+                            'currency', 'price_multiplier', 'side', 'own_trade',
+                            'spread_pl', 'spread_pl_model', 'is_elaborated', 'trade_index', ...}
             trade_dict = row.to_dict()
+            extra = {k: v for k, v in trade_dict.items() if k not in known_params}
+
             TradeClass = MyTrade if trade_dict.get("own_trade", False) else Trade
 
             params = {
@@ -495,6 +500,7 @@ class TradeManager:
                 "market": trade_dict.get("market"),
                 "currency": trade_dict.get("currency"),
                 "price_multiplier": trade_dict.get("price_multiplier", 1),
+                "extra": extra
             }
 
             if TradeClass == MyTrade:
@@ -527,11 +533,14 @@ class TradeManager:
 
     @staticmethod
     def _convert_trades_obj_to_df(trades: list) -> pd.DataFrame:
-        """Convert trade objects to DataFrame."""
         if not trades:
             return pd.DataFrame()
-        return pd.DataFrame([t.__dict__ for t in trades])
-
+        rows = []
+        for t in trades:
+            d = {k: v for k, v in t.__dict__.items() if k != 'extra'}
+            d.update(t.extra)  # flatten
+            rows.append(d)
+        return pd.DataFrame(rows)
     # ========================================================================
     # CLEANUP
     # ========================================================================

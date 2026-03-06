@@ -5,6 +5,7 @@ ESEMPIO COMPLETO DI TEST DEL NUOVO SISTEMA
 import time
 import threading
 import logging
+from typing import Protocol
 
 from market_monitor.input_threads.bloomberg import BloombergStreamingThread
 from market_monitor.input_threads.event_handler.BBGEventHandler import BBGEventHandler

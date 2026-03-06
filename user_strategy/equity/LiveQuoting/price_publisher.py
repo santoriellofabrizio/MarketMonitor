@@ -119,7 +119,7 @@ class PricePublisherHub:
         """Low-frequency update: publish intraday returns."""
         fx = mid_eur[currencies]
         etfs = mid_eur[all_securities]
-        intraday_adjuster.append_update(prices=etfs, fx_prices=fx)
+        intraday_adjuster.appendupdate(prices=etfs, fx_prices=fx)
         intraday_returns = intraday_adjuster.get_clean_returns()
 
         intraday_returns.index = intraday_returns.index.floor('min')

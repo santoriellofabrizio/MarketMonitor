@@ -827,7 +827,7 @@ class StrategyControlPanel(QMainWindow):
         )
         return f'<span style="color:{color};">{escaped}</span>'
 
-    def _append_html_line(self, edit: QTextEdit, html: str) -> None:
+    def _appendhtml_line(self, edit: QTextEdit, html: str) -> None:
         cursor = edit.textCursor()
         cursor.movePosition(QTextCursor.End)
         if not edit.toPlainText():
@@ -874,12 +874,12 @@ class StrategyControlPanel(QMainWindow):
                 self._log_filters.get("_all", QComboBox()).currentText() if "_all" in self._log_filters else "DEBUG", 0
             )
             if _LEVEL_RANK.get(level, 0) >= min_rank_inst and inst.config_name in self._log_tabs:
-                self._append_html_line(
+                self._appendhtml_line(
                     self._log_tabs[inst.config_name],
                     self._format_log_html(level, f"[{inst.config_name}] {line}"),
                 )
             if _LEVEL_RANK.get(level, 0) >= min_rank_all:
-                self._append_html_line(
+                self._appendhtml_line(
                     self._log_all,
                     self._format_log_html(level, prefixed),
                 )

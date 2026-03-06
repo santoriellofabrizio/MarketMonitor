@@ -5,6 +5,7 @@ from threading import Thread
 from typing import Callable, Dict, Optional
 
 import redis
+from redis import StrictRedis
 
 logger = logging.getLogger(__name__)
 
@@ -26,8 +27,8 @@ class CommandListener:
 
     def __init__(
         self,
-        redis_client: redis.StrictRedis,
         on_command: Callable[[str, dict], None],
+        redis_client: redis.StrictRedis = None,
         channel: str = "engine:commands",
         status_channel: str = "engine:status",
     ):
@@ -38,7 +39,7 @@ class CommandListener:
             channel: Canale Redis su cui ascoltare i comandi
             status_channel: Canale Redis su cui pubblicare lo status
         """
-        self.redis_client = redis_client
+        self.redis_client = redis_client or StrictRedis()
         self.on_command = on_command
         self.channel = channel
         self.status_channel = status_channel

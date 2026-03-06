@@ -138,16 +138,12 @@ class StrategyUIAsync(ABC):
             status_channel: Canale Redis su cui pubblicare lo status
         """
         # Risolvi il redis_client dall'attributo dot-separated
-        redis_client = self
-        for attr in redis_client_attr.split("."):
-            redis_client = getattr(redis_client, attr)
 
         self._command_listener = CommandListener(
-            redis_client=redis_client,
             on_command=self._handle_command,
             channel=channel,
-            status_channel=status_channel,
-        )
+            status_channel=status_channel)
+
         self._command_listener.start()
 
         try:

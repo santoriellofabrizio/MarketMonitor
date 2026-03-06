@@ -22,8 +22,9 @@ class CreditTradeAnalysis(StrategyUI):
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
 
-        self.book_filter = SpreadEWMA(**kwargs.pop("book_filter_params",{}))
-        self.rabbit_trade_dashboard_messaging: RabbitMessaging | None = None
+<<<<<<< .mine        self.book_filter = SpreadEWMA(**kwargs.pop("book_filter_params",{}))
+=======
+>>>>>>> .theirs        self.rabbit_trade_dashboard_messaging: RabbitMessaging | None = None
         self.redis_trade_dashboard_messaging: RedisMessaging | None = None
 
         path_str = kwargs.get("instruments_list_path")
@@ -50,8 +51,9 @@ class CreditTradeAnalysis(StrategyUI):
         self.trade_isin_description_mapping = self.instruments_df["description"].to_dict()
         # -------------------------------------- BOOK & PRICE SECTION --------------------------------------------------
         self.book_storage: BookStorage = BookStorage()
-
-        # -------------------------------------- SETTING INSTRUMENTS ---------------------------------------------------
+<<<<<<< .mine
+=======        self.book_filter = SpreadEWMA(**kwargs.pop("book_filter_params", {}))
+>>>>>>> .theirs        # -------------------------------------- SETTING INSTRUMENTS ---------------------------------------------------
         self.columns_dashboard = kwargs.get("columns_dashboard")
 
         rabbit_cfg = kwargs.get('rabbit_data_export', {})
@@ -76,7 +78,7 @@ class CreditTradeAnalysis(StrategyUI):
                                           **kwargs["trade_manager"])
 
     def wait_for_book_initialization(self):
-        while datetime.today().time() < dt.time(9, 5):
+        while datetime.today().time() < dt.time(8, 50):
             return False
         while True:
             data = self.market_data.get_data_field(field=["BID", "ASK"])
@@ -100,6 +102,7 @@ class CreditTradeAnalysis(StrategyUI):
         last_trades = self.trade_manager.get_trades()
         if not last_trades.empty:
             self.publish_trades_on_dashboard(last_trades)
+
 
     def on_market_data_setting(self) -> None:
         # Subscribe to original channel names with market: prefix
@@ -164,9 +167,6 @@ class CreditTradeAnalysis(StrategyUI):
                                                                  date_format='iso',
                                                                  orient="records")
 
-    def on_book_initialized(self):
-        pass
-
     def get_live_data(self):
         raw = self.market_data.get_data_field(field=["BID", "ASK"])
         if raw is None or raw.empty:
@@ -187,9 +187,11 @@ class CreditTradeAnalysis(StrategyUI):
         grouped: dict[str, dict[str, list]] = {}
         for instrument_id, price in mid.items():
             _, isin = instrument_id.split("_", 1)
-            currency = self.market_data.currency_information.get(isin, "EUR")
-            grouped.setdefault(isin, {}).setdefault(currency, []).append(price)
-
+            currency = self.market_data.currency_information.get(instrument_id, "EUR")
+<<<<<<< .mine            grouped.setdefault(isin, {}).setdefault(currency, []).append(price)
+=======            grouped.setdefault(isin, {})[currency] = price
+        return {isin: FairvaluePrice.by_currency(isin, prices) for isin, prices in grouped.items()}
+>>>>>>> .theirs
         for isin, ccy_prices in grouped.items():
             if isin not in self.mid:
                 self.mid[isin] = FairvaluePrice.by_currency(isin, {})

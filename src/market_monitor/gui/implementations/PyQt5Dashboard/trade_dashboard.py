@@ -254,13 +254,20 @@ class TradeDashboard(BasePyQt5Dashboard, TradeDashboardExtensions):
 
         # FIX 1: Per il display, usa nlargest (O(n)) invece di sort (O(n log n)).
         # Passa solo una slice bounded alla table; all_trades rimane completo per metriche/pivot.
-        max_display = self.config.get('max_display_rows', 5_000)
-        if 'timestamp' in self.all_trades.columns and len(self.all_trades) > max_display:
-            display_df = self.all_trades.nlargest(max_display, 'timestamp')
-        else:
-            display_df = self.all_trades
+        # FIX: Ottieni i record più recenti e assicurati che siano ordinati decrescenti
+        max_display = self.config.get('max_display_rows', 15_000)
 
-        self.trade_table.update_data(display_df)  # slice bounded
+        if 'timestamp' in self.all_trades.columns:
+            # nlargest estrae i top N valori, ma l'ordine interno non è garantito
+            # come "strettamente decrescente" in alcune versioni di pandas.
+            # Per sicurezza e chiarezza, facciamo uno slice ordinato.
+            display_df = self.all_trades.sort_values('timestamp', ascending=False)
+        else:
+            # Fallback se non c'è timestamp (usa l'ordine di inserimento)
+            display_df = self.all_trades.tail(max_display).iloc[::-1]
+
+        # Ora display_df ha il più recente in posizione 0
+        self.trade_table.update_data(display_df) # slice bounded
         self._update_metrics()  # usa all_trades completo
         self._update_all_detached_pivots(self.all_trades)  # storico completo
         self._update_all_detached_charts(self.all_trades)  # storico completo

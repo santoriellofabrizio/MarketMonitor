@@ -13,7 +13,7 @@ market_monitor:
 
   path_db: V:\EquityETF\etf_equity_anagraphic_db.sqlite
   pricing:
-    driver:
+    cluster:
       forecast_aggregation: ewma_outlier
       trimmed_mean:
         perc_outlier: 0.3
@@ -107,7 +107,7 @@ market_monitor:
       frequency: 0.5
     update_LF:
       activate: true
-      frequency: 900
+      frequency: 300
     trade:
       activate: false
       synchronous: false

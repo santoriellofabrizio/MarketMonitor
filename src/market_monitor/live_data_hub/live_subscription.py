@@ -252,7 +252,7 @@ class KafkaSubscription(LiveSubscription):
             value = self._get_nested_value(message, source_path)
             if value is not None:
                 try:
-                    result[target_field] = float(value)
+                    result[target_field] = value
                 except (ValueError, TypeError):
                     pass  # Skip non-numeric values
         

@@ -1,4 +1,5 @@
 [console_scripts]
+run-control-panel = market_monitor.entry.run_control_panel:main
 run-dashboard = market_monitor.entry.run_dashboard:main
 run-mock = market_monitor.entry.run_mock:main
 run-strategy = market_monitor.entry.run_strategy:main

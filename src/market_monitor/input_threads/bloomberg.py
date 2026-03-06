@@ -74,10 +74,6 @@ class BloombergStreamingThread(threading.Thread):
         pending = self.subscription_service.get_pending_subscriptions("bloomberg")
         active = self.subscription_service.get_bloomberg_subscription() or {}
 
-        if not pending and not active:
-            logging.error("No subscriptions required in Bloomberg, shutting thread down")
-            return
-
         session_options = SessionOptions()
         session_options.setServerHost(self._host)
         session_options.setServerPort(self._server_port)

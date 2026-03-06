@@ -10,6 +10,7 @@ src/market_monitor.egg-info/requires.txt
 src/market_monitor.egg-info/top_level.txt
 src/market_monitor/entry/__init__.py
 src/market_monitor/entry/_base.py
+src/market_monitor/entry/run_control_panel.py
 src/market_monitor/entry/run_dashboard.py
 src/market_monitor/entry/run_mock.py
 src/market_monitor/entry/run_strategy.py
@@ -33,6 +34,9 @@ src/market_monitor/gui/implementations/PyQt5Dashboard/widgets/flow_monitor_widge
 src/market_monitor/gui/implementations/PyQt5Dashboard/widgets/pivot_table.py
 src/market_monitor/gui/implementations/PyQt5Dashboard/widgets/trade_history_window.py
 src/market_monitor/gui/implementations/PyQt5Dashboard/widgets/trade_table.py
+src/market_monitor/gui/implementations/StrategyControlPanel/__init__.py
+src/market_monitor/gui/implementations/StrategyControlPanel/control_panel.py
+src/market_monitor/gui/implementations/StrategyControlPanel/redis_status_thread.py
 src/market_monitor/gui/threaded_GUI/GUIQueue.py
 src/market_monitor/gui/threaded_GUI/QueueDataSource.py
 src/market_monitor/gui/threaded_GUI/ThreadGUIExcel.py
@@ -75,6 +79,7 @@ src/market_monitor/testing/mock_bloomberg.py
 src/market_monitor/testing/mock_market_trades_viewer.py
 src/market_monitor/testing/test_subscription_lifecycle.py
 src/market_monitor/utils/__init__.py
+src/market_monitor/utils/book_utils.py
 src/market_monitor/utils/command_listener.py
 src/market_monitor/utils/config_helpers.py
 src/market_monitor/utils/config_observer.py

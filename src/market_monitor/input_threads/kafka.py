@@ -135,7 +135,7 @@ class KafkaStreamingThread(threading.Thread):
                     self._subscriptions_by_topic[topic] = []
                 self._subscriptions_by_topic[topic].append(sub)
                 self._topics.add(topic)
-                
+
                 # Build fast ISIN lookup
                 if sub.symbol_filter:
                     self._isin_to_sub[sub.symbol_filter] = sub
@@ -216,12 +216,12 @@ class KafkaStreamingThread(threading.Thread):
                 except Exception as e:
                     logger.debug(f"Failed to deserialize message: {e}")
                     continue
-                
+
                 # FAST PATH: O(1) lookup by ISIN
                 instrument = value.get('instrument')
                 if instrument:
                     subs = self.symbol_filter_by_topic.get(msg.topic())
-                    for k,v in instrument.items():
+                    for k, v in instrument.items():
                         if sub := subs.get(v):
                             self._process_matched_message(sub, value, real_time_data)
 
@@ -256,7 +256,7 @@ class KafkaStreamingThread(threading.Thread):
         try:
             # Extract and route to store
             self._route_to_store(sub, value, real_time_data)
-            
+
             # Mark subscription as received
             self.subscription_service.mark_subscription_received(sub.id, "kafka")
         except Exception as e:
@@ -279,7 +279,7 @@ class KafkaStreamingThread(threading.Thread):
             # Skip se già processato nel fast path
             if sub.symbol_filter:
                 continue
-                
+
             try:
                 if not sub.matches(value):
                     continue
@@ -313,7 +313,7 @@ class KafkaStreamingThread(threading.Thread):
 
             if data:
                 real_time_data.update(id_, data, store="market")
-                real_time_data.set_currency_for_id(id_, value.get("instrument",{}).get("currency"))
+                real_time_data.set_currency_for_id(id_, value.get("instrument", {}).get("currency"))
 
         elif store == "state":
             real_time_data.update(id_, value, store="state")
@@ -324,7 +324,8 @@ class KafkaStreamingThread(threading.Thread):
         elif store == "blob":
             real_time_data._blob_store.store(id_, value)
 
-    def _extract_default_market_fields(self, value: Dict[str, Any]) -> Dict[str, Any]:
+    @staticmethod
+    def _extract_default_market_fields(value: Dict[str, Any]) -> Dict[str, Any]:
         """
         Estrazione di default per formati comuni quando non c'è fields_mapping.
 
@@ -417,7 +418,7 @@ class KafkaTradeStreamingThread(threading.Thread):
     """
 
     DEFAULT_BOOTSTRAP_SERVERS = KafkaStreamingThread.DEFAULT_BOOTSTRAP_SERVERS
-    DEFAULT_SCHEMA_REGISTRY   = KafkaStreamingThread.DEFAULT_SCHEMA_REGISTRY
+    DEFAULT_SCHEMA_REGISTRY = KafkaStreamingThread.DEFAULT_SCHEMA_REGISTRY
 
     def __init__(self,
                  queue: Queue,
@@ -438,21 +439,21 @@ class KafkaTradeStreamingThread(threading.Thread):
         self._subscription_service: SubscriptionService = subscription_service
 
         # Kafka config
-        self.bootstrap_servers   = bootstrap_servers or self.DEFAULT_BOOTSTRAP_SERVERS
+        self.bootstrap_servers = bootstrap_servers or self.DEFAULT_BOOTSTRAP_SERVERS
         self.schema_registry_url = schema_registry_url or self.DEFAULT_SCHEMA_REGISTRY
-        self.start_mode          = start_mode
-        self.consumer_group      = consumer_group or str(uuid.uuid4())
+        self.start_mode = start_mode
+        self.consumer_group = consumer_group or str(uuid.uuid4())
 
         # State
-        self.stop_event        = threading.Event()
-        self.running           = False
-        self.consumer          = None
+        self.stop_event = threading.Event()
+        self.running = False
+        self.consumer = None
         self.avro_deserializer = None
 
         # Subscription indexes (fast O(1) ISIN lookup)
         self._subscriptions_by_topic: Dict[str, List[KafkaSubscription]] = {}
         self._topics: Set[str] = set()
-        self._isin_to_sub: Dict[str, KafkaSubscription] = {}
+        self._isin_to_sub: defaultdict[str, Dict[str, KafkaSubscription]] = defaultdict(dict)
 
         # Deduplication state
         self._buffer_sec: float = buffer_sec
@@ -476,7 +477,7 @@ class KafkaTradeStreamingThread(threading.Thread):
         solo i topic di trade (*.PublicDeal, *.Trade).
         """
         pending = self._subscription_service.get_pending_subscriptions("kafka") or {}
-        active  = self._subscription_service.get_kafka_subscription() or {}
+        active = self._subscription_service.get_kafka_subscription() or {}
         all_subs = {**pending, **active}
 
         self._subscriptions_by_topic.clear()
@@ -492,7 +493,7 @@ class KafkaTradeStreamingThread(threading.Thread):
                 self._subscriptions_by_topic[topic].append(sub)
                 self._topics.add(topic)
                 if sub.symbol_filter:
-                    self._isin_to_sub[sub.symbol_filter] = sub
+                    self._isin_to_sub[topic][sub.symbol_filter] = sub
                 count += 1
 
         logger.info(
@@ -507,8 +508,8 @@ class KafkaTradeStreamingThread(threading.Thread):
             sub.topic
             for sub in pending.values()
             if isinstance(sub, KafkaSubscription)
-            and self._is_trade_topic(sub.topic)
-            and sub.topic not in self._topics
+               and self._is_trade_topic(sub.topic)
+               and sub.topic not in self._topics
         }
         if new_topics:
             logger.info(f"KafkaTradeStreamingThread: new trade topics detected: {new_topics}")
@@ -548,7 +549,7 @@ class KafkaTradeStreamingThread(threading.Thread):
 
         consumer_conf = {
             "bootstrap.servers": self.bootstrap_servers,
-            "group.id":          self.consumer_group,
+            "group.id": self.consumer_group,
             "auto.offset.reset": self.start_mode,
         }
         self.consumer = Consumer(consumer_conf)
@@ -558,10 +559,9 @@ class KafkaTradeStreamingThread(threading.Thread):
         self.running = True
 
         # Cache locals for speed in hot loop
-        isin_to_sub  = self._isin_to_sub
         deserializer = self.avro_deserializer
-        stop_event   = self.stop_event
-        consumer     = self.consumer
+        stop_event = self.stop_event
+        consumer = self.consumer
 
         try:
             while not stop_event.is_set():
@@ -584,6 +584,7 @@ class KafkaTradeStreamingThread(threading.Thread):
                     logger.debug(f"Failed to deserialize trade message: {e}")
                     continue
 
+                isin_to_sub = self._isin_to_sub.get(msg.topic())
                 # FAST PATH: O(1) lookup by ISIN
                 instrument = value.get('instrument')
                 if instrument:
@@ -597,6 +598,12 @@ class KafkaTradeStreamingThread(threading.Thread):
                             except Exception as e:
                                 logger.error(f"Error dispatching trade for {sub.id}: {e}")
                                 self._subscription_service.mark_subscription_failed(sub.id, "kafka", str(e))
+                        else:
+                            topic_subs = self._subscriptions_by_topic.get(msg.topic(), [])
+                            for sub in topic_subs:
+                                if sub.matches(value):
+                                    self._dispatch(sub, value)
+                                    self._subscription_service.mark_subscription_received(sub.id, "kafka")
 
         except Exception as e:
             logger.error(f"Error in KafkaTradeStreamingThread: {e}", exc_info=True)
@@ -612,11 +619,14 @@ class KafkaTradeStreamingThread(threading.Thread):
 
     def _dispatch(self, sub: KafkaSubscription, value: Dict[str, Any]):
         """Estrae i campi di trade e applica la deduplication, poi mette in queue."""
-        data = self._extract_trade_fields(value)
+        data = self._extract_default_trade_fields(value)
+        if sub.fields_mapping:
+            data.update(sub.extract_fields(value))
         if data:
             self._handle_public_vs_own_deal(data)
 
-    def _extract_trade_fields(self, value: Dict[str, Any]) -> Dict[str, Any]:
+    @staticmethod
+    def _extract_default_trade_fields(value: Dict[str, Any]) -> Dict[str, Any]:
         """
         Estrae il set completo di campi da un messaggio PublicDeal o Trade.
 
@@ -634,16 +644,17 @@ class KafkaTradeStreamingThread(threading.Thread):
             own_trade = 0
 
         return {
-            'ticker':      instrument.get('symbol'),
-            'isin':        instrument.get('isin'),
-            'currency':    instrument.get('currency'),
-            'market':      instrument.get('market'),
-            'exchange':    instrument.get('market'),
+            'ticker': instrument.get('symbol'),
+            'isin': instrument.get('isin'),
+            'currency': instrument.get('currency'),
+            'market': instrument.get('market'),
+            'exchange': instrument.get('market'),
             'description': None,
-            'price':       float(value['price']),
-            'quantity':    float(value['quantity']),
-            'last_update': pd.to_datetime(value['eventTimestampUTC'], utc=True).tz_convert('Europe/Rome').tz_localize(None),
-            'own_trade':   own_trade,
+            'price': float(value['price']),
+            'quantity': float(value['quantity']),
+            'last_update': pd.to_datetime(value['eventTimestampUTC'], utc=True).tz_convert('Europe/Rome').tz_localize(
+                None),
+            'own_trade': own_trade,
         }
 
     # ------------------------------------------------------------------
@@ -693,10 +704,7 @@ class KafkaTradeStreamingThread(threading.Thread):
         )
         is_own = data.get('own_trade', 0) != 0
 
-        df = pd.DataFrame([data])[[
-            'ticker', 'isin', 'currency', 'quantity', 'price',
-            'last_update', 'exchange', 'market', 'description', 'own_trade'
-        ]]
+        df = pd.DataFrame([data])
 
         if is_own:
             self.queue_trade.put((TradeType.OWN, df.set_index("ticker")))
@@ -761,8 +769,8 @@ if __name__ == "__main__":
             symbol_field="instrument.isin",
             store="market",
             fields_mapping={
-                "BID":      "bidBestLevel.price",
-                "ASK":      "askBestLevel.price",
+                "BID": "bidBestLevel.price",
+                "ASK": "askBestLevel.price",
                 "BID_SIZE": "bidBestLevel.quantity",
                 "ASK_SIZE": "askBestLevel.quantity",
             }

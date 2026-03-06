@@ -1,13 +1,11 @@
 load_strategy_info:
-      package_path: C:\AFMachineLearning\Libraries\MarketMonitor\user_strategy\equity\LiveAnalysis
-      module_name: EtfEquityLiveAnalysis
-      class_name: EtfEquityLiveAnalysis
+      package_path: C:\AFMachineLearning\Libraries\MarketMonitor\user_strategy\desk_bond
+      module_name: VTVFutAnalysis
+      class_name: VTVFutAnalysis
 
 
 market_monitor:
 
-  path_db: etc/input/EtfEquityDB.db
-  bloomberg_subscription_config_path: C:\AFMachineLearning\Libraries\MarketMonitor\etc\config\bbg_subscription\config_bloomberg_subscription.yaml
   price_source: "kafka"
 
   rabbit_data_export:
@@ -21,7 +19,7 @@ market_monitor:
       channel_rabbit: trades_rabbit
 
   redis_data_export:
-    channel_redis: trades_redis
+    channel_redis: trades_df
     activate: true       # Impostare false se si usa rabbit_data_distributor
     redis_params:
       redis_host: 'localhost'
@@ -31,8 +29,7 @@ market_monitor:
 
   trade_manager:
     show_my_trades: True
-    output_trade_columns: ["ticker","last_update","price","quantity","ctv","side","own_trade","spread_pl"]
-
+    time_zero_lag: [5, 10, 30, 60]
 
   tasks:
     update_HF:
@@ -45,10 +42,6 @@ market_monitor:
       activate: true
       synchronous: true
       frequency: 1
-
-    command_listener:
-      activate: true
-      frequency: 3
 
 bloomberg_data_distributor:
   activate: true
@@ -64,7 +57,7 @@ kafka_data_distributor:
 
 
 trade_distributor:
-  activate: true
+  activate: false
 #  path: C:\AFMachineLearning\Libraries\MarketMonitor\etc\marketrades.db
   path: "C:\\Users\\gbs09316\\Documents\\marketTradeFolder\\markettrades.db"
 
@@ -75,23 +68,9 @@ redis_data_distributor:
     redis_port: 6379
     redis_db: 0
 
-
 logging:
-  log_level: INFO
+  log_level: DEBUG
   log_level_console: WARNING
-  log_name: LiveAnalysis.log
+  log_name: LiveAnalysisVTV.log
 
-
-control_panel:
-  title: "ETF Equity Trade Analysis"
-  commands:
-    - label: "switch to Bloomberg"
-      action: "switch_to_bloomberg"
-      payload: {}
-      description: "switch from kafka to bloomberg"
-
-    - label: "switch to kafka"
-      action: "switch_to_kafka"
-      payload: {}
-      description: "switch bloomberg kafka to kafka"
 

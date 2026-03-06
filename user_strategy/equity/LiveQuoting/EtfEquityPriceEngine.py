@@ -409,6 +409,9 @@ class EtfEquityPriceEngine(StrategyUI):
         self.publisher.publish_lf_data(
             self.intraday_adjuster, self.mid_eur,
             self.currencies, self.all_etf_plus_securities)
+        mid = self.mid_eur
+        etfs, fx = mid[self.etfs], mid[self.currencies]
+        self.intraday_adjuster.appendupdate(prices=etfs, fx_prices=fx)
 
     # =========================================================================
     # Pricing
@@ -587,13 +590,3 @@ class EtfEquityPriceEngine(StrategyUI):
 
         return cluster_sizes.where(cluster_sizes == 1, (cluster_sizes - 1) / cluster_sizes)
 
-    def get_update_hf_stats(self) -> dict:
-        """Ritorna statistiche dell'ultimo ciclo update_HF."""
-        ts_stats = self.publisher.ts_stats
-        return {
-            "timeseries_created": ts_stats.get("timeseries_created", 0),
-            "total_published": ts_stats.get("total_published", 0),
-            "duplicates_skipped": ts_stats.get("duplicates_skipped", 0),
-            "errors": ts_stats.get("errors", 0),
-            "last_storage_time": self.publisher.last_storage_time.isoformat(),
-        }

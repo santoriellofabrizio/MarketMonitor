@@ -121,7 +121,40 @@ class EtfEquityLiveAnalysis(StrategyUI):
                                                                      "ASK_SIZE": "askBestLevel.quantity"})
         self.subscribe_kafka_trades()
 
+    def from_kafka_to_bloomberg(self):
+
+        if self.price_source == 'kafka':
+            for isin in self.all_isins:
+                self.global_subscription_service.unsubscribe(isin, 'bloomberg')
+                self.global_subscription_service.subscribe_bloomberg(isin, f"{isin} IM EQUITY",
+                                                                     ["BID", "ASK"])
+            self.price_source = 'bloomberg'
+
+        elif self.price_source == 'bloomberg':
+            logging.error(f"bloomberg is already the selected price source")
+        else:
+            logging.warning(f"Price source {self.price_source} not supported.")
+
+    def from_bloomberg_to_kafka(self):
+        if self.price_source == 'bloomberg':
+            for isin in self.all_isins:
+                self.global_subscription_service.unsubscribe(isin, 'bloomberg')
+                self.global_subscription_service.subscribe_kafka(id=isin,
+                                                                 symbol_filter=isin,
+                                                                 topic="COALESCENT_DUMA.ETFP.BookBest",
+                                                                 fields_mapping={
+                                                                     "BID": "bidBestLevel.price",
+                                                                     "ASK": "askBestLevel.price",
+                                                                     "BID_SIZE": "bidBestLevel.quantity",
+                                                                     "ASK_SIZE": "askBestLevel.quantity"})
+            self.price_source = 'kafka'
+        elif self.price_source == 'kafka':
+            logging.error(f"kafka is already the selected price source")
+        else:
+            logging.warning(f"Price source {self.price_source} not supported.")
+
     def subscribe_kafka_trades(self) -> None:
+
         for isin in self.all_isins:
             for mkt in ["ETFP", "XPAR", "XAMS"]:
                 self.global_subscription_service.subscribe_kafka(id=f"{isin}:{mkt}:PublicDeal",
@@ -167,6 +200,13 @@ class EtfEquityLiveAnalysis(StrategyUI):
                                                  value=new_trades,
                                                  date_format='iso',
                                                  orient="records")
+
+    def on_command(self, action: str, payload: dict):
+        logging.warning('command arrived: {}'.format(action))
+        if action == "switch_to_kafka":
+            self.from_bloomberg_to_kafka()
+        elif action == "switch_to_bloomberg":
+            self.from_kafka_to_bloomberg()
 
     def get_live_data(self):
         raw = self.market_data.get_data_field(field=["BID", "ASK"])

@@ -11,7 +11,8 @@ logger = logging.getLogger(__name__)
 
 class TimeZeroPLManager(threading.Thread):
 
-    def __init__(self, trade_storage: TradeStorage,
+    def __init__(self,
+                 trade_storage: TradeStorage,
                  mid_price_storage: pd.Series,
                  model_price: pd.Series | None = None,
                  time_zero_lag: float = 10.):
@@ -217,6 +218,7 @@ class TimeZeroPLManager(threading.Thread):
         except Exception as e:
             logger.error(f"[GET_MID] Eccezione inaspettata | isin={trade.isin} | error={str(e)}", exc_info=e)
             return None, None
+
     def get_model_price(self, isin: str):
         """
         Recupera il model price per l'ISIN specificato.
