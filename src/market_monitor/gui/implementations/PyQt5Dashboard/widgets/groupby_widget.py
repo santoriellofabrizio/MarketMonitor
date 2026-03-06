@@ -127,6 +127,196 @@ class AddValueAggDialog(QDialog):
 
 
 # ---------------------------------------------------------------------------
+# Dialogs: Campi Calcolati sul risultato GroupBy
+# ---------------------------------------------------------------------------
+
+class AddEditGroupByCalcDialog(QDialog):
+    """Dialog per aggiungere o modificare un campo calcolato sul risultato GroupBy."""
+
+    def __init__(self, result_data: pd.DataFrame, name: str = "", expression: str = "", parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("GroupBy Calculated Field")
+        self.setModal(True)
+        self.resize(500, 240)
+        self._result_data = result_data
+        self._setup_ui(name, expression)
+
+    def _setup_ui(self, name: str, expression: str):
+        layout = QVBoxLayout(self)
+
+        # Colonne disponibili
+        if not self._result_data.empty:
+            cols = ", ".join(str(c) for c in self._result_data.columns)
+            hint_text = f"<b>Available columns:</b> {cols}"
+        else:
+            hint_text = "<i>Apply GroupBy first to see available columns.</i>"
+        hint_label = QLabel(hint_text)
+        hint_label.setWordWrap(True)
+        hint_label.setStyleSheet("background: #f5f5f5; padding: 6px; border-radius: 3px; font-size: 11px;")
+        layout.addWidget(hint_label)
+
+        form = QFormLayout()
+        self.name_input = QLineEdit(name)
+        self.name_input.setPlaceholderText("e.g. ratio")
+        form.addRow("Field Name:", self.name_input)
+
+        self.expr_input = QLineEdit(expression)
+        self.expr_input.setPlaceholderText("e.g. sum_ctv / sum_spread")
+        form.addRow("Expression:", self.expr_input)
+        layout.addLayout(form)
+
+        test_row = QHBoxLayout()
+        self.test_btn = QPushButton("Test Expression")
+        self.test_btn.clicked.connect(self._test_expression)
+        test_row.addWidget(self.test_btn)
+        self.test_result_label = QLabel("")
+        self.test_result_label.setWordWrap(True)
+        test_row.addWidget(self.test_result_label, 1)
+        layout.addLayout(test_row)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self._on_accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def _test_expression(self):
+        expr = self.expr_input.text().strip()
+        if not expr:
+            self.test_result_label.setText("⚠️ Empty expression")
+            return
+        if self._result_data.empty:
+            self.test_result_label.setText("⚠️ No GroupBy result to test against")
+            return
+        try:
+            result = self._result_data.eval(expr)
+            preview = str(result.iloc[0]) if len(result) > 0 else "N/A"
+            self.test_result_label.setText(f"✅ OK — first value: {preview}")
+            self.test_result_label.setStyleSheet("color: green;")
+        except Exception as e:
+            self.test_result_label.setText(f"❌ Error: {e}")
+            self.test_result_label.setStyleSheet("color: red;")
+
+    def _on_accept(self):
+        name = self.name_input.text().strip()
+        expr = self.expr_input.text().strip()
+        if not name:
+            QMessageBox.warning(self, "Invalid", "Field name cannot be empty.")
+            return
+        if not name.isidentifier():
+            QMessageBox.warning(self, "Invalid",
+                                "Field name must be a valid Python identifier (letters, numbers, underscore, no spaces).")
+            return
+        if not expr:
+            QMessageBox.warning(self, "Invalid", "Expression cannot be empty.")
+            return
+        self.accept()
+
+    def get_field(self) -> Tuple[str, str]:
+        return self.name_input.text().strip(), self.expr_input.text().strip()
+
+
+class GroupByCalcFieldsDialog(QDialog):
+    """Dialog per gestire i campi calcolati sul risultato del GroupBy."""
+
+    def __init__(self, calc_fields: Dict[str, str], result_data: pd.DataFrame, parent=None):
+        super().__init__(parent)
+        self.calc_fields = calc_fields  # riferimento mutabile
+        self.result_data = result_data
+        self.setWindowTitle("GroupBy Calculated Fields")
+        self.setMinimumWidth(560)
+        self.setMinimumHeight(340)
+        self._setup_ui()
+        self._refresh_table()
+
+    def _setup_ui(self):
+        layout = QVBoxLayout(self)
+
+        layout.addWidget(QLabel(
+            "<b>GroupBy Calculated Fields</b> — Define columns computed from GroupBy result columns.<br>"
+            "Example: <b>ratio = sum_ctv / sum_spread</b>"
+        ))
+
+        self.table = QTableWidget()
+        self.table.setColumnCount(2)
+        self.table.setHorizontalHeaderLabels(["Field Name", "Expression"])
+        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.table.setAlternatingRowColors(True)
+        layout.addWidget(self.table)
+
+        btn_row = QHBoxLayout()
+        add_btn = QPushButton("Add")
+        add_btn.clicked.connect(self._add_field)
+        btn_row.addWidget(add_btn)
+
+        self.edit_btn = QPushButton("Edit")
+        self.edit_btn.clicked.connect(self._edit_field)
+        btn_row.addWidget(self.edit_btn)
+
+        self.remove_btn = QPushButton("Remove")
+        self.remove_btn.clicked.connect(self._remove_field)
+        btn_row.addWidget(self.remove_btn)
+        btn_row.addStretch()
+
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(self.accept)
+        btn_row.addWidget(close_btn)
+        layout.addLayout(btn_row)
+
+    def _refresh_table(self):
+        self.table.setRowCount(len(self.calc_fields))
+        for row, (name, expr) in enumerate(self.calc_fields.items()):
+            self.table.setItem(row, 0, QTableWidgetItem(name))
+            self.table.setItem(row, 1, QTableWidgetItem(expr))
+
+    def _add_field(self):
+        dialog = AddEditGroupByCalcDialog(result_data=self.result_data, parent=self)
+        if dialog.exec_() == QDialog.Accepted:
+            name, expr = dialog.get_field()
+            if name in self.calc_fields:
+                reply = QMessageBox.question(
+                    self, "Overwrite?",
+                    f"Field '{name}' already exists. Overwrite?",
+                    QMessageBox.Yes | QMessageBox.No
+                )
+                if reply != QMessageBox.Yes:
+                    return
+            self.calc_fields[name] = expr
+            self._refresh_table()
+
+    def _edit_field(self):
+        row = self.table.currentRow()
+        if row < 0:
+            return
+        name = list(self.calc_fields.keys())[row]
+        expr = self.calc_fields[name]
+        dialog = AddEditGroupByCalcDialog(result_data=self.result_data, name=name, expression=expr, parent=self)
+        if dialog.exec_() == QDialog.Accepted:
+            new_name, new_expr = dialog.get_field()
+            items = list(self.calc_fields.items())
+            items[row] = (new_name, new_expr)
+            self.calc_fields.clear()
+            self.calc_fields.update(dict(items))
+            self._refresh_table()
+
+    def _remove_field(self):
+        row = self.table.currentRow()
+        if row < 0:
+            return
+        name = list(self.calc_fields.keys())[row]
+        reply = QMessageBox.question(
+            self, "Remove?",
+            f"Remove calculated field '{name}'?",
+            QMessageBox.Yes | QMessageBox.No
+        )
+        if reply == QMessageBox.Yes:
+            del self.calc_fields[name]
+            self._refresh_table()
+
+
+# ---------------------------------------------------------------------------
 # Main Widget
 # ---------------------------------------------------------------------------
 
@@ -171,6 +361,9 @@ class GroupByWidget(QWidget):
 
         # Coppie (colonna, funzione_aggregazione)
         self.value_agg_pairs: List[Tuple[str, str]] = []
+
+        # Campi calcolati sul risultato GroupBy
+        self.groupby_calc_fields: Dict[str, str] = {}
 
         self._setup_ui()
 
@@ -283,7 +476,7 @@ class GroupByWidget(QWidget):
         va_btn_row.addStretch()
         config_layout.addLayout(va_btn_row)
 
-        # Apply / Clear / Export buttons
+        # Apply / Clear / Export / Calc Fields buttons
         btn_layout = QHBoxLayout()
         self.apply_btn = QPushButton("Apply GroupBy")
         self.apply_btn.clicked.connect(self.apply_groupby)
@@ -296,6 +489,12 @@ class GroupByWidget(QWidget):
         self.export_btn = QPushButton("Export Excel")
         self.export_btn.clicked.connect(self._export_excel)
         btn_layout.addWidget(self.export_btn)
+
+        self.calc_fields_btn = QPushButton("∑ Calc Fields")
+        self.calc_fields_btn.setToolTip("Define calculated columns on the GroupBy result")
+        self.calc_fields_btn.clicked.connect(self._open_calc_fields_dialog)
+        btn_layout.addWidget(self.calc_fields_btn)
+
         btn_layout.addStretch()
         config_layout.addLayout(btn_layout)
 
@@ -603,6 +802,9 @@ class GroupByWidget(QWidget):
                 self.settings_container.hide()
                 self.toggle_settings_btn.setText("▶ Show Settings")
 
+        if 'groupby_calc_fields' in config:
+            self.groupby_calc_fields = config['groupby_calc_fields'].copy()
+
         if config.get('current_config'):
             self.current_config = config['current_config']
             self._apply_groupby_from_config(self.current_config)
@@ -674,6 +876,14 @@ class GroupByWidget(QWidget):
             result.columns = new_cols
 
             self.result_data = result
+
+            # Applica campi calcolati sul risultato GroupBy
+            for calc_name, calc_expr in self.groupby_calc_fields.items():
+                try:
+                    self.result_data[calc_name] = self.result_data.eval(calc_expr)
+                except Exception as calc_err:
+                    print(f"[GroupByCalcField] '{calc_name}' error: {calc_err}")
+
             self._populate_table()
             self.groupby_updated.emit(self.result_data)
 
@@ -801,6 +1011,17 @@ class GroupByWidget(QWidget):
             except Exception as e:
                 QMessageBox.warning(self, "Export Error", str(e))
 
+    def _open_calc_fields_dialog(self):
+        dialog = GroupByCalcFieldsDialog(
+            calc_fields=self.groupby_calc_fields,
+            result_data=self.result_data,
+            parent=self
+        )
+        dialog.exec_()
+        # Riapplica groupby per mostrare/aggiornare colonne calcolate
+        if self.current_config:
+            self._apply_groupby_from_config(self.current_config)
+
     # ------------------------------------------------------------------
     # Config persistence
     # ------------------------------------------------------------------
@@ -819,6 +1040,7 @@ class GroupByWidget(QWidget):
             ),
             'column_decimals': self.column_decimals.copy(),
             'quick_time_filter': self.quick_time_filter.currentText(),
+            'groupby_calc_fields': dict(self.groupby_calc_fields),
         }
 
     def restore_config(self, config: dict):
@@ -834,6 +1056,9 @@ class GroupByWidget(QWidget):
                 else:
                     self.settings_container.hide()
                     self.toggle_settings_btn.setText("▶ Show Settings")
+
+            if 'groupby_calc_fields' in config:
+                self.groupby_calc_fields = config['groupby_calc_fields'].copy()
 
             if self.source_data.empty:
                 self._pending_config = config.copy()
