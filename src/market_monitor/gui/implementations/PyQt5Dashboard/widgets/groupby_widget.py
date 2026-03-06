@@ -32,10 +32,72 @@ class NumericTableWidgetItem(QTableWidgetItem):
 # Dialog: seleziona colonna + funzione di aggregazione
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Custom aggregation functions
+# ---------------------------------------------------------------------------
+
+def _agg_sum_abs(x):
+    """Sum of absolute values."""
+    return x.abs().sum()
+
+def _agg_mean_abs(x):
+    """Mean of absolute values."""
+    return x.abs().mean()
+
+def _agg_diff_abs(x):
+    """Mean of absolute consecutive differences (avg step size)."""
+    return x.diff().abs().mean()
+
+def _agg_sum_diff_abs(x):
+    """Sum of absolute consecutive differences (total variation)."""
+    return x.diff().abs().sum()
+
+def _agg_range(x):
+    """Range: max - min."""
+    return x.max() - x.min()
+
+def _agg_variance(x):
+    """Variance."""
+    return x.var()
+
+def _agg_first(x):
+    """First value in group."""
+    return x.iloc[0] if len(x) > 0 else float('nan')
+
+def _agg_last(x):
+    """Last value in group."""
+    return x.iloc[-1] if len(x) > 0 else float('nan')
+
+def _agg_cv(x):
+    """Coefficient of variation (std / mean * 100)."""
+    m = x.mean()
+    return (x.std() / m * 100) if m != 0 else float('nan')
+
+
+# Maps display name -> callable (for custom functions) or str (for pandas builtins)
+CUSTOM_AGG_MAP = {
+    'sum_abs':      _agg_sum_abs,
+    'mean_abs':     _agg_mean_abs,
+    'diff_abs':     _agg_diff_abs,
+    'sum_diff_abs': _agg_sum_diff_abs,
+    'range':        _agg_range,
+    'variance':     _agg_variance,
+    'first':        _agg_first,
+    'last':         _agg_last,
+    'cv%':          _agg_cv,
+}
+
+
 class AddValueAggDialog(QDialog):
     """Dialog per aggiungere una coppia (colonna, aggregazione) al GroupBy."""
 
-    AGG_FUNCTIONS = ['sum', 'mean', 'count', 'min', 'max', 'std', 'median']
+    AGG_FUNCTIONS = [
+        # Standard pandas
+        'sum', 'mean', 'count', 'min', 'max', 'std', 'median',
+        # Custom
+        'sum_abs', 'mean_abs', 'diff_abs', 'sum_diff_abs',
+        'range', 'variance', 'first', 'last', 'cv%',
+    ]
 
     def __init__(self, available_columns: List[str], parent=None):
         super().__init__(parent)
@@ -600,7 +662,11 @@ class GroupByWidget(QWidget):
                 return
 
             # GroupBy multi-aggregazione
-            agg_dict = {col: agg for col, agg in pairs}
+            # Resolve custom function names to callables
+            agg_dict = {
+                col: CUSTOM_AGG_MAP.get(agg, agg)
+                for col, agg in pairs
+            }
             result = filtered.groupby(rows).agg(agg_dict).reset_index()
 
             # Rinomina colonne: col -> agg_col

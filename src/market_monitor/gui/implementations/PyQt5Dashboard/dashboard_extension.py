@@ -7,7 +7,9 @@ import pandas as pd
 from PyQt5.QtWidgets import (QMenu, QAction, QDialog, QVBoxLayout, QHBoxLayout,
                              QLabel, QLineEdit, QTextEdit, QDialogButtonBox,
                              QListWidget, QPushButton, QGroupBox, QMessageBox,
-                             QInputDialog, QFileDialog, QListWidgetItem)
+                             QInputDialog, QFileDialog, QListWidgetItem,
+                             QTableWidget, QTableWidgetItem, QHeaderView,
+                             QAbstractItemView)
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QKeySequence, QIcon
 from pathlib import Path
@@ -744,7 +746,6 @@ class CalculatedFieldsManagerDialog(QDialog):
         self.table = QTableWidget()
         self.table.setColumnCount(2)
         self.table.setHorizontalHeaderLabels(["Field Name", "Expression"])
-        from PyQt5.QtWidgets import QHeaderView, QAbstractItemView
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
         self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
