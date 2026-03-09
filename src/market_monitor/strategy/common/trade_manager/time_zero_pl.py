@@ -44,110 +44,70 @@ class TimeZeroPLManager(threading.Thread):
         self._stop_event.set()  # Sveglia il thread se sta dormendo
 
     def run(self) -> None:
-        logger.info(f"[START] TimeZeroPLThread avviato")
+        logger.info(f"[START] TimeZeroPLThread avviato | horizons={self.time_zero_lags}s")
+        # pending: trade_index → (trade_object, remaining_lags_list)
+        pending: dict[int, tuple[AbstractTrade, list[float]]] = {}
         trades_processed = 0
 
         try:
             while self._is_running:
-                # Use a timeout so the thread can periodically check _is_running
-                # even when no trade arrives (fixes the indefinite-block-on-stop bug)
-                trade_index = self.trade_storage.get_trade_index_to_elaborate(timeout=1.0)
 
-                if trade_index is None:
-                    if not self._is_running:
-                        logger.info(f"[EXIT] Stop signal ricevuto, chiusura thread")
+                # 1. Drain the queue non-blocking — pick up all newly added trades
+                while True:
+                    idx = self.trade_storage.get_trade_index_to_elaborate(timeout=0)
+                    if idx is None:
                         break
-                    logger.debug(f"[WAIT] Nessun trade disponibile, riprovo")
-                    continue
+                    trade = self.trade_storage.get_trades_by_index(idx)
+                    if trade:
+                        pending[idx] = (trade, list(self.time_zero_lags))
+                        logger.info(
+                            f"[ENQUEUE] trade_id={idx} | isin={trade.isin} | "
+                            f"horizons={self.time_zero_lags}s"
+                        )
 
-                trade = self.trade_storage.get_trades_by_index(trade_index)
-                if trade:
-                    logger.debug(f"[FETCH] Trade {trade_index} recuperato dal storage")
-                    if not self.process_trade(trade):
-                        logger.info(f"[EXIT] Stop signal durante process_trade")
-                        break
-                    trades_processed += 1
-                else:
-                    logger.warning(f"[ERROR] Trade index {trade_index} non trovato nel storage")
-                    self._stop_event.wait(0.5)
+                # 2. Check all in-flight trades against current time
+                now = datetime.datetime.now()
+                to_remove: list[int] = []
+
+                for idx, (trade, remaining) in list(pending.items()):
+                    diff = (now - trade.timestamp).total_seconds()
+
+                    # Hard timeout: 4× the longest horizon
+                    if diff > self._max_lag * 4:
+                        logger.info(
+                            f"[TIMEOUT] trade_id={idx} | elapsed={diff:.1f}s | "
+                            f"remaining={remaining} — marked elaborated"
+                        )
+                        self.trade_storage.set_trade_as_elaborated(trade)
+                        to_remove.append(idx)
+                        continue
+
+                    # Fire all horizons whose threshold has been reached
+                    newly_done = [lag for lag in remaining if diff >= lag]
+                    for lag in newly_done:
+                        self._calculate_pl_at_lag(trade, lag)
+                        remaining.remove(lag)
+
+                    # All horizons done
+                    if not remaining:
+                        self.trade_storage.set_trade_as_elaborated(trade)
+                        to_remove.append(idx)
+                        trades_processed += 1
+                        logger.info(f"[DONE] trade_id={idx} | all horizons computed")
+
+                for idx in to_remove:
+                    del pending[idx]
+
+                # 3. Sleep until next tick (wakes immediately if stop() is called)
+                self._stop_event.wait(timeout=0.5)
+
         except Exception as e:
-            logger.exception(f"[CRITICAL] Eccezione non gestita nel thread principale", exc_info=e)
+            logger.exception(f"[CRITICAL] Eccezione nel thread principale", exc_info=e)
         finally:
             logger.info(
                 f"[SHUTDOWN] TimeZeroPLThread chiuso | "
-                f"trades_processed={trades_processed}"
+                f"trades_processed={trades_processed} | pending_at_shutdown={len(pending)}"
             )
-
-    def process_trade(self, trade: AbstractTrade) -> bool:
-        """
-        Elabora un singolo trade calcolando il PL a ciascun orizzonte temporale.
-
-        Restituisce:
-        - True: elaborazione completata normalmente (tutti gli orizzonti raggiunti o timeout)
-        - False: interrotto da segnale di stop
-        """
-        trade_timestamp = trade.timestamp
-        logger.info(
-            f"[PROCESS] Inizio elaborazione trade | "
-            f"trade_id={trade.trade_index} | "
-            f"isin={trade.isin} | "
-            f"timestamp={trade_timestamp} | "
-            f"qty={trade.quantity} | "
-            f"price={trade.price} | "
-            f"side={trade.side} | "
-            f"horizons={self.time_zero_lags}s"
-        )
-
-        remaining_lags = list(self.time_zero_lags)  # sorted ascending copy
-
-        while self._is_running and remaining_lags:
-            diff_seconds = (datetime.datetime.now() - trade_timestamp).total_seconds()
-
-            # Timeout: 4× the largest lag — mark as elaborated without remaining PL
-            if diff_seconds > self._max_lag * 4:
-                logger.info(
-                    f"[TIMEOUT] Trade {trade.trade_index} timeout "
-                    f"(elapsed={diff_seconds:.2f}s > max={self._max_lag * 4}s), "
-                    f"marcato come elaborato con orizzonti rimanenti={remaining_lags}"
-                )
-                self.trade_storage.set_trade_as_elaborated(trade)
-                return True
-
-            # Calculate PL for every horizon threshold that has been reached
-            newly_done = [lag for lag in remaining_lags if diff_seconds >= lag]
-            for lag in newly_done:
-                self._calculate_pl_at_lag(trade, lag)
-                remaining_lags.remove(lag)
-
-            if not remaining_lags:
-                self.trade_storage.set_trade_as_elaborated(trade)
-                logger.info(
-                    f"[DONE] Tutti gli orizzonti elaborati | "
-                    f"trade_id={trade.trade_index}"
-                )
-                return True
-
-            # Wait until the next horizon threshold
-            next_lag = remaining_lags[0]
-            wait_time = max(next_lag - diff_seconds, 0.1)
-            logger.debug(
-                f"[WAIT] Trade in attesa del prossimo orizzonte | "
-                f"trade_id={trade.trade_index} | "
-                f"elapsed={diff_seconds:.2f}s | "
-                f"next_lag={next_lag}s | wait={wait_time:.2f}s"
-            )
-
-            interrupted = self._stop_event.wait(timeout=wait_time)
-            if interrupted or not self._is_running:
-                logger.warning(
-                    f"[INTERRUPT] Elaborazione interrotta | "
-                    f"trade_id={trade.trade_index} | "
-                    f"elapsed={diff_seconds:.2f}s | interrupted={interrupted}"
-                )
-                return False
-
-        logger.warning(f"[LOOP_EXIT] Uscita dal loop while con _is_running=False")
-        return False
 
     def _calculate_pl_at_lag(self, trade: AbstractTrade, lag: float):
         """Calcola il PL a un orizzonte specifico e lo salva sull'oggetto trade.
