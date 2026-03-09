@@ -469,10 +469,22 @@ class TradeTableWidget(QWidget):
             )
 
             if self.dedup_column in self.all_data.columns:
-                self.all_data.drop_duplicates(
-                    subset=[self.dedup_column],
-                    keep="last",
-                    inplace=True,
+                sort_cols = (
+                    ['timestamp', self.dedup_column]
+                    if 'timestamp' in self.all_data.columns
+                    else [self.dedup_column]
+                )
+                try:
+                    self.all_data = self.all_data.sort_values(
+                        by=sort_cols, ascending=True, na_position='first'
+                    )
+                except Exception:
+                    pass
+                self.all_data = (
+                    self.all_data
+                    .groupby(self.dedup_column, sort=False)
+                    .last()
+                    .reset_index()
                 )
 
         if not self.visible_columns:

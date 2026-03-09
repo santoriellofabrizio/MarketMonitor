@@ -442,15 +442,29 @@ class TradeDashboard(BasePyQt5Dashboard, TradeDashboardExtensions):
             )
 
             if 'trade_index' in self.all_trades.columns:
+                # Sort ascending so the most recent row is last in each group,
+                # then groupby.last() keeps the last non-null value per column.
+                # This prevents losing horizon PL values when a later partial update arrives.
+                sort_cols = (
+                    ['timestamp', 'trade_index']
+                    if 'timestamp' in self.all_trades.columns
+                    else ['trade_index']
+                )
+                try:
+                    self.all_trades = self.all_trades.sort_values(
+                        by=sort_cols, ascending=True, na_position='first'
+                    )
+                except Exception as e:
+                    self.logger.error(f"Failed to sort trades: {e}")
+
                 self.all_trades = (
                     self.all_trades
-                    .drop_duplicates(
-                        subset=['trade_index'],
-                        keep='last'
-                    )
+                    .groupby('trade_index', sort=False)
+                    .last()
+                    .reset_index()
                 )
-                
-                # Sort per timestamp
+
+                # Re-sort descending for display
                 if 'timestamp' in self.all_trades.columns:
                     try:
                         self.all_trades = self.all_trades.sort_values(
@@ -458,9 +472,7 @@ class TradeDashboard(BasePyQt5Dashboard, TradeDashboardExtensions):
                             ascending=False
                         )
                     except Exception as e:
-                        # Log errore se fallisce
                         self.logger.error(f"Failed to sort by timestamp: {e}")
-                        # DEBUG: mostra tipi se fallisce
                         ts_types = self.all_trades['timestamp'].apply(type).value_counts()
                         self.logger.error(f"Timestamp types: {ts_types.to_dict()}")
 
