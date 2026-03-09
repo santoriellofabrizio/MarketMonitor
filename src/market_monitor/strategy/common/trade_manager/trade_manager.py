@@ -4,6 +4,7 @@ trade_manager ottimizzato con miglioramenti chiave.
 
 import datetime
 import logging
+import queue as queue_mod
 from pathlib import Path
 from typing import Optional, Tuple, Union
 from threading import RLock
@@ -63,8 +64,8 @@ class TradeManager:
 
         # Tracking dei trades inviati parzialmente (is_elaborated=False)
         self._pending_partial_indexes: set[int] = set()
-        # Tracks trades that had at least one new horizon computed since last publish
-        self._horizon_updated_indexes: set[int] = set()
+        # Thread-safe queue: PL thread pushes trade indexes here after each horizon
+        self._horizon_publish_queue: queue_mod.Queue = queue_mod.Queue()
 
         # Persistenza
         self.engine = kwargs.get("engine", "pyarrow")
@@ -295,12 +296,37 @@ class TradeManager:
     def _on_horizon_computed(self, trade) -> None:
         """Callback invocato da TimeZeroPLManager dopo ogni orizzonte calcolato.
 
-        Segna il trade come aggiornato e invalida la cache, così la prossima
-        chiamata a get_trades_to_publish() lo includerà anche se non ancora
-        completamente elaborato.
+        Inserisce l'indice del trade nella coda thread-safe _horizon_publish_queue
+        e invalida la cache. Il prossimo drenaggio della coda (da get_trades_to_publish
+        o get_horizon_updates) pubblicherà il trade con i dati aggiornati.
         """
-        self._horizon_updated_indexes.add(trade.trade_index)
+        self._horizon_publish_queue.put(trade.trade_index)
         self._invalidate_cache()
+
+    def get_horizon_updates(self) -> pd.DataFrame:
+        """Drena la coda degli orizzonti e ritorna i trades aggiornati come DataFrame.
+
+        Thread-safe. Può essere chiamato dalla strategy in update_LF(), on_trade(),
+        o da qualsiasi contesto. Ritorna un DataFrame vuoto se non ci sono aggiornamenti.
+        """
+        indexes: set[int] = set()
+        while True:
+            try:
+                idx = self._horizon_publish_queue.get_nowait()
+                indexes.add(idx)
+            except queue_mod.Empty:
+                break
+
+        if not indexes:
+            return pd.DataFrame()
+
+        trades = []
+        for idx in indexes:
+            trade = self.trade_storage.get_trades_by_index(idx)
+            if trade:
+                trades.append(trade)
+
+        return self._convert_trades_obj_to_df(trades)
 
     def get_trades_to_publish(self, processed_trades: pd.DataFrame) -> pd.DataFrame:
         """
@@ -309,34 +335,27 @@ class TradeManager:
         Logica:
         1. I trades appena processati vengono sempre inviati
         2. Se un trade è parziale (is_elaborated=False), viene tracciato in _pending_partial_indexes
-        3. I pending con nuovi orizzonti calcolati (_horizon_updated_indexes) vengono re-inviati
-           immediatamente, senza aspettare l'ultimo orizzonte
-        4. I pending completamente elaborati (is_elaborated=True) vengono re-inviati e rimossi
+        3. I pending completamente elaborati (is_elaborated=True) vengono re-inviati e rimossi
+        4. Drena la coda _horizon_publish_queue per includere aggiornamenti intermedi
+           degli orizzonti (10s, 20s, 30s, 40s) senza aspettare l'ultimo
         5. La GUI si occupa della deduplicazione tramite trade_index (keep='last')
 
         Args:
             processed_trades: DataFrame dei trades appena processati da on_trade()
 
         Returns:
-            DataFrame con i trades da pubblicare (nuovi + aggiornati + elaborati)
+            DataFrame con i trades da pubblicare (nuovi + elaborati + aggiornamenti orizzonte)
         """
         with self._cache_lock:
             trades_to_publish = []
             fully_elaborated = set()
 
-            # 1. Controlla i pending per aggiornamenti (orizzonte parziale o completo)
+            # 1. Controlla i pending che sono diventati completamente elaborati
             for idx in list(self._pending_partial_indexes):
                 trade = self.trade_storage.get_trades_by_index(idx)
-                if trade:
-                    if trade.is_elaborated:
-                        # Tutti gli orizzonti completati: pubblica e rimuovi dal pending
-                        trades_to_publish.append(trade)
-                        fully_elaborated.add(idx)
-                        self._horizon_updated_indexes.discard(idx)
-                    elif idx in self._horizon_updated_indexes:
-                        # Almeno un orizzonte nuovo: pubblica e svuota il flag di aggiornamento
-                        trades_to_publish.append(trade)
-                        self._horizon_updated_indexes.discard(idx)
+                if trade and trade.is_elaborated:
+                    trades_to_publish.append(trade)
+                    fully_elaborated.add(idx)
 
             self._pending_partial_indexes -= fully_elaborated
 
@@ -351,7 +370,19 @@ class TradeManager:
                             if not trade.is_elaborated:
                                 self._pending_partial_indexes.add(int(trade_idx))
 
-            return self._convert_trades_obj_to_df(trades_to_publish)
+            # 3. Drena la coda degli aggiornamenti orizzonte (thread-safe, non-blocking)
+            horizon_df = self.get_horizon_updates()
+            base_df = self._convert_trades_obj_to_df(trades_to_publish)
+
+            if horizon_df.empty:
+                return base_df
+            if base_df.empty:
+                return horizon_df
+
+            combined = pd.concat([base_df, horizon_df], ignore_index=True)
+            if 'trade_index' in combined.columns:
+                combined = combined.drop_duplicates(subset=['trade_index'], keep='last')
+            return combined
 
     # ========================================================================
     # PERSISTENZA (ottimizzata)
