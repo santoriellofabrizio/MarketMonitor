@@ -25,7 +25,6 @@ class AbstractTrade:
         self.currency: Optional[str] = currency
         self.side = None
         self.spread_pl: float | None = None
-        self.lagged_spread_pl: float | None = None
         self.own_trade: bool | None = None
         self.is_elaborated: bool = False
         self.extra: dict = extra or {}

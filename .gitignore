@@ -13,4 +13,6 @@ logs
 grafana
 dist
 build
+.vs
 *egg*
+*.vsidx

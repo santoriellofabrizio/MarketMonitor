@@ -551,12 +551,9 @@ class TradeManager:
 
             trade.spread_pl = trade_dict.get("spread_pl")
 
-            # Restore backward-compat lagged P&L alias (first horizon)
-            trade.lagged_spread_pl = trade_dict.get("lagged_spread_pl")
-
-            # Restore all horizon-specific lagged P&L fields (e.g. lagged_spread_pl_10s)
+            # Restore all horizon-specific lagged P&L fields (e.g. spread_pl_10s)
             for key, val in trade_dict.items():
-                if key.startswith("lagged_spread_pl_") and val is not None:
+                if key.startswith("spread_pl_") and val is not None:
                     setattr(trade, key, val)
 
             trade.is_elaborated = True

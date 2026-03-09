@@ -24,6 +24,7 @@ class PricePublisherHub:
 
     _TS_FIELD_META: Dict[str, Dict[str, str]] = {
         'mid': {'type': 'MID'},
+        'normalized_mid': {'type': 'MISALIGNMENT'},
         'live_idx': {'type': 'MODEL_PRICE', 'model': 'index_cluster'},
         'live_clust': {'type': 'MODEL_PRICE', 'model': 'cluster'},
         'intraday': {'type': 'MODEL_PRICE', 'model': 'intraday_cluster'},
@@ -37,6 +38,7 @@ class PricePublisherHub:
         'market:theoretical_live_cluster_price': 'live_clust',
         'market:theoretical_live_intraday_price': 'intraday',
         'market:mid': 'mid',
+        'market:normalized_mid': 'normalized_mid',
     }
 
     def __init__(self, gui: GuiPublisher,
@@ -114,12 +116,8 @@ class PricePublisherHub:
                 f"market:return_{i}": (static_return.iloc[-i].astype(float) * 100).round(4)
             })
 
-    def publish_lf_data(self, intraday_adjuster, mid_eur: pd.Series,
-                        currencies: list, all_securities: list) -> None:
+    def publish_lf_data(self, intraday_adjuster) -> None:
         """Low-frequency update: publish intraday returns."""
-        fx = mid_eur[currencies]
-        etfs = mid_eur[all_securities]
-        intraday_adjuster.appendupdate(prices=etfs, fx_prices=fx)
         intraday_returns = intraday_adjuster.get_clean_returns()
 
         intraday_returns.index = intraday_returns.index.floor('min')

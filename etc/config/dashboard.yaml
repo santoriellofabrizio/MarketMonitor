@@ -6,12 +6,12 @@
 #   mode: rabbit  -> RabbitMQ fanout exchange (processo separato)
 
 dashboard:
-  mode: rabbit          # Cambiare in 'rabbit' per usare RabbitMQ
+  mode: redis          # Cambiare in 'rabbit' per usare RabbitMQ
   redis:
     host: localhost
     port: 6379
     db: 0
-    channel: trades_rabbit
+    channel: trades_rabbit_test
 
   rabbit:
     host: rabbitmq.af.tst

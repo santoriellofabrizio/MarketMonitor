@@ -1,6 +1,7 @@
 import datetime
 import logging
 import threading
+from typing import Optional
 
 import pandas as pd
 from market_monitor.strategy.common.trade_manager.trade_templates import AbstractTrade, TradeStorage, Trade
@@ -16,7 +17,7 @@ class TimeZeroPLManager(threading.Thread):
                  trade_storage: TradeStorage,
                  mid_price_storage: pd.Series,
                  time_zero_lags: list[float] | None = None,
-                 on_horizon_computed: callable | None = None):
+                 on_horizon_computed: Optional[callable] = None):
         # IMPORTANTE: Cambiato nome per evitare conflitti interni di threading
         super().__init__(name="TimeZeroPLThread", daemon=True)
         self.trade_storage = trade_storage
@@ -118,23 +119,19 @@ class TimeZeroPLManager(threading.Thread):
         Per il primo orizzonte (backward compat) aggiorna anche ``trade.lagged_spread_pl``.
         Chiama ``on_horizon_computed(trade)`` al termine per notificare il TradeManager.
         """
-        col = f"lagged_spread_pl_{int(lag)}s"
+        col = f"spread_pl_{int(lag)}s"
         is_first_horizon = (lag == self.time_zero_lags[0])
 
         mid_price, _ = self.get_mid(trade)
         if mid_price is not None:
             pl = self.calculate_time_zero_pl(trade, mid_price)
             setattr(trade, col, pl)
-            if is_first_horizon:
-                trade.lagged_spread_pl = pl
             logger.info(
                 f"[LAG_{int(lag)}s] trade_id={trade.trade_index} | "
                 f"isin={trade.isin} | mid={mid_price} | {col}={pl}"
             )
         else:
             setattr(trade, col, None)
-            if is_first_horizon:
-                trade.lagged_spread_pl = None
             logger.warning(
                 f"[LAG_{int(lag)}s] Mid price non disponibile | "
                 f"trade_id={trade.trade_index} | isin={trade.isin}"

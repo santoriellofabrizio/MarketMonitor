@@ -274,7 +274,7 @@ class TradeDashboard(BasePyQt5Dashboard, TradeDashboardExtensions):
                 if 'timestamp' in self.all_trades.columns:
                     try:
                         self.all_trades = self.all_trades.sort_values(
-                            by="timestamp",
+                            by=["timestamp", "trade_index"],
                             ascending=False
                         )
                     except Exception as e:

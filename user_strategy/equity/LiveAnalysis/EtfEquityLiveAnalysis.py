@@ -153,6 +153,8 @@ class EtfEquityLiveAnalysis(StrategyUI):
         else:
             logging.warning(f"Price source {self.price_source} not supported.")
 
+        self.global_subscription_service.subscribe_redis(channel="market:theoretical_live_intraday_price", store='market')
+
     def subscribe_kafka_trades(self) -> None:
 
         for isin in self.all_isins:
