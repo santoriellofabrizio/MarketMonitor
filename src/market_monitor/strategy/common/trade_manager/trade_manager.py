@@ -63,6 +63,8 @@ class TradeManager:
 
         # Tracking dei trades inviati parzialmente (is_elaborated=False)
         self._pending_partial_indexes: set[int] = set()
+        # Tracks trades that had at least one new horizon computed since last publish
+        self._horizon_updated_indexes: set[int] = set()
 
         # Persistenza
         self.engine = kwargs.get("engine", "pyarrow")
@@ -75,10 +77,10 @@ class TradeManager:
         # Time zero PL manager (supports multiple horizons, e.g. [10, 20, 30, 40] seconds)
         _effective_lags = time_zero_lags if time_zero_lags is not None else [10., 20., 30., 40.]
         self.time_zero_pl_manager = TimeZeroPLManager(
-            model_price=model_prices,
             mid_price_storage=book_storage,
             time_zero_lags=_effective_lags,
-            trade_storage=self.trade_storage
+            trade_storage=self.trade_storage,
+            on_horizon_computed=self._on_horizon_computed
         )
         if _effective_lags:  # only start if there are horizons to compute
             self.time_zero_pl_manager.start()
@@ -110,20 +112,10 @@ class TradeManager:
                     # Calcola spread PL usando book al momento del trade
                     snapshot = self.book_storage.get_last_before(trade.timestamp)
                     if snapshot:
-                        _, mid_prices = snapshot
                         mid = self._get_mid_by_snapshot(snapshot, trade)
                         if mid is not None:
                             trade.spread_pl = self.time_zero_pl_manager.calculate_time_zero_pl(
                                 trade, mid
-                            )
-
-                    if self.model_price is not None:
-                        model = self.model_price.get(trade.isin)
-                        if model is not None:
-                            trade.spread_pl_model = (
-                                self.time_zero_pl_manager.calculate_time_zero_pl(
-                                    trade, model
-                                )
                             )
 
                 # Store trade
@@ -300,35 +292,53 @@ class TradeManager:
 
         return trades
 
+    def _on_horizon_computed(self, trade) -> None:
+        """Callback invocato da TimeZeroPLManager dopo ogni orizzonte calcolato.
+
+        Segna il trade come aggiornato e invalida la cache, così la prossima
+        chiamata a get_trades_to_publish() lo includerà anche se non ancora
+        completamente elaborato.
+        """
+        self._horizon_updated_indexes.add(trade.trade_index)
+        self._invalidate_cache()
+
     def get_trades_to_publish(self, processed_trades: pd.DataFrame) -> pd.DataFrame:
         """
         Ritorna i trades da pubblicare alla GUI.
 
         Logica:
         1. I trades appena processati vengono sempre inviati
-        2. Se un trade è parziale (is_elaborated=False), viene tracciato
-        3. I trades precedentemente parziali che ora sono elaborati vengono re-inviati
-        4. La GUI si occupa della deduplicazione
+        2. Se un trade è parziale (is_elaborated=False), viene tracciato in _pending_partial_indexes
+        3. I pending con nuovi orizzonti calcolati (_horizon_updated_indexes) vengono re-inviati
+           immediatamente, senza aspettare l'ultimo orizzonte
+        4. I pending completamente elaborati (is_elaborated=True) vengono re-inviati e rimossi
+        5. La GUI si occupa della deduplicazione tramite trade_index (keep='last')
 
         Args:
             processed_trades: DataFrame dei trades appena processati da on_trade()
 
         Returns:
-            DataFrame con i trades da pubblicare (nuovi + parziali ora elaborati)
+            DataFrame con i trades da pubblicare (nuovi + aggiornati + elaborati)
         """
         with self._cache_lock:
             trades_to_publish = []
+            fully_elaborated = set()
 
-            # 1. Controlla i pending che sono diventati elaborati
-            newly_elaborated_indexes = set()
+            # 1. Controlla i pending per aggiornamenti (orizzonte parziale o completo)
             for idx in list(self._pending_partial_indexes):
                 trade = self.trade_storage.get_trades_by_index(idx)
-                if trade and trade.is_elaborated:
-                    trades_to_publish.append(trade)
-                    newly_elaborated_indexes.add(idx)
+                if trade:
+                    if trade.is_elaborated:
+                        # Tutti gli orizzonti completati: pubblica e rimuovi dal pending
+                        trades_to_publish.append(trade)
+                        fully_elaborated.add(idx)
+                        self._horizon_updated_indexes.discard(idx)
+                    elif idx in self._horizon_updated_indexes:
+                        # Almeno un orizzonte nuovo: pubblica e svuota il flag di aggiornamento
+                        trades_to_publish.append(trade)
+                        self._horizon_updated_indexes.discard(idx)
 
-            # Rimuovi dai pending quelli ora elaborati
-            self._pending_partial_indexes -= newly_elaborated_indexes
+            self._pending_partial_indexes -= fully_elaborated
 
             # 2. Aggiungi i nuovi trades processati e traccia i parziali
             if not processed_trades.empty:
@@ -488,7 +498,7 @@ class TradeManager:
         try:
             known_params = {'ticker', 'isin', 'timestamp', 'quantity', 'price', 'market',
                             'currency', 'price_multiplier', 'side', 'own_trade',
-                            'spread_pl', 'spread_pl_model', 'is_elaborated', 'trade_index', ...}
+                            'spread_pl', 'is_elaborated', 'trade_index', ...}
             trade_dict = row.to_dict()
             extra = {k: v for k, v in trade_dict.items() if k not in known_params}
 
@@ -515,11 +525,9 @@ class TradeManager:
                 trade.side = trade_dict.get("side")
 
             trade.spread_pl = trade_dict.get("spread_pl")
-            trade.spread_pl_model = trade_dict.get("spread_pl_model")
 
-            # Restore lagged P&L fields (backward-compat single-lag fields)
+            # Restore backward-compat lagged P&L alias (first horizon)
             trade.lagged_spread_pl = trade_dict.get("lagged_spread_pl")
-            trade.lagged_spread_pl_model = trade_dict.get("lagged_spread_pl_model")
 
             # Restore all horizon-specific lagged P&L fields (e.g. lagged_spread_pl_10s)
             for key, val in trade_dict.items():

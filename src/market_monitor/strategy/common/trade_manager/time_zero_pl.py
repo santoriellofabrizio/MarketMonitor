@@ -15,13 +15,13 @@ class TimeZeroPLManager(threading.Thread):
     def __init__(self,
                  trade_storage: TradeStorage,
                  mid_price_storage: pd.Series,
-                 model_price: pd.Series | None = None,
-                 time_zero_lags: list[float] | None = None):
+                 time_zero_lags: list[float] | None = None,
+                 on_horizon_computed: callable | None = None):
         # IMPORTANTE: Cambiato nome per evitare conflitti interni di threading
         super().__init__(name="TimeZeroPLThread", daemon=True)
         self.trade_storage = trade_storage
         self.mid_price_storage = mid_price_storage
-        self.model_price = model_price
+        self.on_horizon_computed = on_horizon_computed
 
         # Support multiple horizons; keep backward-compat alias for the first one
         self.time_zero_lags: list[float] = sorted(time_zero_lags or _DEFAULT_HORIZONS)
@@ -34,8 +34,7 @@ class TimeZeroPLManager(threading.Thread):
 
         logger.info(
             f"TimeZeroPLManager inizializzato | "
-            f"time_zero_lags={self.time_zero_lags}s | "
-            f"model_price_enabled={'Yes' if model_price is not None else 'No'}"
+            f"time_zero_lags={self.time_zero_lags}s"
         )
 
     def stop(self):
@@ -154,18 +153,15 @@ class TimeZeroPLManager(threading.Thread):
         """Calcola il PL a un orizzonte specifico e lo salva sull'oggetto trade.
 
         Attributi scritti:
-          - ``lagged_spread_pl_{int(lag)}s``           (es. lagged_spread_pl_10s)
-          - ``lagged_spread_pl_model_{int(lag)}s``     (se model_price disponibile)
+          - ``lagged_spread_pl_{int(lag)}s``  (es. lagged_spread_pl_10s)
 
-        Per il primo orizzonte (backward compat):
-          - ``trade.lagged_spread_pl``
-          - ``trade.lagged_spread_pl_model``
+        Per il primo orizzonte (backward compat) aggiorna anche ``trade.lagged_spread_pl``.
+        Chiama ``on_horizon_computed(trade)`` al termine per notificare il TradeManager.
         """
         col = f"lagged_spread_pl_{int(lag)}s"
         is_first_horizon = (lag == self.time_zero_lags[0])
 
-        # --- Mid price ---
-        mid_price, time_snip = self.get_mid(trade)
+        mid_price, _ = self.get_mid(trade)
         if mid_price is not None:
             pl = self.calculate_time_zero_pl(trade, mid_price)
             setattr(trade, col, pl)
@@ -184,27 +180,8 @@ class TimeZeroPLManager(threading.Thread):
                 f"trade_id={trade.trade_index} | isin={trade.isin}"
             )
 
-        # --- Model price ---
-        if self.model_price is not None:
-            col_model = f"lagged_spread_pl_model_{int(lag)}s"
-            model_price = self.get_model_price(trade.isin)
-            if model_price is not None:
-                pl_model = self.calculate_time_zero_pl(trade, model_price)
-                setattr(trade, col_model, pl_model)
-                if is_first_horizon:
-                    trade.lagged_spread_pl_model = pl_model
-                logger.info(
-                    f"[LAG_{int(lag)}s_MODEL] trade_id={trade.trade_index} | "
-                    f"model_price={model_price} | {col_model}={pl_model}"
-                )
-            else:
-                setattr(trade, col_model, None)
-                if is_first_horizon:
-                    trade.lagged_spread_pl_model = None
-                logger.info(
-                    f"[LAG_{int(lag)}s_MODEL] Model price non disponibile | "
-                    f"trade_id={trade.trade_index} | isin={trade.isin}"
-                )
+        if self.on_horizon_computed is not None:
+            self.on_horizon_computed(trade)
 
     def get_mid(self, trade: Trade):
         try:
@@ -232,44 +209,6 @@ class TimeZeroPLManager(threading.Thread):
         except Exception as e:
             logger.error(f"[GET_MID] Eccezione inaspettata | isin={trade.isin} | error={str(e)}", exc_info=e)
             return None, None
-
-    def get_model_price(self, isin: str):
-        """
-        Recupera il model price per l'ISIN specificato.
-
-        Restituisce:
-        - price: valore trovato (float)
-        - None: ISIN non trovato o errore
-        """
-        try:
-            mid_price = self.model_price.get(isin, None)
-
-            if mid_price is None:
-                logger.debug(f"[GET_MODEL] ISIN {isin} non trovato nel model price storage")
-                return None
-
-            if mid_price <= 0:
-                logger.info(
-                    f"[GET_MODEL] Model price non valido | "
-                    f"isin={isin} | "
-                    f"price={mid_price}"
-                )
-                return None
-
-            logger.debug(f"[GET_MODEL] isin={isin} | model_price={mid_price}")
-            return mid_price
-
-        except KeyError as e:
-            logger.debug(f"[GET_MODEL] KeyError per ISIN {isin}: {str(e)}")
-            return None
-        except Exception as e:
-            logger.error(
-                f"[GET_MODEL] Eccezione inaspettata | "
-                f"isin={isin} | "
-                f"error={str(e)}",
-                exc_info=e
-            )
-            return None
 
     @staticmethod
     def calculate_time_zero_pl(trade: AbstractTrade, price: float):

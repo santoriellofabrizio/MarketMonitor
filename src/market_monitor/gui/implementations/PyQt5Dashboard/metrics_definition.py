@@ -188,46 +188,4 @@ METRIC_DEFINITIONS = {
         "format": "{:.4%}"
     },
 
-    # =========================
-    # Marginality (model_pl)
-    # =========================
-    "model_pl_marginality": {
-        "label": "Model PL Marginality",
-        "compute": lambda df: (
-            df["model_pl"].sum() / df["ctv"].sum()
-            if {"model_pl", "ctv"}.issubset(df.columns) and df["ctv"].sum() != 0
-            else 0.0
-        ),
-        "format": "{:.4%}"
-    },
-    "my_model_pl_marginality": {
-        "label": "My Model PL Marginality",
-        "compute": lambda df: (
-            df.loc[df["own_trade"] == True, "model_pl"].sum() /
-            df.loc[df["own_trade"] == True, "ctv"].sum()
-            if {"model_pl", "ctv", "own_trade"}.issubset(df.columns)
-            and df.loc[df["own_trade"] == True, "ctv"].sum() != 0
-            else 0.0
-        ),
-        "format": "{:.4%}"
-    },
-    "average_model_pl_marginality": {
-        "label": "Avg Model PL Marginality",
-        "compute": lambda df: (
-            (df["model_pl"] / df["ctv"]).mean()
-            if {"model_pl", "ctv"}.issubset(df.columns)
-            else 0.0
-        ),
-        "format": "{:.4%}"
-    },
-    "my_average_model_pl_marginality": {
-        "label": "My Avg Model PL Marginality",
-        "compute": lambda df: (
-            (df.loc[df["own_trade"] == True, "model_pl"] /
-             df.loc[df["own_trade"] == True, "ctv"]).mean()
-            if {"model_pl", "ctv", "own_trade"}.issubset(df.columns)
-            else 0.0
-        ),
-        "format": "{:.4%}"
-    }
 }
