@@ -26,6 +26,8 @@ from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as Navigatio
 
 # Import sistema filtri avanzati
 from market_monitor.gui.implementations.PyQt5Dashboard.widgets.filter import AdvancedFilterDialog, FilterGroup
+# Reuse calc-fields dialog from groupby widget
+from market_monitor.gui.implementations.PyQt5Dashboard.widgets.groupby_widget import GroupByCalcFieldsDialog
 
 
 class ChartWidget(QWidget):
@@ -89,6 +91,9 @@ class ChartWidget(QWidget):
 
         # Configurazione pending per restore dopo set_data
         self._pending_config: Optional[Dict[str, Any]] = None
+
+        # Calculated fields (name → pandas eval expression)
+        self.chart_calc_fields: Dict[str, str] = {}
 
         self._setup_ui()
 
@@ -260,10 +265,12 @@ class ChartWidget(QWidget):
         self.time_column_combo.addItems(['None'])
         time_row1.addWidget(self.time_column_combo)
 
-        time_row1.addWidget(QLabel("Metric:"))
-        self.metric_combo = QComboBox()
-        self.metric_combo.addItems(['None'])
-        time_row1.addWidget(self.metric_combo)
+        time_row1.addWidget(QLabel("Metrics (multi):"))
+        self.metric_list = QListWidget()
+        self.metric_list.setSelectionMode(QAbstractItemView.MultiSelection)
+        self.metric_list.setMaximumHeight(75)
+        self.metric_list.setToolTip("Ctrl+click to select multiple metrics")
+        time_row1.addWidget(self.metric_list)
 
         time_layout.addLayout(time_row1)
 
@@ -311,6 +318,11 @@ class ChartWidget(QWidget):
         self.export_btn = QPushButton("Export PNG")
         self.export_btn.clicked.connect(self._export_png)
         btn_row.addWidget(self.export_btn)
+
+        self.calc_fields_btn = QPushButton("∑ Calc Fields")
+        self.calc_fields_btn.setToolTip("Define computed columns on the source data before plotting")
+        self.calc_fields_btn.clicked.connect(self._open_calc_fields_dialog)
+        btn_row.addWidget(self.calc_fields_btn)
 
         btn_row.addStretch()
         config_layout.addLayout(btn_row)
@@ -462,8 +474,11 @@ class ChartWidget(QWidget):
             current_static_ys = raw_y if isinstance(raw_y, list) else ([raw_y] if raw_y and raw_y != 'None' else [])
             current_static_group = self._pending_config.get('static_group', 'None')
             current_time_col = self._pending_config.get('time_column', 'None')
-            current_metric = self._pending_config.get('metric', 'None')
+            raw_m = self._pending_config.get('metric_columns', self._pending_config.get('metric'))
+            current_metric_cols = raw_m if isinstance(raw_m, list) else ([raw_m] if raw_m and raw_m != 'None' else [])
             current_time_group = self._pending_config.get('time_group', 'None')
+            if 'chart_calc_fields' in self._pending_config:
+                self.chart_calc_fields = self._pending_config['chart_calc_fields'].copy()
         else:
             current_static_x = self.static_x_combo.currentText()
             current_static_ys = [self.static_y_list.item(i).text()
@@ -471,12 +486,16 @@ class ChartWidget(QWidget):
                                   if self.static_y_list.item(i).isSelected()]
             current_static_group = self.static_group_combo.currentText()
             current_time_col = self.time_column_combo.currentText()
-            current_metric = self.metric_combo.currentText()
+            current_metric_cols = [self.metric_list.item(i).text()
+                                   for i in range(self.metric_list.count())
+                                   if self.metric_list.item(i).isSelected()]
             current_time_group = self.time_group_combo.currentText()
 
-        # Aggiorna combo boxes
-        columns = ['None'] + list(df.columns)
-        numeric_cols = list(df.select_dtypes(include=['number']).columns)
+        # Augment column lists with defined calc fields
+        calc_col_names = list(self.chart_calc_fields.keys())
+        base_numeric_cols = list(df.select_dtypes(include=['number']).columns)
+        numeric_cols = base_numeric_cols + [c for c in calc_col_names if c not in base_numeric_cols]
+        columns = ['None'] + list(df.columns) + [c for c in calc_col_names if c not in df.columns]
 
         self.static_x_combo.clear()
         self.static_x_combo.addItems(columns)
@@ -490,8 +509,8 @@ class ChartWidget(QWidget):
         self.time_column_combo.clear()
         self.time_column_combo.addItems(columns)
 
-        self.metric_combo.clear()
-        self.metric_combo.addItems(['None'] + numeric_cols)
+        self.metric_list.clear()
+        self.metric_list.addItems(numeric_cols)
 
         self.time_group_combo.clear()
         self.time_group_combo.addItems(columns)
@@ -507,8 +526,10 @@ class ChartWidget(QWidget):
             self.static_group_combo.setCurrentText(current_static_group)
         if current_time_col in columns:
             self.time_column_combo.setCurrentText(current_time_col)
-        if current_metric in ['None'] + numeric_cols:
-            self.metric_combo.setCurrentText(current_metric)
+        # Restore multi-metric list selection
+        for i in range(self.metric_list.count()):
+            item = self.metric_list.item(i)
+            item.setSelected(item.text() in current_metric_cols)
         if current_time_group in columns:
             self.time_group_combo.setCurrentText(current_time_group)
 
@@ -575,10 +596,15 @@ class ChartWidget(QWidget):
             if index >= 0:
                 self.time_column_combo.setCurrentIndex(index)
 
-        if 'metric' in config and config['metric']:
-            index = self.metric_combo.findText(config['metric'])
-            if index >= 0:
-                self.metric_combo.setCurrentIndex(index)
+        raw_m = config.get('metric_columns', config.get('metric'))
+        if raw_m:
+            selected_ms = raw_m if isinstance(raw_m, list) else [raw_m]
+            for i in range(self.metric_list.count()):
+                item = self.metric_list.item(i)
+                item.setSelected(item.text() in selected_ms)
+
+        if 'chart_calc_fields' in config:
+            self.chart_calc_fields = config['chart_calc_fields'].copy()
 
         if 'operation' in config:
             index = self.operation_combo.findText(config['operation'])
@@ -833,19 +859,21 @@ class ChartWidget(QWidget):
     def _get_time_evolution_config(self) -> Optional[Dict[str, Any]]:
         """Ottieni configurazione per time evolution mode"""
         time_col = self.time_column_combo.currentText()
-        metric = self.metric_combo.currentText()
+        metric_cols = [self.metric_list.item(i).text()
+                       for i in range(self.metric_list.count())
+                       if self.metric_list.item(i).isSelected()]
         operation = self.operation_combo.currentText()
         group_by = self.time_group_combo.currentText()
         window = self.window_spinbox.value()
 
-        if time_col == 'None' or metric == 'None':
-            QMessageBox.warning(self, "Invalid Config", "Please select Time Column and Metric")
+        if time_col == 'None' or not metric_cols:
+            QMessageBox.warning(self, "Invalid Config", "Please select Time Column and at least one Metric")
             return None
 
         return {
             'mode': 'time_evolution',
             'time_column': time_col,
-            'metric_column': metric,
+            'metric_columns': metric_cols,
             'operation': operation,
             'group_by': group_by if group_by != 'None' else None,
             'window': window
@@ -862,6 +890,15 @@ class ChartWidget(QWidget):
 
             # 2. Filtro temporale rolling
             filtered_data = self._apply_time_filter(filtered_data)
+
+            # 3. Campi calcolati
+            if self.chart_calc_fields:
+                filtered_data = filtered_data.copy()
+                for _cf_name, _cf_expr in self.chart_calc_fields.items():
+                    try:
+                        filtered_data[_cf_name] = filtered_data.eval(_cf_expr)
+                    except Exception as _cf_err:
+                        self.logger.warning(f"[ChartCalcField] '{_cf_name}': {_cf_err}")
 
             if filtered_data.empty:
                 # Non mostrare warning popup per evitare flood
@@ -1007,9 +1044,12 @@ class ChartWidget(QWidget):
             self.figure.subplots_adjust(left=0.1, right=0.95, top=0.95, bottom=0.15)
 
     def _plot_time_evolution(self, ax, df: pd.DataFrame, config: Dict[str, Any]):
-        """Plot time evolution con downsampling (Fase 3)."""
+        """Plot time evolution con downsampling (Fase 3). Supporta multi-metric."""
         time_col = config['time_column']
-        metric_col = config['metric_column']
+        # Backward compat: old configs used 'metric_column' (str)
+        metric_cols = config.get('metric_columns') or (
+            [config['metric_column']] if config.get('metric_column') else []
+        )
         operation = config['operation']
         group_by = config['group_by']
         window = config['window']
@@ -1032,6 +1072,8 @@ class ChartWidget(QWidget):
             df = df.iloc[::max(factor, 1)].copy()
             self.logger.debug(f"Time evolution downsampled: {original_len} -> {len(df)} points")
 
+        multi_metric = len(metric_cols) > 1
+
         if group_by:
             all_times = df[time_col].unique()
             all_times = pd.Series(all_times).sort_values().values
@@ -1040,37 +1082,43 @@ class ChartWidget(QWidget):
             unique_groups = df[group_by].unique()
             top_n = self.top_n_spin.value()
             if top_n > 0 and len(unique_groups) > top_n:
-                # Prendi i gruppi con più dati
                 group_counts = df[group_by].value_counts().head(top_n)
                 unique_groups = group_counts.index.tolist()
 
-            for group_value in unique_groups:
-                subset = df[df[group_by] == group_value].copy()
-                full_series = pd.Series(index=all_times, dtype=float)
+            for metric_col in metric_cols:
+                for group_value in unique_groups:
+                    subset = df[df[group_by] == group_value].copy()
+                    full_series = pd.Series(index=all_times, dtype=float)
 
-                subset_sorted = subset.sort_values(time_col).reset_index(drop=True)
-                y_cumsum = self._apply_operation(subset_sorted[metric_col], operation, window)
+                    subset_sorted = subset.sort_values(time_col).reset_index(drop=True)
+                    y_vals = self._apply_operation(subset_sorted[metric_col], operation, window)
 
-                for i, (ts, val) in enumerate(zip(subset_sorted[time_col], y_cumsum)):
-                    full_series[ts] = val
+                    for ts, val in zip(subset_sorted[time_col], y_vals):
+                        full_series[ts] = val
 
-                full_series = full_series.ffill()
-                line, = ax.plot(full_series.index, full_series.values, label=str(group_value), linewidth=1.5, marker='.', markersize=2)
-                self._line_objects[str(group_value)] = line
+                    full_series = full_series.ffill()
+                    label = f"{metric_col} — {group_value}" if multi_metric else str(group_value)
+                    line, = ax.plot(full_series.index, full_series.values,
+                                    label=label, linewidth=1.5, marker='.', markersize=2)
+                    self._line_objects[label] = line
         else:
-            y_values = self._apply_operation(df[metric_col], operation, window)
-            line, = ax.plot(df[time_col], y_values, linewidth=1.5, marker='.', markersize=2)
-            self._line_objects['main'] = line
+            for metric_col in metric_cols:
+                y_values = self._apply_operation(df[metric_col], operation, window)
+                label = metric_col if multi_metric else None
+                line, = ax.plot(df[time_col], y_values,
+                                label=label, linewidth=1.5, marker='.', markersize=2)
+                self._line_objects[metric_col] = line
 
         op_label = operation.replace('_', ' ').title()
         if operation.startswith('rolling'):
             op_label += f" (w={window})"
 
+        metrics_label = ', '.join(metric_cols)
         ax.set_xlabel(time_col)
-        ax.set_ylabel(f"{op_label} of {metric_col}")
-        ax.set_title(f"{op_label} - {metric_col} over Time")
+        ax.set_ylabel(f"{op_label} of {metrics_label}")
+        ax.set_title(f"{op_label} — {metrics_label} over Time")
 
-        if group_by:
+        if group_by or multi_metric:
             ax.legend(loc='upper left', fontsize='small')
 
         ax.grid(True, alpha=0.3)
@@ -1126,6 +1174,21 @@ class ChartWidget(QWidget):
         self.canvas.draw()
         self.info_label.setText("Chart cleared")
 
+    def _open_calc_fields_dialog(self):
+        """Open dialog to define/edit calculated fields for the chart."""
+        from market_monitor.gui.implementations.PyQt5Dashboard.widgets.groupby_widget import GroupByCalcFieldsDialog
+        dialog = GroupByCalcFieldsDialog(
+            calc_fields=self.chart_calc_fields,
+            result_data=self.source_data,
+            parent=self
+        )
+        dialog.exec_()
+        if not self.source_data.empty:
+            self.set_data(self.source_data)
+        if self.current_config and self.auto_update_checkbox.isChecked():
+            self._debounce_timer.stop()
+            self._debounce_timer.start(self.DEBOUNCE_MS)
+
     def _export_png(self):
         """Esporta chart come PNG"""
         if not self.current_config:
@@ -1160,7 +1223,9 @@ class ChartWidget(QWidget):
             'static_group': self.static_group_combo.currentText(),
             'static_agg': self.static_agg_combo.currentText(),
             'time_column': self.time_column_combo.currentText(),
-            'metric': self.metric_combo.currentText(),
+            'metric_columns': [self.metric_list.item(i).text()
+                               for i in range(self.metric_list.count())
+                               if self.metric_list.item(i).isSelected()],
             'operation': self.operation_combo.currentText(),
             'time_group': self.time_group_combo.currentText(),
             'window': self.window_spinbox.value(),
@@ -1172,6 +1237,7 @@ class ChartWidget(QWidget):
             'top_worst': self.top_worst_combo.currentText(),
             'top_n': self.top_n_spin.value(),
             'downsample': self.downsample_check.isChecked(),
+            'chart_calc_fields': dict(self.chart_calc_fields),
         }
 
     def restore_config(self, config: dict):
@@ -1236,10 +1302,15 @@ class ChartWidget(QWidget):
                 if index >= 0:
                     self.time_column_combo.setCurrentIndex(index)
 
-            if 'metric' in config and config['metric']:
-                index = self.metric_combo.findText(config['metric'])
-                if index >= 0:
-                    self.metric_combo.setCurrentIndex(index)
+            raw_m = config.get('metric_columns', config.get('metric'))
+            if raw_m:
+                selected_ms = raw_m if isinstance(raw_m, list) else [raw_m]
+                for i in range(self.metric_list.count()):
+                    item = self.metric_list.item(i)
+                    item.setSelected(item.text() in selected_ms)
+
+            if 'chart_calc_fields' in config:
+                self.chart_calc_fields = config['chart_calc_fields'].copy()
 
             if 'operation' in config:
                 index = self.operation_combo.findText(config['operation'])
