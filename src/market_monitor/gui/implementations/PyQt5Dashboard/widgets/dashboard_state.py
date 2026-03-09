@@ -66,6 +66,7 @@ class DashboardState:
                 'detached_windows': self._save_detached_windows(dashboard),
                 'preferences': self._save_preferences(dashboard),
                 'metrics': self._save_metrics_state(dashboard),
+                'calculated_fields': getattr(dashboard, 'calculated_fields', {}).copy(),
             }
 
             # Sanitize filename
@@ -149,7 +150,8 @@ class DashboardState:
         detached = {
             'pivot_windows': [],
             'chart_windows': [],
-            'flow_windows': []
+            'flow_windows': [],
+            'groupby_windows': [],
         }
 
         try:
@@ -200,6 +202,21 @@ class DashboardState:
                         'window_number': window.window_number,
                         'geometry': self._qbytearray_to_hex(window.saveGeometry()),
                     })
+
+            # GROUPBY WINDOWS
+            for window in getattr(dashboard, 'detached_groupbys', []):
+                if window.isVisible():
+                    gb_config = {
+                        'window_number': window.window_number,
+                        'geometry': self._qbytearray_to_hex(window.saveGeometry()),
+                    }
+                    if hasattr(window.groupby_widget, 'get_config'):
+                        widget_config = window.groupby_widget.get_config()
+                        gb_config['groupby_config'] = widget_config
+                        if hasattr(window.groupby_widget, 'active_filter') and window.groupby_widget.active_filter:
+                            gb_config['groupby_config']['advanced_filter'] = \
+                                self._serialize_filter_group(window.groupby_widget.active_filter)
+                    detached['groupby_windows'].append(gb_config)
 
         except Exception as e:
             self.logger.warning(f"Failed to save detached windows: {e}")
@@ -296,6 +313,10 @@ class DashboardState:
             self._restore_trade_table(dashboard.trade_table, state.get('trade_table', {}))
             self._restore_preferences(dashboard, state.get('preferences', {}))
 
+            # Ripristina campi calcolati
+            if 'calculated_fields' in state and hasattr(dashboard, 'calculated_fields'):
+                dashboard.calculated_fields = state['calculated_fields'].copy()
+
             # Restore detached windows
             detached = state.get('detached_windows', {})
             if detached:
@@ -390,12 +411,20 @@ class DashboardState:
         """Ripristina finestre detached CON FILTRI"""
         try:
             # Prima chiudi finestre esistenti
-            for window in dashboard.detached_pivots + dashboard.detached_charts + dashboard.detached_flows:
+            all_windows = (
+                dashboard.detached_pivots +
+                dashboard.detached_charts +
+                dashboard.detached_flows +
+                getattr(dashboard, 'detached_groupbys', [])
+            )
+            for window in all_windows:
                 window.close()
 
             dashboard.detached_pivots.clear()
             dashboard.detached_charts.clear()
             dashboard.detached_flows.clear()
+            if hasattr(dashboard, 'detached_groupbys'):
+                dashboard.detached_groupbys.clear()
 
             # 🆕 PIVOT WINDOWS - Con filtri
             for config in detached.get('pivot_windows', []):
@@ -455,6 +484,32 @@ class DashboardState:
             for config in detached.get('flow_windows', []):
                 window = dashboard._create_detached_flow_internal()
                 window.restoreGeometry(self._hex_to_qbytearray(config['geometry']))
+                window.show()
+
+            # GROUPBY WINDOWS
+            for config in detached.get('groupby_windows', []):
+                if not hasattr(dashboard, '_create_detached_groupby_internal'):
+                    continue
+                window = dashboard._create_detached_groupby_internal()
+                window.restoreGeometry(self._hex_to_qbytearray(config['geometry']))
+
+                # Carica dati arricchiti
+                if hasattr(dashboard, '_get_enriched_trades'):
+                    enriched = dashboard._get_enriched_trades()
+                    if not enriched.empty:
+                        window.groupby_widget.set_source_data(enriched)
+
+                if config.get('groupby_config'):
+                    gb_cfg = config['groupby_config']
+                    if 'advanced_filter' in gb_cfg and gb_cfg['advanced_filter']:
+                        filter_group = self._deserialize_filter_group(gb_cfg['advanced_filter'])
+                        if filter_group:
+                            window.groupby_widget.active_filter = filter_group
+                            if hasattr(window.groupby_widget, '_update_filter_label'):
+                                window.groupby_widget._update_filter_label()
+                    if hasattr(window.groupby_widget, 'restore_config'):
+                        window.groupby_widget.restore_config(gb_cfg)
+
                 window.show()
 
         except Exception as e:

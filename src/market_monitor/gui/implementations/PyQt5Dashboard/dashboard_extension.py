@@ -7,14 +7,17 @@ import pandas as pd
 from PyQt5.QtWidgets import (QMenu, QAction, QDialog, QVBoxLayout, QHBoxLayout,
                              QLabel, QLineEdit, QTextEdit, QDialogButtonBox,
                              QListWidget, QPushButton, QGroupBox, QMessageBox,
-                             QInputDialog, QFileDialog, QListWidgetItem)
+                             QInputDialog, QFileDialog, QListWidgetItem,
+                             QTableWidget, QTableWidgetItem, QHeaderView,
+                             QAbstractItemView, QFormLayout)
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QKeySequence, QIcon
 from pathlib import Path
 
 from market_monitor.gui.implementations.PyQt5Dashboard.widgets.dashboard_state import DashboardStateError
-from market_monitor.gui.implementations.PyQt5Dashboard.detached_windows import DetachedChartWindow, DetachedFlowWindow, \
-    DetachedPivotWindow
+from market_monitor.gui.implementations.PyQt5Dashboard.detached_windows import (
+    DetachedChartWindow, DetachedFlowWindow, DetachedPivotWindow, DetachedGroupByWindow
+)
 
 
 # ============================================================================
@@ -72,6 +75,14 @@ class TradeDashboardExtensions:
         reset_action.setStatusTip("Reset dashboard to default configuration")
         reset_action.triggered.connect(self._reset_to_default)
         dashboard_menu.addAction(reset_action)
+
+        dashboard_menu.addSeparator()
+
+        # Calculated Fields
+        calc_fields_action = QAction("🔢 &Calculated Fields...", self)
+        calc_fields_action.setStatusTip("Define calculated columns from existing data")
+        calc_fields_action.triggered.connect(self._manage_calculated_fields)
+        dashboard_menu.addAction(calc_fields_action)
 
         dashboard_menu.addSeparator()
 
@@ -310,6 +321,26 @@ class TradeDashboardExtensions:
         window = DetachedFlowWindow(window_number, self)
         self.detached_flows.append(window)
         return window
+
+    def _create_detached_groupby_internal(self):
+        """Crea finestra GroupBy senza mostrare (per load)"""
+        window_number = len(self.detached_groupbys) + 1
+        enriched = self._get_enriched_trades()
+        window = DetachedGroupByWindow(enriched, window_number, self)
+        self.detached_groupbys.append(window)
+        return window
+
+    def _manage_calculated_fields(self):
+        """Apre il dialog per gestire i campi calcolati."""
+        dialog = CalculatedFieldsManagerDialog(self, self)
+        dialog.exec_()
+        # Dopo la chiusura aggiorna tutti i widget con i dati arricchiti
+        if not self.all_trades.empty:
+            enriched = self._get_enriched_trades()
+            self.trade_table.update_data(enriched)
+            self._update_all_detached_pivots(enriched)
+            self._update_all_detached_charts(enriched)
+            self._update_all_detached_groupbys(enriched)
 
 
 # ============================================================================
@@ -599,3 +630,199 @@ class ManageDashboardsDialog(QDialog):
                 self._load_dashboards()
             else:
                 QMessageBox.warning(self, "Error", "Failed to duplicate dashboard.")
+
+
+# ============================================================================
+# CALCULATED FIELDS DIALOGS
+# ============================================================================
+
+class AddEditCalcFieldDialog(QDialog):
+    """Dialog per aggiungere o modificare un campo calcolato."""
+
+    def __init__(self, sample_data=None, name: str = "", expression: str = "", parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Calculated Field")
+        self.setModal(True)
+        self.resize(480, 220)
+        self._sample_data = sample_data
+        self._setup_ui(name, expression)
+
+    def _setup_ui(self, name: str, expression: str):
+        layout = QVBoxLayout(self)
+
+        form_layout = QFormLayout()
+
+        self.name_input = QLineEdit(name)
+        self.name_input.setPlaceholderText("e.g. margin")
+        form_layout.addRow("Field Name:", self.name_input)
+
+        self.expr_input = QLineEdit(expression)
+        self.expr_input.setPlaceholderText("e.g. spread_pl / ctv")
+        form_layout.addRow("Expression:", self.expr_input)
+
+        layout.addLayout(form_layout)
+
+        test_row = QHBoxLayout()
+        self.test_btn = QPushButton("Test Expression")
+        self.test_btn.clicked.connect(self._test_expression)
+        test_row.addWidget(self.test_btn)
+        self.test_result_label = QLabel("")
+        self.test_result_label.setWordWrap(True)
+        test_row.addWidget(self.test_result_label, 1)
+        layout.addLayout(test_row)
+
+        hint = QLabel(
+            "<i>Supported: arithmetic operators (+, -, *, /), column names (use exact column names). "
+            "Example: <b>spread_pl / ctv</b></i>"
+        )
+        hint.setWordWrap(True)
+        hint.setStyleSheet("color: #666; font-size: 11px;")
+        layout.addWidget(hint)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self._on_accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def _test_expression(self):
+        expr = self.expr_input.text().strip()
+        if not expr:
+            self.test_result_label.setText("⚠️ Empty expression")
+            return
+
+        if self._sample_data is None or self._sample_data.empty:
+            self.test_result_label.setText("⚠️ No data to test against")
+            return
+
+        try:
+            sample = self._sample_data.head(5)
+            result = sample.eval(expr)
+            preview = str(result.iloc[0]) if len(result) > 0 else "N/A"
+            self.test_result_label.setText(f"✅ OK — first value: {preview}")
+            self.test_result_label.setStyleSheet("color: green;")
+        except Exception as e:
+            self.test_result_label.setText(f"❌ Error: {e}")
+            self.test_result_label.setStyleSheet("color: red;")
+
+    def _on_accept(self):
+        name = self.name_input.text().strip()
+        expr = self.expr_input.text().strip()
+        if not name:
+            QMessageBox.warning(self, "Invalid", "Field name cannot be empty.")
+            return
+        if not name.isidentifier():
+            QMessageBox.warning(self, "Invalid",
+                                "Field name must be a valid Python identifier (letters, numbers, underscore, no spaces).")
+            return
+        if not expr:
+            QMessageBox.warning(self, "Invalid", "Expression cannot be empty.")
+            return
+        self.accept()
+
+    def get_field(self):
+        return self.name_input.text().strip(), self.expr_input.text().strip()
+
+
+class CalculatedFieldsManagerDialog(QDialog):
+    """Dialog per gestire i campi calcolati del dashboard."""
+
+    def __init__(self, dashboard, parent=None):
+        super().__init__(parent)
+        self.dashboard = dashboard
+        self.setWindowTitle("Calculated Fields")
+        self.setMinimumWidth(560)
+        self.setMinimumHeight(380)
+        self._setup_ui()
+        self._refresh_table()
+
+    def _setup_ui(self):
+        layout = QVBoxLayout(self)
+
+        layout.addWidget(QLabel(
+            "<b>Calculated Fields</b> — Define virtual columns computed from existing data columns.<br>"
+            "These columns will appear in all widgets (trade table, pivot, groupby)."
+        ))
+
+        self.table = QTableWidget()
+        self.table.setColumnCount(2)
+        self.table.setHorizontalHeaderLabels(["Field Name", "Expression"])
+        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.table.setAlternatingRowColors(True)
+        layout.addWidget(self.table)
+
+        btn_row = QHBoxLayout()
+
+        add_btn = QPushButton("Add")
+        add_btn.clicked.connect(self._add_field)
+        btn_row.addWidget(add_btn)
+
+        self.edit_btn = QPushButton("Edit")
+        self.edit_btn.clicked.connect(self._edit_field)
+        btn_row.addWidget(self.edit_btn)
+
+        self.remove_btn = QPushButton("Remove")
+        self.remove_btn.clicked.connect(self._remove_field)
+        btn_row.addWidget(self.remove_btn)
+
+        btn_row.addStretch()
+        layout.addLayout(btn_row)
+
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(self.accept)
+        layout.addWidget(close_btn)
+
+    def _refresh_table(self):
+        fields = self.dashboard.calculated_fields
+        self.table.setRowCount(len(fields))
+        for row, (name, expr) in enumerate(fields.items()):
+            self.table.setItem(row, 0, QTableWidgetItem(name))
+            self.table.setItem(row, 1, QTableWidgetItem(expr))
+
+    def _add_field(self):
+        sample = self.dashboard.all_trades if not self.dashboard.all_trades.empty else None
+        dialog = AddEditCalcFieldDialog(sample_data=sample, parent=self)
+        if dialog.exec_() == QDialog.Accepted:
+            name, expr = dialog.get_field()
+            if name in self.dashboard.calculated_fields:
+                reply = QMessageBox.question(
+                    self, "Overwrite?",
+                    f"Field '{name}' already exists. Overwrite?",
+                    QMessageBox.Yes | QMessageBox.No
+                )
+                if reply != QMessageBox.Yes:
+                    return
+            self.dashboard.calculated_fields[name] = expr
+            self._refresh_table()
+
+    def _edit_field(self):
+        row = self.table.currentRow()
+        if row < 0:
+            return
+        name = list(self.dashboard.calculated_fields.keys())[row]
+        expr = self.dashboard.calculated_fields[name]
+        sample = self.dashboard.all_trades if not self.dashboard.all_trades.empty else None
+        dialog = AddEditCalcFieldDialog(sample_data=sample, name=name, expression=expr, parent=self)
+        if dialog.exec_() == QDialog.Accepted:
+            new_name, new_expr = dialog.get_field()
+            # Rimuovi il vecchio e inserisci il nuovo (preserva ordine)
+            items = list(self.dashboard.calculated_fields.items())
+            items[row] = (new_name, new_expr)
+            self.dashboard.calculated_fields = dict(items)
+            self._refresh_table()
+
+    def _remove_field(self):
+        row = self.table.currentRow()
+        if row < 0:
+            return
+        name = list(self.dashboard.calculated_fields.keys())[row]
+        reply = QMessageBox.question(
+            self, "Remove?",
+            f"Remove calculated field '{name}'?",
+            QMessageBox.Yes | QMessageBox.No
+        )
+        if reply == QMessageBox.Yes:
+            del self.dashboard.calculated_fields[name]
+            self._refresh_table()

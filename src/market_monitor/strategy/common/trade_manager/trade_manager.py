@@ -5,7 +5,7 @@ trade_manager ottimizzato con miglioramenti chiave.
 import datetime
 import logging
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Union
 from threading import RLock
 
 import numpy as np
@@ -465,7 +465,7 @@ class TradeManager:
 
                 if trade:
                     with self.trade_storage.lock:
-                        self.trade_storage.append(trade)
+                        self.trade_storage.add_trade(trade)
                         if trade.is_my_trade():
                             self._my_trades_index.append(trade.trade_index)
                     loaded_count += 1
@@ -532,10 +532,12 @@ class TradeManager:
             self._trades_df_cache = None
 
     @staticmethod
-    def _convert_trades_obj_to_df(trades: list) -> pd.DataFrame:
+    def _convert_trades_obj_to_df(trades: Union[dict, list]) -> pd.DataFrame:
         if not trades:
             return pd.DataFrame()
         rows = []
+        if isinstance(trades, dict):
+            trades = [*trades.values()]
         for t in trades:
             d = {k: v for k, v in t.__dict__.items() if k != 'extra'}
             d.update(t.extra)  # flatten

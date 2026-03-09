@@ -32,7 +32,8 @@ from market_monitor.gui.implementations.PyQt5Dashboard.dashboard_extension impor
 from market_monitor.gui.implementations.PyQt5Dashboard.detached_windows import (
     DetachedPivotWindow,
     DetachedChartWindow,
-    DetachedFlowWindow
+    DetachedFlowWindow,
+    DetachedGroupByWindow,
 )
 from market_monitor.gui.implementations.PyQt5Dashboard.widgets.dashboard_state import DashboardState
 from market_monitor.gui.implementations.PyQt5Dashboard.widgets.trade_table import TradeTableWidget
@@ -103,11 +104,15 @@ class TradeDashboard(BasePyQt5Dashboard, TradeDashboardExtensions):
         
         self.metric_labels = {}
 
+        # ===== CAMPI CALCOLATI =====
+        self.calculated_fields: Dict[str, str] = {}  # {'margin': 'spread_pl / ctv'}
+
         # ===== DETACHED WINDOWS =====
         self.detached_pivots = []
         self.detached_charts = []
         self.detached_flows = []
-        self.trade_history_windows = []  # ✅ AGGIUNGI QUESTA RIGA
+        self.detached_groupbys = []
+        self.trade_history_windows = []
 
         super().__init__(
             datasource=datasource,
@@ -211,6 +216,10 @@ class TradeDashboard(BasePyQt5Dashboard, TradeDashboardExtensions):
         detach_flow_btn.clicked.connect(self._create_detached_flow)
         layout.addWidget(detach_flow_btn)
 
+        detach_groupby_btn = QPushButton("🪟 New GroupBy Window")
+        detach_groupby_btn.clicked.connect(self._create_detached_groupby)
+        layout.addWidget(detach_groupby_btn)
+
         layout.addStretch()
         return controls
 
@@ -224,12 +233,16 @@ class TradeDashboard(BasePyQt5Dashboard, TradeDashboardExtensions):
             self.pause_btn.setText("▶️ Resume")
 
     def _on_data_received(self, df: pd.DataFrame):
+        """
+        Ricezione nuovi dati dal worker thread.
+        Esegue SEMPRE nel main thread Qt.
+        """
         if self.paused:
             return
 
         self.logger.debug(f"Received {len(df)} new trades")
 
-        # Normalizzazione timestamp (invariata)
+        # NORMALIZZAZIONE TIMESTAMP: Assicurati che timestamp sia SEMPRE datetime pandas
         if 'timestamp' in df.columns:
             if df['timestamp'].dtype != 'datetime64[ns]':
                 df['timestamp'] = pd.to_datetime(df['timestamp'], errors='coerce')
@@ -237,40 +250,46 @@ class TradeDashboard(BasePyQt5Dashboard, TradeDashboardExtensions):
         if self.all_trades.empty:
             self.all_trades = df.copy()
         else:
+            # NORMALIZZA anche all_trades se necessario
             if 'timestamp' in self.all_trades.columns:
                 if self.all_trades['timestamp'].dtype != 'datetime64[ns]':
                     self.logger.info("Normalizing all_trades timestamps to datetime")
-                    self.all_trades['timestamp'] = pd.to_datetime(
-                        self.all_trades['timestamp'], errors='coerce'
-                    )
-
-            self.all_trades = safe_concat([self.all_trades, df], ignore_index=True)
+                    self.all_trades['timestamp'] = pd.to_datetime(self.all_trades['timestamp'], errors='coerce')
+            
+            self.all_trades = safe_concat(
+                [self.all_trades, df],
+                ignore_index=True
+            )
 
             if 'trade_index' in self.all_trades.columns:
-                self.all_trades = self.all_trades.drop_duplicates(
-                    subset=['trade_index'], keep='last'
+                self.all_trades = (
+                    self.all_trades
+                    .drop_duplicates(
+                        subset=['trade_index'],
+                        keep='last'
+                    )
                 )
-            # RIMOSSO: sort_values su all_trades (era O(n log n) ad ogni update)
+                
+                # Sort per timestamp
+                if 'timestamp' in self.all_trades.columns:
+                    try:
+                        self.all_trades = self.all_trades.sort_values(
+                            by="timestamp",
+                            ascending=False
+                        )
+                    except Exception as e:
+                        # Log errore se fallisce
+                        self.logger.error(f"Failed to sort by timestamp: {e}")
+                        # DEBUG: mostra tipi se fallisce
+                        ts_types = self.all_trades['timestamp'].apply(type).value_counts()
+                        self.logger.error(f"Timestamp types: {ts_types.to_dict()}")
 
-        # FIX 1: Per il display, usa nlargest (O(n)) invece di sort (O(n log n)).
-        # Passa solo una slice bounded alla table; all_trades rimane completo per metriche/pivot.
-        # FIX: Ottieni i record più recenti e assicurati che siano ordinati decrescenti
-        max_display = self.config.get('max_display_rows', 15_000)
-
-        if 'timestamp' in self.all_trades.columns:
-            # nlargest estrae i top N valori, ma l'ordine interno non è garantito
-            # come "strettamente decrescente" in alcune versioni di pandas.
-            # Per sicurezza e chiarezza, facciamo uno slice ordinato.
-            display_df = self.all_trades.sort_values('timestamp', ascending=False)
-        else:
-            # Fallback se non c'è timestamp (usa l'ordine di inserimento)
-            display_df = self.all_trades.tail(max_display).iloc[::-1]
-
-        # Ora display_df ha il più recente in posizione 0
-        self.trade_table.update_data(display_df) # slice bounded
-        self._update_metrics()  # usa all_trades completo
-        self._update_all_detached_pivots(self.all_trades)  # storico completo
-        self._update_all_detached_charts(self.all_trades)  # storico completo
+        enriched = self._get_enriched_trades()
+        self.trade_table.update_data(enriched)
+        self._update_metrics()
+        self._update_all_detached_pivots(enriched)
+        self._update_all_detached_charts(enriched)
+        self._update_all_detached_groupbys(enriched)
 
     def _on_filtered_data_changed(self, filtered_df: pd.DataFrame):
         """Callback su cambio filtri tabella."""
@@ -394,6 +413,10 @@ class TradeDashboard(BasePyQt5Dashboard, TradeDashboardExtensions):
         for flow_window in self.detached_flows:
             if not flow_window.isHidden():
                 flow_window.clear_all()
+
+        for groupby_window in self.detached_groupbys:
+            if not groupby_window.isHidden():
+                groupby_window.clear_data()
 
         # Reset metriche
         if self.metrics_enabled:
@@ -521,6 +544,36 @@ class TradeDashboard(BasePyQt5Dashboard, TradeDashboardExtensions):
         group.setLayout(layout)
         return group
 
+    def _get_enriched_trades(self) -> pd.DataFrame:
+        """Ritorna all_trades arricchito con i campi calcolati definiti dall'utente."""
+        if self.all_trades.empty or not self.calculated_fields:
+            return self.all_trades
+
+        df = self.all_trades.copy()
+        for name, expr in self.calculated_fields.items():
+            try:
+                df[name] = df.eval(expr)
+            except Exception as e:
+                self.logger.warning(f"[CalcField] '{name}' error: {e}")
+        return df
+
+    def _create_detached_groupby(self):
+        """Crea una nuova finestra GroupBy detached."""
+        window = DetachedGroupByWindow(
+            self._get_enriched_trades(),
+            len(self.detached_groupbys) + 1,
+            self
+        )
+        self.detached_groupbys.append(window)
+        window.show()
+        self.logger.info(f"Created detached groupby window #{len(self.detached_groupbys)}")
+
+    def _update_all_detached_groupbys(self, data: pd.DataFrame):
+        """Aggiorna tutte le finestre GroupBy."""
+        for window in self.detached_groupbys:
+            if not window.isHidden():
+                window.update_source_data(data)
+
     def _update_all_detached_pivots(self, data: pd.DataFrame):
         """Aggiorna tutte le finestre Pivot."""
         for window in self.detached_pivots:
@@ -622,7 +675,8 @@ class TradeDashboard(BasePyQt5Dashboard, TradeDashboardExtensions):
         for window in (
             self.detached_pivots +
             self.detached_charts +
-            self.detached_flows
+            self.detached_flows +
+            self.detached_groupbys
         ):
             window.close()
 
@@ -643,7 +697,9 @@ class ColumnChooserDialog(QDialog):
 
         layout = QVBoxLayout(self)
 
-        layout.addWidget(QLabel("Select columns to display:"))
+        layout.addWidget(QLabel(
+            "Select columns to display. Drag items to reorder."
+        ))
 
         btn_layout = QHBoxLayout()
         select_all_btn = QPushButton("Select All")
@@ -657,12 +713,17 @@ class ColumnChooserDialog(QDialog):
         layout.addLayout(btn_layout)
 
         self.list_widget = QListWidget()
+        self.list_widget.setDragDropMode(QListWidget.InternalMove)
+        self.list_widget.setDefaultDropAction(Qt.MoveAction)
 
-        for col in available_columns:
+        # Mostra prima le colonne selezionate (nell'ordine corrente), poi le restanti
+        selected_set = set(selected_columns)
+        ordered = list(selected_columns) + [c for c in available_columns if c not in selected_set]
+        for col in ordered:
             item = QListWidgetItem(col)
-            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+            item.setFlags(item.flags() | Qt.ItemIsUserCheckable | Qt.ItemIsDragEnabled | Qt.ItemIsDropEnabled)
             item.setCheckState(
-                Qt.Checked if col in selected_columns else Qt.Unchecked
+                Qt.Checked if col in selected_set else Qt.Unchecked
             )
             self.list_widget.addItem(item)
 

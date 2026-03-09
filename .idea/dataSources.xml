@@ -9,6 +9,7 @@
       <working-dir>$ProjectFileDir$</working-dir>
       <driver-properties>
         <property name="journal_mode" value="WAL" />
+        <property name="synchronous" value="NORMAL" />
       </driver-properties>
     </data-source>
     <data-source source="LOCAL" name="markettrades.db" uuid="fdf67e14-96c6-40b0-aa92-0175ad84675b">
@@ -17,6 +18,17 @@
       <jdbc-driver>org.sqlite.JDBC</jdbc-driver>
       <jdbc-url>jdbc:sqlite:$USER_HOME$/Documents/marketTradeFolder/markettrades.db</jdbc-url>
       <working-dir>$ProjectFileDir$</working-dir>
+    </data-source>
+    <data-source source="LOCAL" name="etf_equity_anagraphic_db.sqlite [2]" uuid="f33ab60f-3a80-47d5-b11a-a5be00a3ad3a">
+      <driver-ref>sqlite.xerial</driver-ref>
+      <synchronize>true</synchronize>
+      <jdbc-driver>org.sqlite.JDBC</jdbc-driver>
+      <jdbc-url>jdbc:sqlite:$PROJECT_DIR$/etc/input/etf_equity_anagraphic_db.sqlite</jdbc-url>
+      <working-dir>$ProjectFileDir$</working-dir>
+      <driver-properties>
+        <property name="synchronous" value="NORMAL" />
+        <property name="journal_mode" value="WAL" />
+      </driver-properties>
     </data-source>
   </component>
 </project>

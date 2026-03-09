@@ -99,6 +99,9 @@ class TradeStorage:
             if n is None:
                 return self._storage
             else:
+                if isinstance(self._storage, dict):
+                    storage = [*self._storage.values()]
+                    return storage[-n:] if len(storage) > n else storage
                 return self._storage[-n:] if len(self._storage) > n else self._storage
 
     def add_trade(self, trade: AbstractTrade):
@@ -108,7 +111,6 @@ class TradeStorage:
                     self._my_trades_indexes.append(trade.trade_index)
                 self.trade_to_elaborate.put(trade.trade_index)
             self._storage[trade.trade_index] = trade
-
 
     def get_trade_index_to_elaborate(self, timeout=None):
         """
