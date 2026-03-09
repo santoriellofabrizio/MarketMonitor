@@ -19,7 +19,9 @@ Caratteristiche:
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QGroupBox, QDialog, QListWidget,
-    QDialogButtonBox, QListWidgetItem, QMessageBox
+    QDialogButtonBox, QListWidgetItem, QMessageBox,
+    QTableWidget, QTableWidgetItem, QCheckBox, QComboBox, QHeaderView,
+    QAbstractItemView,
 )
 from PyQt5.QtCore import Qt
 import pandas as pd
@@ -38,7 +40,6 @@ from market_monitor.gui.implementations.PyQt5Dashboard.detached_windows import (
 from market_monitor.gui.implementations.PyQt5Dashboard.widgets.dashboard_state import DashboardState
 from market_monitor.gui.implementations.PyQt5Dashboard.widgets.trade_table import TradeTableWidget
 from market_monitor.gui.implementations.PyQt5Dashboard.widgets.trade_history_window import TradeHistoryWindow
-from market_monitor.gui.implementations.PyQt5Dashboard.metrics_definition import METRIC_DEFINITIONS
 from market_monitor.gui.threaded_GUI.QueueDataSource import QueueDataSource
 from market_monitor.gui.implementations.PyQt5Dashboard.worker_thread import (
     QueuePollingThread,
@@ -47,37 +48,174 @@ from market_monitor.gui.implementations.PyQt5Dashboard.worker_thread import (
 )
 
 
-class MetricChooserDialog(QDialog):
-    """Dialog per selezionare le metriche da mostrare nel pannello Metrics Summary."""
+DEFAULT_METRIC_ITEMS = [
+    {"label": "Total Trades",    "expr": "spread_pl",   "aggregation": "count", "colorize": False, "format": ""},
+    {"label": "Spread P&L",      "expr": "spread_pl",   "aggregation": "sum",   "colorize": True,  "format": "€{:,.2f}"},
+    {"label": "Avg Marginality", "expr": "marginality", "aggregation": "mean",  "colorize": True,  "format": "{:.2%}"},
+]
 
-    def __init__(self, current_items: list, parent=None):
+_AGGREGATIONS = ["count", "sum", "mean", "median", "min", "max", "std", "last"]
+
+
+class MetricDefinitionDialog(QDialog):
+    """
+    Dialog to define metric summary items dynamically.
+
+    Each metric is defined by:
+    - label:       display name (auto-filled if blank)
+    - expr:        column name or pandas eval expression (e.g. 'spread_pl / ctv')
+    - aggregation: one of count/sum/mean/median/min/max/std/last
+    - colorize:    bool — green/red for positive/negative values
+    - format:      optional Python format string (e.g. '€{:,.2f}')
+    """
+
+    def __init__(self, metric_items: list, data_columns: list, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Choose Metrics")
-        self.setMinimumSize(380, 450)
+        self.setWindowTitle("Configure Metric Summary")
+        self.setMinimumSize(700, 400)
+        self.data_columns = data_columns
+
         layout = QVBoxLayout(self)
+        layout.addWidget(QLabel(
+            "Define metrics: choose a column (or type a pandas eval expression) and an aggregation."
+        ))
 
-        layout.addWidget(QLabel("Select metrics to display (order is preserved):"))
+        self.table = QTableWidget(0, 5)
+        self.table.setHorizontalHeaderLabels(
+            ["Label", "Column / Expression", "Aggregation", "Colorize", "Format"]
+        )
+        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(4, QHeaderView.Stretch)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        layout.addWidget(self.table)
 
-        self.list_widget = QListWidget()
-        self.list_widget.setSelectionMode(QListWidget.MultiSelection)
-        for key, defn in METRIC_DEFINITIONS.items():
-            item = QListWidgetItem(f"{defn['label']}  [{key}]")
-            item.setData(Qt.UserRole, key)
-            self.list_widget.addItem(item)
-            if key in current_items:
-                item.setSelected(True)
-        layout.addWidget(self.list_widget)
+        # Buttons row
+        btn_row = QHBoxLayout()
+        add_btn = QPushButton("+ Add")
+        add_btn.clicked.connect(self._add_empty_row)
+        btn_row.addWidget(add_btn)
+
+        remove_btn = QPushButton("− Remove")
+        remove_btn.clicked.connect(self._remove_selected_row)
+        btn_row.addWidget(remove_btn)
+
+        up_btn = QPushButton("↑ Up")
+        up_btn.clicked.connect(self._move_row_up)
+        btn_row.addWidget(up_btn)
+
+        down_btn = QPushButton("↓ Down")
+        down_btn.clicked.connect(self._move_row_down)
+        btn_row.addWidget(down_btn)
+
+        btn_row.addStretch()
 
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
+        btn_row.addWidget(buttons)
+        layout.addLayout(btn_row)
 
-    def get_selected_keys(self) -> list:
-        """Returns metric keys in the order they appear in the list."""
-        return [self.list_widget.item(i).data(Qt.UserRole)
-                for i in range(self.list_widget.count())
-                if self.list_widget.item(i).isSelected()]
+        for item in metric_items:
+            if isinstance(item, dict):
+                self._add_row(item)
+
+    def _make_expr_combo(self, current_expr: str) -> QComboBox:
+        combo = QComboBox()
+        combo.setEditable(True)
+        combo.addItems([""] + self.data_columns)
+        combo.setCurrentText(current_expr)
+        return combo
+
+    def _make_agg_combo(self, current_agg: str) -> QComboBox:
+        combo = QComboBox()
+        combo.addItems(_AGGREGATIONS)
+        idx = combo.findText(current_agg)
+        if idx >= 0:
+            combo.setCurrentIndex(idx)
+        return combo
+
+    def _make_colorize_widget(self, checked: bool) -> QWidget:
+        container = QWidget()
+        h = QHBoxLayout(container)
+        h.setContentsMargins(0, 0, 0, 0)
+        h.addStretch()
+        chk = QCheckBox()
+        chk.setChecked(checked)
+        h.addWidget(chk)
+        h.addStretch()
+        return container
+
+    def _add_row(self, item: dict):
+        row = self.table.rowCount()
+        self.table.insertRow(row)
+        self.table.setItem(row, 0, QTableWidgetItem(item.get("label", "")))
+        self.table.setCellWidget(row, 1, self._make_expr_combo(item.get("expr", "")))
+        self.table.setCellWidget(row, 2, self._make_agg_combo(item.get("aggregation", "sum")))
+        self.table.setCellWidget(row, 3, self._make_colorize_widget(bool(item.get("colorize", False))))
+        self.table.setItem(row, 4, QTableWidgetItem(item.get("format", "")))
+
+    def _add_empty_row(self):
+        self._add_row({"label": "", "expr": "", "aggregation": "sum", "colorize": False, "format": ""})
+
+    def _remove_selected_row(self):
+        rows = sorted({idx.row() for idx in self.table.selectedIndexes()}, reverse=True)
+        for r in rows:
+            self.table.removeRow(r)
+
+    def _move_row_up(self):
+        row = self.table.currentRow()
+        if row > 0:
+            self._swap_rows(row, row - 1)
+            self.table.setCurrentCell(row - 1, self.table.currentColumn())
+
+    def _move_row_down(self):
+        row = self.table.currentRow()
+        if row < self.table.rowCount() - 1:
+            self._swap_rows(row, row + 1)
+            self.table.setCurrentCell(row + 1, self.table.currentColumn())
+
+    def _swap_rows(self, r1: int, r2: int):
+        """Swap two rows by reading all widgets/items and re-setting them."""
+        def _read_row(r):
+            label = (self.table.item(r, 0).text() if self.table.item(r, 0) else "")
+            expr = self.table.cellWidget(r, 1).currentText()
+            agg = self.table.cellWidget(r, 2).currentText()
+            colorize = self.table.cellWidget(r, 3).findChild(QCheckBox).isChecked()
+            fmt = (self.table.item(r, 4).text() if self.table.item(r, 4) else "")
+            return {"label": label, "expr": expr, "aggregation": agg, "colorize": colorize, "format": fmt}
+
+        d1 = _read_row(r1)
+        d2 = _read_row(r2)
+        self._set_row(r1, d2)
+        self._set_row(r2, d1)
+
+    def _set_row(self, row: int, item: dict):
+        self.table.setItem(row, 0, QTableWidgetItem(item["label"]))
+        self.table.setCellWidget(row, 1, self._make_expr_combo(item["expr"]))
+        self.table.setCellWidget(row, 2, self._make_agg_combo(item["aggregation"]))
+        self.table.setCellWidget(row, 3, self._make_colorize_widget(item["colorize"]))
+        self.table.setItem(row, 4, QTableWidgetItem(item["format"]))
+
+    def get_metric_items(self) -> list:
+        """Return list of metric dicts, skipping rows with empty expression."""
+        items = []
+        for row in range(self.table.rowCount()):
+            expr = self.table.cellWidget(row, 1).currentText().strip()
+            if not expr:
+                continue
+            label_item = self.table.item(row, 0)
+            label = label_item.text().strip() if label_item else ""
+            agg = self.table.cellWidget(row, 2).currentText()
+            colorize = self.table.cellWidget(row, 3).findChild(QCheckBox).isChecked()
+            fmt_item = self.table.item(row, 4)
+            fmt = fmt_item.text().strip() if fmt_item else ""
+            if not label:
+                label = f"{expr} ({agg})"
+            items.append({"label": label, "expr": expr, "aggregation": agg, "colorize": colorize, "format": fmt})
+        return items
 
 
 class TradeDashboard(BasePyQt5Dashboard, TradeDashboardExtensions):
@@ -129,13 +267,15 @@ class TradeDashboard(BasePyQt5Dashboard, TradeDashboardExtensions):
         # ===== METRICS CONFIG =====
         self.metrics_config = metrics_config or {}
         self.metrics_enabled = self.metrics_config.get("enabled", True)
-        self.metric_items = self.metrics_config.get("items", [])
-        
-        # Default metrics se lista vuota
-        if self.metrics_enabled and not self.metric_items:
-            self.metric_items = ["total_trades", "own_trades", "spread_pl_sum"]
-        
-        self.metric_labels = {}
+        raw_items = self.metrics_config.get("items", [])
+
+        # Accept only new-style List[Dict]; discard old List[str] keys
+        if raw_items and all(isinstance(x, dict) for x in raw_items):
+            self.metric_items = raw_items
+        else:
+            self.metric_items = list(DEFAULT_METRIC_ITEMS)
+
+        self.metric_labels = {}  # keyed by int index
 
         # ===== CAMPI CALCOLATI =====
         self.calculated_fields: Dict[str, str] = {}  # {'margin': 'spread_pl / ctv'}
@@ -387,51 +527,52 @@ class TradeDashboard(BasePyQt5Dashboard, TradeDashboardExtensions):
         QMessageBox.warning(self, "Worker Error", error_msg)
 
     def _update_metrics(self):
-        """Aggiorna le metriche nella dashboard"""
+        """Aggiorna le metriche nella dashboard usando definizioni dinamiche."""
         if not self.metrics_enabled or self.all_trades.empty:
             return
 
         df = self.all_trades
 
-        # Itera sugli item configurati
-        for metric_key in self.metric_items:
-            metric_def = METRIC_DEFINITIONS.get(metric_key)
-            if not metric_def:
-                self.logger.warning(f"Unknown metric key: {metric_key}")
+        for idx, metric_def in enumerate(self.metric_items):
+            if not isinstance(metric_def, dict):
+                continue
+            label_widget = self.metric_labels.get(idx)
+            if label_widget is None:
                 continue
 
-            label = self.metric_labels.get(metric_key)
-            if label is None:
-                continue
+            expr = metric_def.get("expr", "")
+            agg = metric_def.get("aggregation", "sum")
+            display_label = metric_def.get("label", expr)
 
             try:
-                # Calcola valore
-                value = metric_def["compute"](df)
+                series = df[expr] if expr in df.columns else df.eval(expr)
+                value = len(series.dropna()) if agg == "count" else getattr(series, agg)()
+            except Exception as e:
+                self.logger.warning(f"[Metric] '{display_label}' error: {e}")
+                label_widget.setText(f"{display_label}: Error")
+                continue
 
-                # Formatta
-                fmt = metric_def.get("format", "{}")
-                if isinstance(fmt, str):
+            fmt = metric_def.get("format", "")
+            if fmt:
+                try:
                     text = fmt.format(value)
-                else:
+                except Exception:
+                    text = str(value)
+            elif agg == "count" or isinstance(value, int):
+                text = str(int(value))
+            else:
+                try:
+                    text = f"{value:,.2f}"
+                except Exception:
                     text = str(value)
 
-                # Aggiorna label
-                label.setText(f"{metric_def['label']}: {text}")
+            label_widget.setText(f"{display_label}: {text}")
 
-                # Colorizza se richiesto
-                if metric_def.get("colorize", False) and isinstance(value, (int, float)):
-                    if value > 0:
-                        label.setStyleSheet("font-weight: bold; color: green; padding: 5px;")
-                    elif value < 0:
-                        label.setStyleSheet("font-weight: bold; color: red; padding: 5px;")
-                    else:
-                        label.setStyleSheet("font-weight: bold; padding: 5px;")
-                else:
-                    label.setStyleSheet("font-size: 13px; font-weight: bold; padding: 5px;")
-
-            except Exception as e:
-                self.logger.error(f"Error computing metric {metric_key}: {e}")
-                label.setText(f"{metric_def['label']}: Error")
+            if metric_def.get("colorize") and isinstance(value, (int, float)):
+                color = "green" if value > 0 else ("red" if value < 0 else "black")
+                label_widget.setStyleSheet(f"font-weight: bold; color: {color}; padding: 5px;")
+            else:
+                label_widget.setStyleSheet("font-size: 13px; font-weight: bold; padding: 5px;")
     # METODO clear_all() CORRETTO (sostituisci la sezione metriche)
 
     def clear_all(self):
@@ -459,17 +600,11 @@ class TradeDashboard(BasePyQt5Dashboard, TradeDashboardExtensions):
 
         # Reset metriche
         if self.metrics_enabled:
-            for label in self.metric_labels.values():
-                # Trova il nome della metrica dalla label
-                metric_name = "Metric"  # default
-                for key, lbl in self.metric_labels.items():
-                    if lbl == label:
-                        metric_def = METRIC_DEFINITIONS.get(key)
-                        if metric_def:
-                            metric_name = metric_def['label']
-                        break
-                label.setText(f"{metric_name}: 0")
-                label.setStyleSheet("font-size: 13px; font-weight: bold; padding: 5px;")
+            for idx, metric_def in enumerate(self.metric_items):
+                lbl = self.metric_labels.get(idx)
+                if lbl and isinstance(metric_def, dict):
+                    lbl.setText(f"{metric_def.get('label', '—')}: —")
+                    lbl.setStyleSheet("font-size: 13px; font-weight: bold; padding: 5px;")
 
     def _show_column_chooser(self):
         """Mostra dialog per la selezione colonne."""
@@ -549,11 +684,15 @@ class TradeDashboard(BasePyQt5Dashboard, TradeDashboardExtensions):
         )
 
     def _show_metric_chooser(self):
-        """Apre il dialog per scegliere le metriche e ricostruisce il pannello."""
-        dialog = MetricChooserDialog(self.metric_items, parent=self)
+        """Apre il dialog per definire le metriche e ricostruisce il pannello."""
+        columns = list(self.all_trades.columns) if not self.all_trades.empty else []
+        dialog = MetricDefinitionDialog(
+            metric_items=list(self.metric_items),
+            data_columns=columns,
+            parent=self,
+        )
         if dialog.exec_() == QDialog.Accepted:
-            new_items = dialog.get_selected_keys()
-            self._rebuild_metrics_panel(new_items)
+            self._rebuild_metrics_panel(dialog.get_metric_items())
 
     def _rebuild_metrics_panel(self, new_items: list):
         """Sostituisce il pannello metriche con uno nuovo basato su new_items."""
@@ -572,7 +711,7 @@ class TradeDashboard(BasePyQt5Dashboard, TradeDashboardExtensions):
 
         # Aggiorna subito con i dati correnti
         if not self.all_trades.empty:
-            self._update_metrics(self.all_trades)
+            self._update_metrics()
 
     def _create_metrics_panel(self) -> QWidget:
         if not self.metrics_enabled:
@@ -584,26 +723,24 @@ class TradeDashboard(BasePyQt5Dashboard, TradeDashboardExtensions):
         row = QHBoxLayout()
         count = 0
 
-        for key in self.metric_items:
-            metric = METRIC_DEFINITIONS.get(key)
-            if not metric:
-                self.logger.warning(f"Unknown metric: {key}")
+        self.metric_labels = {}
+        for idx, metric_def in enumerate(self.metric_items):
+            if not isinstance(metric_def, dict):
                 continue
 
-            label = QLabel(f"{metric['label']}: 0")
-            label.setStyleSheet(
-                "font-size: 13px; font-weight: bold; padding: 5px;"
-            )
+            display_label = metric_def.get("label", f"metric_{idx}")
+            label = QLabel(f"{display_label}: —")
+            label.setStyleSheet("font-size: 13px; font-weight: bold; padding: 5px;")
 
-            self.metric_labels[key] = label
+            self.metric_labels[idx] = label
             row.addWidget(label)
             count += 1
 
-            if count % 3 == 0:
+            if count % 4 == 0:
                 layout.addLayout(row)
                 row = QHBoxLayout()
 
-        if count % 3 != 0:
+        if count % 4 != 0:
             layout.addLayout(row)
 
         group.setLayout(layout)

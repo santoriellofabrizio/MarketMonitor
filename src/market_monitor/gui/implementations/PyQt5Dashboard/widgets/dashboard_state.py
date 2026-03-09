@@ -318,10 +318,13 @@ class DashboardState:
             if 'calculated_fields' in state and hasattr(dashboard, 'calculated_fields'):
                 dashboard.calculated_fields = state['calculated_fields'].copy()
 
-            # Ripristina selezione metriche
+            # Ripristina selezione metriche (solo nuovo formato List[Dict])
             metrics_state = state.get('metrics', {})
-            if metrics_state.get('metric_items') and hasattr(dashboard, '_rebuild_metrics_panel'):
-                dashboard._rebuild_metrics_panel(metrics_state['metric_items'])
+            loaded_items = metrics_state.get('metric_items', [])
+            if (loaded_items
+                    and all(isinstance(x, dict) for x in loaded_items)
+                    and hasattr(dashboard, '_rebuild_metrics_panel')):
+                dashboard._rebuild_metrics_panel(loaded_items)
 
             # Restore detached windows
             detached = state.get('detached_windows', {})
