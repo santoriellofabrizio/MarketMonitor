@@ -51,6 +51,7 @@ class EtfEquityPriceEngine(StrategyUI):
         self.publisher = PricePublisherHub.from_config(kwargs, self.isin_to_ticker)
         self._init_historical_data(kwargs)
         self._init_bloomberg(kwargs)
+        self.alpha: float = 1.0
 
     # =========================================================================
     # Inizializzazione
@@ -286,6 +287,14 @@ class EtfEquityPriceEngine(StrategyUI):
         elif action == "update_forecaster":
             self._handle_update_forecaster(payload)
 
+        elif action == "set_alpha":
+            try:
+                val = float(payload.get("value", 1.0))
+                self.alpha = max(0.0, min(1.0, val))
+                logger.info(f"Alpha updated to {self.alpha:.2f}")
+            except (TypeError, ValueError) as e:
+                logger.error(f"Invalid alpha value: {e}")
+
         else:
             logger.warning(f"Unknown command: '{action}'")
 
@@ -392,6 +401,12 @@ class EtfEquityPriceEngine(StrategyUI):
             self.get_mid()
 
             predictions = self.models.predict_all(self.mid_eur)
+
+            if self.alpha < 1.0:
+                for key in ("cluster", "intraday", "index_cluster"):
+                    pred = predictions.get(key)
+                    if pred is not None:
+                        predictions[key] = self.alpha * pred + (1.0 - self.alpha) * self.mid_eur
 
             normalized_prices = {
                 'live_idx': round_series_to_tick(

@@ -172,6 +172,15 @@ control_panel:
           perc_outlier: 0.3
       description: "Trimmed Mean con 30% outlier removal su tutti i modelli"
 
+    - label: "Alpha"
+      action: "set_alpha"
+      type: "float_input"
+      min: 0.0
+      max: 1.0
+      default: 1.0
+      step: 0.05
+      description: "α·model_price + (1-α)·mid — blending model price with market mid"
+
 
 bloomberg_data_distributor:
   activate: true

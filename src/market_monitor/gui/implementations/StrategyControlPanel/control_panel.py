@@ -26,7 +26,7 @@ from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QTabWidget, QLabel, QPushButton, QScrollArea,
     QTextEdit, QTableWidget, QTableWidgetItem, QHeaderView,
-    QComboBox, QGroupBox,
+    QComboBox, QGroupBox, QDoubleSpinBox,
     QApplication,
 )
 
@@ -693,15 +693,38 @@ class StrategyControlPanel(QMainWindow):
                 action  = cmd.get("action", "")
                 payload = dict(cmd.get("payload", {}))
                 desc    = cmd.get("description", "")
-                btn = QPushButton(label)
-                btn.setFixedHeight(30)
-                btn.setStyleSheet(_BTN_PRIMARY)
-                if desc:
-                    btn.setToolTip(desc)
-                btn.clicked.connect(
-                    lambda _c, a=action, p=payload, ch=channel: self._send_quick_command(a, p, ch)
-                )
-                grp_layout.addWidget(btn)
+                cmd_type = cmd.get("type", "button")
+
+                if cmd_type == "float_input":
+                    lbl = QLabel(f"{label}:")
+                    grp_layout.addWidget(lbl)
+                    spinbox = QDoubleSpinBox()
+                    spinbox.setRange(cmd.get("min", 0.0), cmd.get("max", 1.0))
+                    spinbox.setSingleStep(cmd.get("step", 0.05))
+                    spinbox.setDecimals(2)
+                    spinbox.setValue(cmd.get("default", 1.0))
+                    spinbox.setFixedWidth(80)
+                    if desc:
+                        spinbox.setToolTip(desc)
+                    grp_layout.addWidget(spinbox)
+                    btn = QPushButton("Set")
+                    btn.setFixedHeight(30)
+                    btn.setFixedWidth(50)
+                    btn.setStyleSheet(_BTN_PRIMARY)
+                    btn.clicked.connect(
+                        lambda _c, a=action, sp=spinbox, ch=channel: self._send_quick_command(a, {"value": sp.value()}, ch)
+                    )
+                    grp_layout.addWidget(btn)
+                else:
+                    btn = QPushButton(label)
+                    btn.setFixedHeight(30)
+                    btn.setStyleSheet(_BTN_PRIMARY)
+                    if desc:
+                        btn.setToolTip(desc)
+                    btn.clicked.connect(
+                        lambda _c, a=action, p=payload, ch=channel: self._send_quick_command(a, p, ch)
+                    )
+                    grp_layout.addWidget(btn)
             grp_layout.addStretch()
             # Insert before the trailing stretch
             self._quick_inner_layout.insertWidget(
