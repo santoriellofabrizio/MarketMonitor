@@ -168,8 +168,6 @@ class TradeManager:
     # QUERY METHODS (thread-safe cache)
     # ========================================================================
 
-    from datetime import datetime
-
     @staticmethod
     def _get_mid_by_snapshot(snapshot: tuple, trade: Trade) -> float | None:
         snapshot_time, mid_prices = snapshot
@@ -225,8 +223,9 @@ class TradeManager:
 
     def get_my_trades(self, n_of_trades: int | None = None) -> pd.DataFrame:
         """Get solo my trades (ottimizzato a livello storage)."""
-        # Filtra nel storage prima di convertire
         trades_obj = self.trade_storage.get_last_trades(n_of_trades)
+        if isinstance(trades_obj, dict):
+            trades_obj = list(trades_obj.values())
         my_trades_obj = [t for t in trades_obj if t.is_my_trade()]
         return self._convert_trades_obj_to_df(my_trades_obj)
 
@@ -237,8 +236,9 @@ class TradeManager:
         if not isins:
             return pd.DataFrame()
 
-        # Filtra nel storage
         trades_obj = self.trade_storage.get_last_trades(n_of_trades)
+        if isinstance(trades_obj, dict):
+            trades_obj = list(trades_obj.values())
         filtered_obj = [t for t in trades_obj if t.isin in isins]
 
         df = self._convert_trades_obj_to_df(filtered_obj)
@@ -252,6 +252,8 @@ class TradeManager:
             return pd.DataFrame()
 
         trades_obj = self.trade_storage.get_last_trades(n_of_trades)
+        if isinstance(trades_obj, dict):
+            trades_obj = list(trades_obj.values())
         filtered_obj = [t for t in trades_obj if t.ticker in tickers]
 
         df = self._convert_trades_obj_to_df(filtered_obj)
@@ -411,12 +413,11 @@ class TradeManager:
         new_df = self._convert_trades_obj_to_df(new_trades)
 
         try:
-            # ✅ Leggi tutto, concatena, riscrivi (sempre funziona)
             if filepath.exists():
                 try:
                     existing_df = pd.read_parquet(filepath, engine="pyarrow")
+                    combined_df = pd.concat([existing_df, new_df], ignore_index=True)
                 except Exception as read_error:
-                    # File corrotto - backup e riparti da zero
                     logger.warning(
                         f"Parquet file corrupted ({read_error}). "
                         f"Backing up and creating new file."
@@ -427,15 +428,8 @@ class TradeManager:
                         logger.info(f"Corrupted file backed up to: {backup_path}")
                     except Exception as backup_error:
                         logger.error(f"Could not backup corrupted file: {backup_error}")
-                    
-                    existing_df = pd.DataFrame()  # Restart from empty
-                else:
-                    combined_df = pd.concat([existing_df, new_df], ignore_index=True)
+                    combined_df = new_df
             else:
-                combined_df = new_df
-
-            # Se non c'è existing_df (file corrotto), usa solo new_df
-            if 'combined_df' not in locals():
                 combined_df = new_df
 
             combined_df.to_parquet(
@@ -544,7 +538,7 @@ class TradeManager:
                 "market": trade_dict.get("market"),
                 "currency": trade_dict.get("currency"),
                 "price_multiplier": trade_dict.get("price_multiplier", 1),
-                "extra": extra
+                **extra   # unpack extra fields directly so Trade(**extra) captures them flat
             }
 
             if TradeClass == MyTrade:

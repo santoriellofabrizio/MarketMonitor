@@ -2,7 +2,6 @@ import datetime
 import logging
 import queue
 import threading
-import time
 from typing import Optional
 
 import pandas as pd
@@ -121,13 +120,11 @@ class TradeStorage:
         except queue.Empty:
             return None
 
-    def get_trades_by_index(self, index: list[int] | int):
-        while True:
-            try:
-                return self._storage[index]
-            except IndexError:
-                logging.error(f"Index {index} not found in storage ({len(self._storage)} long)")
-            time.sleep(0.1)
+    def get_trades_by_index(self, index: int) -> AbstractTrade | None:
+        trade = self._storage.get(index)
+        if trade is None:
+            logging.error(f"Index {index} not found in storage ({len(self._storage)} entries)")
+        return trade
 
     def set_trade_as_elaborated(self, trade: AbstractTrade):
         with self.lock:

@@ -167,6 +167,11 @@ class EtfEquityLiveAnalysis(StrategyUI):
 
     def update_LF(self) -> None:
         try:
+            # Drain progressive horizon updates first (thread-safe, non-blocking)
+            horizon_updates = self.trade_manager.get_horizon_updates()
+            if not horizon_updates.empty:
+                self.publish_trades_on_dashboard(horizon_updates)
+            # Full snapshot for consistency
             self.publish_trades_on_dashboard(self.trade_manager.get_trades())
         except Exception as e:
             logging.error(e)
