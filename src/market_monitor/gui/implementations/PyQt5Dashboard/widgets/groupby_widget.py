@@ -7,7 +7,7 @@ from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QTableWidget,
                              QGroupBox, QHeaderView, QFileDialog, QMessageBox,
                              QCheckBox, QMenu, QAction, QWidgetAction, QSpinBox,
                              QDialog, QDialogButtonBox, QLineEdit, QFormLayout,
-                             QAbstractItemView)
+                             QAbstractItemView, QRadioButton, QButtonGroup)
 from PyQt5.QtCore import Qt, pyqtSignal, QPoint
 from PyQt5.QtGui import QColor, QCursor
 import pandas as pd
@@ -476,6 +476,21 @@ class GroupByWidget(QWidget):
         va_btn_row.addStretch()
         config_layout.addLayout(va_btn_row)
 
+        # Normalization radio buttons
+        norm_row = QHBoxLayout()
+        norm_row.addWidget(QLabel("Normalize:"))
+        self._norm_group = QButtonGroup(self)
+        self.norm_none_radio = QRadioButton("None")
+        self.norm_rows_radio = QRadioButton("Rows %")
+        self.norm_cols_radio = QRadioButton("Columns %")
+        self.norm_none_radio.setChecked(True)
+        for btn in (self.norm_none_radio, self.norm_rows_radio, self.norm_cols_radio):
+            self._norm_group.addButton(btn)
+            norm_row.addWidget(btn)
+            btn.toggled.connect(self._on_normalize_changed)
+        norm_row.addStretch()
+        config_layout.addLayout(norm_row)
+
         # Apply / Clear / Export / Calc Fields buttons
         btn_layout = QHBoxLayout()
         self.apply_btn = QPushButton("Apply GroupBy")
@@ -743,6 +758,47 @@ class GroupByWidget(QWidget):
         return result[result[timestamp_col] >= cutoff]
 
     # ------------------------------------------------------------------
+    # Normalization
+    # ------------------------------------------------------------------
+
+    def _on_normalize_changed(self):
+        """Re-apply groupby when normalization mode changes."""
+        if self.current_config:
+            self._apply_groupby_from_config(self.current_config)
+
+    def _get_normalize_mode(self) -> str:
+        if self.norm_rows_radio.isChecked():
+            return 'index'
+        if self.norm_cols_radio.isChecked():
+            return 'columns'
+        return 'none'
+
+    def _apply_normalization(self, df: pd.DataFrame, mode: str) -> pd.DataFrame:
+        """Normalize grouped result by rows or columns (values only, skip key column)."""
+        if df.empty or mode == 'none':
+            return df
+
+        result = df.copy()
+        # Skip the first column (group key); normalize only value columns
+        numeric_cols = [c for c in result.columns[1:] if pd.api.types.is_numeric_dtype(result[c])]
+        if not numeric_cols:
+            return df
+
+        if mode == 'index':
+            for idx in result.index:
+                row_sum = result.loc[idx, numeric_cols].sum()
+                if row_sum != 0:
+                    result.loc[idx, numeric_cols] = result.loc[idx, numeric_cols] / row_sum * 100
+                else:
+                    result.loc[idx, numeric_cols] = 0
+        elif mode == 'columns':
+            for col in numeric_cols:
+                col_sum = result[col].sum()
+                result[col] = result[col] / col_sum * 100 if col_sum != 0 else 0
+
+        return result
+
+    # ------------------------------------------------------------------
     # Source data
     # ------------------------------------------------------------------
 
@@ -805,6 +861,20 @@ class GroupByWidget(QWidget):
         if 'groupby_calc_fields' in config:
             self.groupby_calc_fields = config['groupby_calc_fields'].copy()
 
+        if 'normalize' in config:
+            mode = config['normalize']
+            # Block signals to avoid premature re-apply
+            for btn in (self.norm_none_radio, self.norm_rows_radio, self.norm_cols_radio):
+                btn.blockSignals(True)
+            if mode == 'index':
+                self.norm_rows_radio.setChecked(True)
+            elif mode == 'columns':
+                self.norm_cols_radio.setChecked(True)
+            else:
+                self.norm_none_radio.setChecked(True)
+            for btn in (self.norm_none_radio, self.norm_rows_radio, self.norm_cols_radio):
+                btn.blockSignals(False)
+
         if config.get('current_config'):
             self.current_config = config['current_config']
             self._apply_groupby_from_config(self.current_config)
@@ -832,6 +902,7 @@ class GroupByWidget(QWidget):
         self.current_config = {
             'rows': rows,
             'value_agg_pairs': list(self.value_agg_pairs),
+            'normalize': self._get_normalize_mode(),
         }
         self._apply_groupby_from_config(self.current_config)
 
@@ -875,6 +946,9 @@ class GroupByWidget(QWidget):
             new_cols = [rows] + [f'{agg}_{col}' for col, agg in pairs]
             result.columns = new_cols
 
+            # Normalizzazione (dopo groupby, prima dei campi calcolati)
+            normalize_mode = config.get('normalize', self._get_normalize_mode())
+            result = self._apply_normalization(result, normalize_mode)
             self.result_data = result
 
             # Applica campi calcolati sul risultato GroupBy
@@ -918,6 +992,8 @@ class GroupByWidget(QWidget):
             self.table.setColumnCount(0)
             return
 
+        is_normalized = self.norm_rows_radio.isChecked() or self.norm_cols_radio.isChecked()
+
         self.table.setSortingEnabled(False)
         self.table.setRowCount(len(self.result_data))
         self.table.setColumnCount(len(self.result_data.columns))
@@ -946,6 +1022,8 @@ class GroupByWidget(QWidget):
                             text = text.replace(',00', '')
                         elif decimals > 0:
                             text = text.rstrip('0').rstrip(',')
+                        if is_normalized and j > 0:
+                            text += " %"
                 else:
                     text = str(value) if not pd.isna(value) else ""
 

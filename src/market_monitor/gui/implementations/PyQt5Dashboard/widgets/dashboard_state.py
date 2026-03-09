@@ -281,6 +281,7 @@ class DashboardState:
         try:
             return {
                 'last_update_count': getattr(dashboard, '_update_count', 0),
+                'metric_items': list(getattr(dashboard, 'metric_items', [])),
             }
         except:
             return {}
@@ -316,6 +317,11 @@ class DashboardState:
             # Ripristina campi calcolati
             if 'calculated_fields' in state and hasattr(dashboard, 'calculated_fields'):
                 dashboard.calculated_fields = state['calculated_fields'].copy()
+
+            # Ripristina selezione metriche
+            metrics_state = state.get('metrics', {})
+            if metrics_state.get('metric_items') and hasattr(dashboard, '_rebuild_metrics_panel'):
+                dashboard._rebuild_metrics_panel(metrics_state['metric_items'])
 
             # Restore detached windows
             detached = state.get('detached_windows', {})

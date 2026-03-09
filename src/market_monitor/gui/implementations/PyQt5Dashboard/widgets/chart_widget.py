@@ -12,7 +12,8 @@ Refactoring in 3 fasi:
 """
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QGroupBox,
                              QLabel, QComboBox, QPushButton, QRadioButton,
-                             QSpinBox, QCheckBox, QMessageBox, QFileDialog)
+                             QSpinBox, QCheckBox, QMessageBox, QFileDialog,
+                             QListWidget, QAbstractItemView)
 from PyQt5.QtCore import Qt, pyqtSignal, QTimer
 import pandas as pd
 import numpy as np
@@ -223,10 +224,12 @@ class ChartWidget(QWidget):
         self.static_x_combo.addItems(['None'])
         static_row1.addWidget(self.static_x_combo)
 
-        static_row1.addWidget(QLabel("Y:"))
-        self.static_y_combo = QComboBox()
-        self.static_y_combo.addItems(['None'])
-        static_row1.addWidget(self.static_y_combo)
+        static_row1.addWidget(QLabel("Y (multi):"))
+        self.static_y_list = QListWidget()
+        self.static_y_list.setSelectionMode(QAbstractItemView.MultiSelection)
+        self.static_y_list.setMaximumHeight(75)
+        self.static_y_list.setToolTip("Ctrl+click to select multiple Y columns")
+        static_row1.addWidget(self.static_y_list)
 
         static_layout.addLayout(static_row1)
 
@@ -454,14 +457,18 @@ class ChartWidget(QWidget):
         # Salva selezioni correnti (o da pending config)
         if self._pending_config:
             current_static_x = self._pending_config.get('static_x', 'None')
-            current_static_y = self._pending_config.get('static_y', 'None')
+            # Support both old single-value and new list format
+            raw_y = self._pending_config.get('static_y_columns', self._pending_config.get('static_y'))
+            current_static_ys = raw_y if isinstance(raw_y, list) else ([raw_y] if raw_y and raw_y != 'None' else [])
             current_static_group = self._pending_config.get('static_group', 'None')
             current_time_col = self._pending_config.get('time_column', 'None')
             current_metric = self._pending_config.get('metric', 'None')
             current_time_group = self._pending_config.get('time_group', 'None')
         else:
             current_static_x = self.static_x_combo.currentText()
-            current_static_y = self.static_y_combo.currentText()
+            current_static_ys = [self.static_y_list.item(i).text()
+                                  for i in range(self.static_y_list.count())
+                                  if self.static_y_list.item(i).isSelected()]
             current_static_group = self.static_group_combo.currentText()
             current_time_col = self.time_column_combo.currentText()
             current_metric = self.metric_combo.currentText()
@@ -469,13 +476,13 @@ class ChartWidget(QWidget):
 
         # Aggiorna combo boxes
         columns = ['None'] + list(df.columns)
-        numeric_cols = ['None'] + list(df.select_dtypes(include=['number']).columns)
+        numeric_cols = list(df.select_dtypes(include=['number']).columns)
 
         self.static_x_combo.clear()
         self.static_x_combo.addItems(columns)
 
-        self.static_y_combo.clear()
-        self.static_y_combo.addItems(numeric_cols)
+        self.static_y_list.clear()
+        self.static_y_list.addItems(numeric_cols)
 
         self.static_group_combo.clear()
         self.static_group_combo.addItems(columns)
@@ -484,7 +491,7 @@ class ChartWidget(QWidget):
         self.time_column_combo.addItems(columns)
 
         self.metric_combo.clear()
-        self.metric_combo.addItems(numeric_cols)
+        self.metric_combo.addItems(['None'] + numeric_cols)
 
         self.time_group_combo.clear()
         self.time_group_combo.addItems(columns)
@@ -492,13 +499,15 @@ class ChartWidget(QWidget):
         # Ripristina selezioni
         if current_static_x in columns:
             self.static_x_combo.setCurrentText(current_static_x)
-        if current_static_y in numeric_cols:
-            self.static_y_combo.setCurrentText(current_static_y)
+        # Restore multi-Y list selection
+        for i in range(self.static_y_list.count()):
+            item = self.static_y_list.item(i)
+            item.setSelected(item.text() in current_static_ys)
         if current_static_group in columns:
             self.static_group_combo.setCurrentText(current_static_group)
         if current_time_col in columns:
             self.time_column_combo.setCurrentText(current_time_col)
-        if current_metric in numeric_cols:
+        if current_metric in ['None'] + numeric_cols:
             self.metric_combo.setCurrentText(current_metric)
         if current_time_group in columns:
             self.time_group_combo.setCurrentText(current_time_group)
@@ -542,10 +551,13 @@ class ChartWidget(QWidget):
             if index >= 0:
                 self.static_x_combo.setCurrentIndex(index)
 
-        if 'static_y' in config and config['static_y']:
-            index = self.static_y_combo.findText(config['static_y'])
-            if index >= 0:
-                self.static_y_combo.setCurrentIndex(index)
+        # Restore Y selection (support both old str and new list format)
+        raw_y = config.get('static_y_columns', config.get('static_y'))
+        if raw_y:
+            selected_ys = raw_y if isinstance(raw_y, list) else [raw_y]
+            for i in range(self.static_y_list.count()):
+                item = self.static_y_list.item(i)
+                item.setSelected(item.text() in selected_ys)
 
         if 'static_group' in config and config['static_group']:
             index = self.static_group_combo.findText(config['static_group'])
@@ -798,20 +810,22 @@ class ChartWidget(QWidget):
     def _get_static_config(self) -> Optional[Dict[str, Any]]:
         """Ottieni configurazione per static mode"""
         x_col = self.static_x_combo.currentText()
-        y_col = self.static_y_combo.currentText()
+        y_cols = [self.static_y_list.item(i).text()
+                  for i in range(self.static_y_list.count())
+                  if self.static_y_list.item(i).isSelected()]
         group_by = self.static_group_combo.currentText()
         chart_type = self.chart_type_combo.currentText()
         agg = self.static_agg_combo.currentText()
 
-        if x_col == 'None' or y_col == 'None':
-            QMessageBox.warning(self, "Invalid Config", "Please select X and Y columns")
+        if x_col == 'None' or not y_cols:
+            QMessageBox.warning(self, "Invalid Config", "Please select X column and at least one Y column")
             return None
 
         return {
             'mode': 'static',
             'chart_type': chart_type,
             'x_column': x_col,
-            'y_column': y_col,
+            'y_columns': y_cols,
             'group_by': group_by if group_by != 'None' else None,
             'aggregation': agg
         }
@@ -898,7 +912,8 @@ class ChartWidget(QWidget):
     def _plot_static(self, ax, df: pd.DataFrame, config: Dict[str, Any]):
         """Plot static snapshot con Top N e downsampling (Fase 2 e 3)."""
         x_col = config['x_column']
-        y_col = config['y_column']
+        # Backward compat: old configs used 'y_column' (str), new use 'y_columns' (list)
+        y_cols = config.get('y_columns') or ([config['y_column']] if config.get('y_column') else [])
         group_by = config['group_by']
         agg = config['aggregation']
         chart_type = config['chart_type']
@@ -907,71 +922,76 @@ class ChartWidget(QWidget):
         is_worst = self.top_worst_combo.currentText() == 'Worst'
 
         if group_by:
-            pivot = df.pivot_table(
-                values=y_col,
-                index=x_col,
-                columns=group_by,
-                aggfunc=agg,
-                fill_value=0
-            )
+            # Multiple Y columns with group_by: plot each Y as a separate pivot
+            for y_col in y_cols:
+                pivot = df.pivot_table(
+                    values=y_col,
+                    index=x_col,
+                    columns=group_by,
+                    aggfunc=agg,
+                    fill_value=0
+                )
+                if top_n > 0 and len(pivot) > top_n:
+                    row_sums = pivot.sum(axis=1)
+                    top_indices = (row_sums.nsmallest(top_n) if is_worst else row_sums.nlargest(top_n)).index
+                    pivot = pivot.loc[top_indices]
 
-            # ========================
-            # FASE 2: APPLICA TOP/WORST N AL PIVOT
-            # ========================
-            if top_n > 0 and len(pivot) > top_n:
-                # Ordina per somma totale delle righe
-                row_sums = pivot.sum(axis=1)
-                if is_worst:
-                    top_indices = row_sums.nsmallest(top_n).index
-                else:
-                    top_indices = row_sums.nlargest(top_n).index
-                pivot = pivot.loc[top_indices]
+                # Prefix column names with y_col when multiple Y cols
+                if len(y_cols) > 1:
+                    pivot.columns = [f"{y_col} — {c}" for c in pivot.columns]
 
-            if chart_type == 'bar':
-                pivot.plot(kind='bar', ax=ax, width=0.7)
-            elif chart_type == 'line':
-                # Fase 3: downsampling per line
-                if len(pivot) > self.MAX_POINTS_LINE_CHART and self.downsample_check.isChecked():
-                    factor = len(pivot) // self.MAX_POINTS_LINE_CHART
-                    pivot = pivot.iloc[::max(factor, 1)]
-                pivot.plot(kind='line', ax=ax, marker='o', markersize=3)
-            elif chart_type == 'scatter':
-                # Fase 3: downsampling per scatter
-                if len(pivot) > self.MAX_POINTS_LINE_CHART and self.downsample_check.isChecked():
-                    factor = len(pivot) // self.MAX_POINTS_LINE_CHART
-                    pivot = pivot.iloc[::max(factor, 1)]
-                for col in pivot.columns:
-                    ax.scatter(pivot.index, pivot[col], label=col, s=30, alpha=0.6)
+                if chart_type == 'bar':
+                    pivot.plot(kind='bar', ax=ax, width=0.7)
+                elif chart_type == 'line':
+                    if len(pivot) > self.MAX_POINTS_LINE_CHART and self.downsample_check.isChecked():
+                        pivot = pivot.iloc[::max(len(pivot) // self.MAX_POINTS_LINE_CHART, 1)]
+                    pivot.plot(kind='line', ax=ax, marker='o', markersize=3)
+                elif chart_type == 'scatter':
+                    if len(pivot) > self.MAX_POINTS_LINE_CHART and self.downsample_check.isChecked():
+                        pivot = pivot.iloc[::max(len(pivot) // self.MAX_POINTS_LINE_CHART, 1)]
+                    for col in pivot.columns:
+                        ax.scatter(pivot.index, pivot[col], label=col, s=30, alpha=0.6)
         else:
-            grouped = df.groupby(x_col)[y_col].agg(agg)
+            # No group_by: aggregate each Y column and plot all together
+            series_dict = {}
+            for y_col in y_cols:
+                grouped = df.groupby(x_col)[y_col].agg(agg)
+                if top_n > 0 and len(grouped) > top_n:
+                    grouped = grouped.nsmallest(top_n) if is_worst else grouped.nlargest(top_n)
+                series_dict[y_col] = grouped
 
-            # ========================
-            # FASE 2: APPLICA TOP/WORST N AL GROUPED
-            # ========================
-            if top_n > 0 and len(grouped) > top_n:
-                if is_worst:
-                    grouped = grouped.nsmallest(top_n)
-                else:
-                    grouped = grouped.nlargest(top_n)
+            combined = pd.DataFrame(series_dict)
+            if len(y_cols) == 1:
+                # Single Y: keep original simple plot
+                series = combined.iloc[:, 0]
+                if chart_type == 'bar':
+                    series.plot(kind='bar', ax=ax, width=0.7)
+                elif chart_type == 'line':
+                    if len(series) > self.MAX_POINTS_LINE_CHART and self.downsample_check.isChecked():
+                        series = series.iloc[::max(len(series) // self.MAX_POINTS_LINE_CHART, 1)]
+                    series.plot(kind='line', ax=ax, marker='o', markersize=3)
+                elif chart_type == 'scatter':
+                    if len(series) > self.MAX_POINTS_LINE_CHART and self.downsample_check.isChecked():
+                        series = series.iloc[::max(len(series) // self.MAX_POINTS_LINE_CHART, 1)]
+                    ax.scatter(series.index, series.values, s=30, alpha=0.6)
+            else:
+                # Multiple Y: side-by-side bar / overlaid line / scatter per series
+                if chart_type == 'bar':
+                    combined.plot(kind='bar', ax=ax, width=0.7)
+                elif chart_type == 'line':
+                    if len(combined) > self.MAX_POINTS_LINE_CHART and self.downsample_check.isChecked():
+                        combined = combined.iloc[::max(len(combined) // self.MAX_POINTS_LINE_CHART, 1)]
+                    combined.plot(kind='line', ax=ax, marker='o', markersize=3)
+                elif chart_type == 'scatter':
+                    if len(combined) > self.MAX_POINTS_LINE_CHART and self.downsample_check.isChecked():
+                        combined = combined.iloc[::max(len(combined) // self.MAX_POINTS_LINE_CHART, 1)]
+                    for col in combined.columns:
+                        ax.scatter(combined.index, combined[col], label=col, s=30, alpha=0.6)
 
-            if chart_type == 'bar':
-                grouped.plot(kind='bar', ax=ax, width=0.7)
-            elif chart_type == 'line':
-                # Fase 3: downsampling per line
-                if len(grouped) > self.MAX_POINTS_LINE_CHART and self.downsample_check.isChecked():
-                    factor = len(grouped) // self.MAX_POINTS_LINE_CHART
-                    grouped = grouped.iloc[::max(factor, 1)]
-                grouped.plot(kind='line', ax=ax, marker='o', markersize=3)
-            elif chart_type == 'scatter':
-                # Fase 3: downsampling per scatter
-                if len(grouped) > self.MAX_POINTS_LINE_CHART and self.downsample_check.isChecked():
-                    factor = len(grouped) // self.MAX_POINTS_LINE_CHART
-                    grouped = grouped.iloc[::max(factor, 1)]
-                ax.scatter(grouped.index, grouped.values, s=30, alpha=0.6)
-
+        y_label = f"{agg}({', '.join(y_cols)})"
         ax.set_xlabel(x_col)
-        ax.set_ylabel(f"{agg}({y_col})")
-        ax.set_title(f"{agg.capitalize()} of {y_col} by {x_col}")
+        ax.set_ylabel(y_label)
+        ax.set_title(f"{agg.capitalize()} of {', '.join(y_cols)} by {x_col}")
         ax.legend()
         ax.grid(True, alpha=0.3)
 
@@ -1134,7 +1154,9 @@ class ChartWidget(QWidget):
             'time_evolution_mode': self.time_evolution_radio.isChecked(),
             'chart_type': self.chart_type_combo.currentText(),
             'static_x': self.static_x_combo.currentText(),
-            'static_y': self.static_y_combo.currentText(),
+            'static_y_columns': [self.static_y_list.item(i).text()
+                                   for i in range(self.static_y_list.count())
+                                   if self.static_y_list.item(i).isSelected()],
             'static_group': self.static_group_combo.currentText(),
             'static_agg': self.static_agg_combo.currentText(),
             'time_column': self.time_column_combo.currentText(),
@@ -1192,10 +1214,12 @@ class ChartWidget(QWidget):
                 if index >= 0:
                     self.static_x_combo.setCurrentIndex(index)
 
-            if 'static_y' in config and config['static_y']:
-                index = self.static_y_combo.findText(config['static_y'])
-                if index >= 0:
-                    self.static_y_combo.setCurrentIndex(index)
+            raw_y = config.get('static_y_columns', config.get('static_y'))
+            if raw_y:
+                selected_ys = raw_y if isinstance(raw_y, list) else [raw_y]
+                for i in range(self.static_y_list.count()):
+                    item = self.static_y_list.item(i)
+                    item.setSelected(item.text() in selected_ys)
 
             if 'static_group' in config and config['static_group']:
                 index = self.static_group_combo.findText(config['static_group'])

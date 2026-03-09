@@ -19,6 +19,7 @@ class DetachedPivotWindow(QMainWindow):
         self.window_number = window_number
         self.setWindowTitle(f"Pivot Table #{window_number}")
         self.setGeometry(200 + (window_number * 30), 200 + (window_number * 30), 900, 600)
+        self.setMinimumSize(300, 200)
 
         # Central widget
         central = QWidget()
@@ -57,6 +58,7 @@ class DetachedChartWindow(QMainWindow):
         self.window_number = window_number
         self.setWindowTitle(f"Charts #{window_number}")
         self.setGeometry(300 + (window_number * 30), 300 + (window_number * 30), 1000, 700)
+        self.setMinimumSize(300, 200)
 
         # Central widget
         central = QWidget()
@@ -90,6 +92,7 @@ class DetachedFlowWindow(QMainWindow):
         self.window_number = window_number
         self.setWindowTitle(f"Flow Monitor #{window_number}")
         self.setGeometry(400 + (window_number * 30), 400 + (window_number * 30), 500, 700)
+        self.setMinimumSize(300, 200)
 
         # Central widget
         central = QWidget()
@@ -133,6 +136,7 @@ class DetachedGroupByWindow(QMainWindow):
         self.window_number = window_number
         self.setWindowTitle(f"GroupBy #{window_number}")
         self.setGeometry(250 + (window_number * 30), 250 + (window_number * 30), 900, 600)
+        self.setMinimumSize(300, 200)
 
         central = QWidget()
         self.setCentralWidget(central)

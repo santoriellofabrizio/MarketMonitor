@@ -47,6 +47,39 @@ from market_monitor.gui.implementations.PyQt5Dashboard.worker_thread import (
 )
 
 
+class MetricChooserDialog(QDialog):
+    """Dialog per selezionare le metriche da mostrare nel pannello Metrics Summary."""
+
+    def __init__(self, current_items: list, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Choose Metrics")
+        self.setMinimumSize(380, 450)
+        layout = QVBoxLayout(self)
+
+        layout.addWidget(QLabel("Select metrics to display (order is preserved):"))
+
+        self.list_widget = QListWidget()
+        self.list_widget.setSelectionMode(QListWidget.MultiSelection)
+        for key, defn in METRIC_DEFINITIONS.items():
+            item = QListWidgetItem(f"{defn['label']}  [{key}]")
+            item.setData(Qt.UserRole, key)
+            self.list_widget.addItem(item)
+            if key in current_items:
+                item.setSelected(True)
+        layout.addWidget(self.list_widget)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def get_selected_keys(self) -> list:
+        """Returns metric keys in the order they appear in the list."""
+        return [self.list_widget.item(i).data(Qt.UserRole)
+                for i in range(self.list_widget.count())
+                if self.list_widget.item(i).isSelected()]
+
+
 class TradeDashboard(BasePyQt5Dashboard, TradeDashboardExtensions):
     """
     Dashboard principale per la visualizzazione dei trade.
@@ -196,7 +229,8 @@ class TradeDashboard(BasePyQt5Dashboard, TradeDashboardExtensions):
         self.pause_btn.clicked.connect(self._toggle_pause)
         layout.addWidget(self.pause_btn)
 
-        clear_btn = QPushButton("🗑️ Clear All")
+        clear_btn = QPushButton("🗑️ Clear Display")
+        clear_btn.setToolTip("Clears chart/table rendering. Data is kept in memory and will re-appear on next update.")
         clear_btn.clicked.connect(self.clear_all)
         layout.addWidget(clear_btn)
 
@@ -219,6 +253,12 @@ class TradeDashboard(BasePyQt5Dashboard, TradeDashboardExtensions):
         detach_groupby_btn = QPushButton("🪟 New GroupBy Window")
         detach_groupby_btn.clicked.connect(self._create_detached_groupby)
         layout.addWidget(detach_groupby_btn)
+
+        if self.metrics_enabled:
+            metrics_btn = QPushButton("⚙️ Metrics")
+            metrics_btn.setToolTip("Choose which metrics to display in the summary panel")
+            metrics_btn.clicked.connect(self._show_metric_chooser)
+            layout.addWidget(metrics_btn)
 
         layout.addStretch()
         return controls
@@ -395,11 +435,10 @@ class TradeDashboard(BasePyQt5Dashboard, TradeDashboardExtensions):
     # METODO clear_all() CORRETTO (sostituisci la sezione metriche)
 
     def clear_all(self):
-        """Reset completo della dashboard."""
-        self.logger.info("Clearing all dashboard data")
+        """Pulisce il rendering di tutti i widget. I dati restano in memoria e
+        ricompariranno al prossimo aggiornamento dati."""
+        self.logger.info("Clearing dashboard display (data retained in memory)")
 
-        self.all_trades = pd.DataFrame()
-        self.current_filtered_data = pd.DataFrame()
         self.trade_table.clear()
 
         for pivot_window in self.detached_pivots:
@@ -508,6 +547,32 @@ class TradeDashboard(BasePyQt5Dashboard, TradeDashboardExtensions):
         self.logger.info(
             f"Created detached flow window #{len(self.detached_flows)}"
         )
+
+    def _show_metric_chooser(self):
+        """Apre il dialog per scegliere le metriche e ricostruisce il pannello."""
+        dialog = MetricChooserDialog(self.metric_items, parent=self)
+        if dialog.exec_() == QDialog.Accepted:
+            new_items = dialog.get_selected_keys()
+            self._rebuild_metrics_panel(new_items)
+
+    def _rebuild_metrics_panel(self, new_items: list):
+        """Sostituisce il pannello metriche con uno nuovo basato su new_items."""
+        self.metric_items = new_items
+        self.metric_labels.clear()
+
+        # Rimuovi e distruggi il vecchio pannello
+        old_panel = getattr(self, 'metrics_panel', None)
+        if old_panel is not None:
+            self.main_layout.removeWidget(old_panel)
+            old_panel.deleteLater()
+
+        # Crea il nuovo pannello e inseriscilo alla posizione 1 (dopo controls)
+        self.metrics_panel = self._create_metrics_panel()
+        self.main_layout.insertWidget(1, self.metrics_panel)
+
+        # Aggiorna subito con i dati correnti
+        if not self.all_trades.empty:
+            self._update_metrics(self.all_trades)
 
     def _create_metrics_panel(self) -> QWidget:
         if not self.metrics_enabled:
