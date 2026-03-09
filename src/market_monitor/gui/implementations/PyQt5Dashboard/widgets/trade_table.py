@@ -487,6 +487,14 @@ class TradeTableWidget(QWidget):
                     .reset_index()
                 )
 
+                # Re-sort descending so newest trades appear at top
+                try:
+                    self.all_data = self.all_data.sort_values(
+                        by=sort_cols, ascending=False, na_position='last'
+                    )
+                except Exception:
+                    pass
+
         if not self.visible_columns:
             self.visible_columns = list(self.all_data.columns)
 
