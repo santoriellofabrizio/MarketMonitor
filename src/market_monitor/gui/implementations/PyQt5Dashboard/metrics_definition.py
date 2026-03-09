@@ -45,6 +45,41 @@ METRIC_DEFINITIONS = {
         "colorize": True
     },
 
+    # --- Multi-horizon lagged P&L (10s / 20s / 30s / 40s) ---
+    **{
+        f"lagged_spread_pl_{n}s_sum": {
+            "label": f"Total Lagged P&L ({n}s)",
+            "compute": (lambda df, _n=n: df[f"lagged_spread_pl_{_n}s"].sum()
+                        if f"lagged_spread_pl_{_n}s" in df.columns else 0.0),
+            "format": "€{:,.2f}",
+            "colorize": True
+        }
+        for n in [10, 20, 30, 40]
+    },
+    **{
+        f"my_lagged_spread_pl_{n}s_sum": {
+            "label": f"My Lagged P&L ({n}s)",
+            "compute": (lambda df, _n=n:
+                        df.loc[df["own_trade"] == True, f"lagged_spread_pl_{_n}s"].sum()
+                        if f"lagged_spread_pl_{_n}s" in df.columns else 0.0),
+            "format": "€{:,.2f}",
+            "colorize": True
+        }
+        for n in [10, 20, 30, 40]
+    },
+    **{
+        f"lagged_spread_pl_{n}s_marginality": {
+            "label": f"Lagged P&L Marginality ({n}s)",
+            "compute": (lambda df, _n=n: (
+                df[f"lagged_spread_pl_{_n}s"].sum() / df["ctv"].sum()
+                if {f"lagged_spread_pl_{_n}s", "ctv"}.issubset(df.columns) and df["ctv"].sum() != 0
+                else 0.0
+            )),
+            "format": "{:.4%}"
+        }
+        for n in [10, 20, 30, 40]
+    },
+
     "my_ctv_sum": {
         "label": "My Total ctv",
         "compute": lambda df: df[df["own_trade"] == True]["ctv"].sum()

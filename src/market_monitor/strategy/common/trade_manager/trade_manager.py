@@ -30,7 +30,7 @@ class TradeManager:
             self,
             book_storage,
             model_prices: pd.Series | None = None,
-            time_zero_lag: float | None = 10.0,
+            time_zero_lags: list[float] | None = None,
             trade_folder: Path | None = None,
             **kwargs
     ):
@@ -72,14 +72,15 @@ class TradeManager:
         self._trades_since_last_save = 0
         self._last_saved_index = 0
 
-        # Time zero PL manager
+        # Time zero PL manager (supports multiple horizons, e.g. [10, 20, 30, 40] seconds)
+        _effective_lags = time_zero_lags if time_zero_lags is not None else [10., 20., 30., 40.]
         self.time_zero_pl_manager = TimeZeroPLManager(
             model_price=model_prices,
             mid_price_storage=book_storage,
-            time_zero_lag=time_zero_lag,
+            time_zero_lags=_effective_lags,
             trade_storage=self.trade_storage
         )
-        if time_zero_lag is not None:
+        if _effective_lags:  # only start if there are horizons to compute
             self.time_zero_pl_manager.start()
 
         # Load trades
@@ -452,9 +453,11 @@ class TradeManager:
             if trades_df.empty:
                 return
 
-            elaborated_trades = trades_df[
-                trades_df.get("is_elaborated", False)
-            ]
+            if "is_elaborated" not in trades_df.columns:
+                logger.info("No 'is_elaborated' column found, skipping load")
+                return
+
+            elaborated_trades = trades_df[trades_df["is_elaborated"] == True]
 
             if elaborated_trades.empty:
                 return
@@ -464,10 +467,10 @@ class TradeManager:
                 trade = self._reconstruct_trade_from_row(row)
 
                 if trade:
-                    with self.trade_storage.lock:
-                        self.trade_storage.add_trade(trade)
-                        if trade.is_my_trade():
-                            self._my_trades_index.append(trade.trade_index)
+                    # add_trade is already thread-safe; no outer lock needed here
+                    self.trade_storage.add_trade(trade)
+                    if trade.is_my_trade():
+                        self._my_trades_index.append(trade.trade_index)
                     loaded_count += 1
 
             self._last_saved_index = loaded_count
@@ -513,6 +516,16 @@ class TradeManager:
 
             trade.spread_pl = trade_dict.get("spread_pl")
             trade.spread_pl_model = trade_dict.get("spread_pl_model")
+
+            # Restore lagged P&L fields (backward-compat single-lag fields)
+            trade.lagged_spread_pl = trade_dict.get("lagged_spread_pl")
+            trade.lagged_spread_pl_model = trade_dict.get("lagged_spread_pl_model")
+
+            # Restore all horizon-specific lagged P&L fields (e.g. lagged_spread_pl_10s)
+            for key, val in trade_dict.items():
+                if key.startswith("lagged_spread_pl_") and val is not None:
+                    setattr(trade, key, val)
+
             trade.is_elaborated = True
 
             return trade
