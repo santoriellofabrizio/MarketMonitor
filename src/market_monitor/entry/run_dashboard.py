@@ -35,20 +35,63 @@ class DashboardRunner(BaseRunner):
     
     def run(self) -> None:
         from PyQt5.QtWidgets import QApplication
+        from PyQt5.QtGui import QPalette, QColor
         from market_monitor.gui.implementations.PyQt5Dashboard.builder import build_dashboard
-        
+
         self.logger.info("=" * 60)
         self.logger.info("Starting Trade Dashboard")
         self.logger.info("=" * 60)
-        
+
+        app_cfg = self.config.get("app", {}) if isinstance(self.config, dict) else {}
+        qt_style = app_cfg.get("style", "Fusion")
+        theme = app_cfg.get("theme", "light")
+
+        self.logger.info(f"Qt style={qt_style!r}  theme={theme!r}")
+
         self.app = QApplication(sys.argv)
-        self.app.setStyle("Fusion")
-        
+        self.app.setStyle(qt_style)
+
+        if theme == "dark":
+            self._apply_dark_palette(self.app)
+            self.logger.info("Dark palette applied")
+
         self.dashboard = build_dashboard(self.config)
         self.dashboard.start()
-        
+
         # Event loop Qt (bloccante)
         sys.exit(self.app.exec())
+
+    @staticmethod
+    def _apply_dark_palette(app) -> None:
+        """Applica una palette scura all'applicazione Qt."""
+        from PyQt5.QtGui import QPalette, QColor
+        from PyQt5.QtCore import Qt
+
+        palette = QPalette()
+        dark = QColor(45, 45, 45)
+        darker = QColor(30, 30, 30)
+        mid = QColor(60, 60, 60)
+        highlight = QColor(42, 130, 218)
+        text = QColor(220, 220, 220)
+        disabled_text = QColor(127, 127, 127)
+
+        palette.setColor(QPalette.Window, dark)
+        palette.setColor(QPalette.WindowText, text)
+        palette.setColor(QPalette.Base, darker)
+        palette.setColor(QPalette.AlternateBase, mid)
+        palette.setColor(QPalette.ToolTipBase, dark)
+        palette.setColor(QPalette.ToolTipText, text)
+        palette.setColor(QPalette.Text, text)
+        palette.setColor(QPalette.Disabled, QPalette.Text, disabled_text)
+        palette.setColor(QPalette.Button, mid)
+        palette.setColor(QPalette.ButtonText, text)
+        palette.setColor(QPalette.Disabled, QPalette.ButtonText, disabled_text)
+        palette.setColor(QPalette.BrightText, Qt.red)
+        palette.setColor(QPalette.Link, highlight)
+        palette.setColor(QPalette.Highlight, highlight)
+        palette.setColor(QPalette.HighlightedText, Qt.black)
+
+        app.setPalette(palette)
 
 
 # =============================================================================

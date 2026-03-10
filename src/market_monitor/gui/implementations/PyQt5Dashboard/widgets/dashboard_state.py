@@ -126,6 +126,7 @@ class DashboardState:
             config = {
                 'visible_columns': trade_table.visible_columns,
                 'column_widths': self._get_column_widths(trade_table.table),
+                'column_widths_by_name': dict(getattr(trade_table, '_column_widths', {})),
                 'column_decimals': trade_table.column_decimals.copy(),
                 'autoscroll': trade_table.autoscroll_checkbox.isChecked(),
                 'datetime_format': trade_table.datetime_format,
@@ -394,8 +395,12 @@ class DashboardState:
             if 'dedup_column' in config:
                 trade_table.dedup_column = config['dedup_column']
 
-            # Larghezze colonne
-            if 'column_widths' in config:
+            # Larghezze colonne (per nome, nuovo formato)
+            if 'column_widths_by_name' in config:
+                if hasattr(trade_table, '_column_widths'):
+                    trade_table._column_widths = dict(config['column_widths_by_name'])
+            elif 'column_widths' in config:
+                # Fallback legacy: per indice
                 self._restore_column_widths(trade_table.table, config['column_widths'])
 
             # Sorting

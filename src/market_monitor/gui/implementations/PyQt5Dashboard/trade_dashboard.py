@@ -301,9 +301,13 @@ class TradeDashboard(BasePyQt5Dashboard, TradeDashboardExtensions):
         Avvia la dashboard mostrando la finestra e iniziando
         il monitoraggio dei dati.
         """
-        self.logger.info("Starting TradeDashboard")
+        self.logger.info(
+            f"Starting TradeDashboard — mode={self.mode}, "
+            f"redis={self.redis_config}, rabbit_host={self.rabbit_config.get('host')}"
+        )
         self.show()
         self.start_monitoring()
+        self._update_status_bar()
         return self
 
     def setup_ui(self):
@@ -328,6 +332,30 @@ class TradeDashboard(BasePyQt5Dashboard, TradeDashboardExtensions):
         )
 
         self.main_layout.addWidget(self.trade_table)
+
+    def _update_status_bar(self):
+        """Aggiorna la status bar con info config + contatori."""
+        state = "PAUSED" if self.paused else "LIVE"
+        total = len(self.all_trades) if not self.all_trades.empty else 0
+
+        if self.mode == 'redis':
+            host = self.redis_config.get('host', 'localhost')
+            port = self.redis_config.get('port', 6379)
+            channel = self.redis_config.get('channel', 'trades_df')
+            source_info = f"Redis  {host}:{port}  channel={channel}"
+        elif self.mode == 'rabbit':
+            host = self.rabbit_config.get('host', '?')
+            exchange = self.rabbit_config.get('exchange', '?')
+            source_info = f"RabbitMQ  {host}  exchange={exchange}"
+        elif self.mode == 'queue':
+            source_info = "Queue (in-process)"
+        else:
+            source_info = f"mode={self.mode}"
+
+        self.status_bar.showMessage(
+            f"  {state}  |  {source_info}  |  trades={total}  |  "
+            f"calc_fields={len(self.calculated_fields)}  |  metrics={len(self.metric_items)}"
+        )
 
     def start_monitoring(self):
         """
@@ -411,6 +439,7 @@ class TradeDashboard(BasePyQt5Dashboard, TradeDashboardExtensions):
         else:
             self.pause()
             self.pause_btn.setText("▶️ Resume")
+        self._update_status_bar()
 
     def _on_data_received(self, df: pd.DataFrame):
         """
@@ -420,7 +449,14 @@ class TradeDashboard(BasePyQt5Dashboard, TradeDashboardExtensions):
         if self.paused:
             return
 
-        self.logger.debug(f"Received {len(df)} new trades")
+        if df is None or df.empty:
+            self.logger.debug("_on_data_received: empty or None DataFrame, skipping")
+            return
+
+        self.logger.debug(
+            f"_on_data_received: {len(df)} rows, cols={list(df.columns)}, "
+            f"all_trades_shape={self.all_trades.shape}"
+        )
 
         # NORMALIZZAZIONE TIMESTAMP: Assicurati che timestamp sia SEMPRE datetime pandas
         if 'timestamp' in df.columns:
@@ -476,12 +512,21 @@ class TradeDashboard(BasePyQt5Dashboard, TradeDashboardExtensions):
                         ts_types = self.all_trades['timestamp'].apply(type).value_counts()
                         self.logger.error(f"Timestamp types: {ts_types.to_dict()}")
 
-        enriched = self._get_enriched_trades()
-        self.trade_table.update_data(enriched)
-        self._update_metrics()
-        self._update_all_detached_pivots(enriched)
-        self._update_all_detached_charts(enriched)
-        self._update_all_detached_groupbys(enriched)
+        try:
+            enriched = self._get_enriched_trades()
+            self.logger.debug(
+                f"Enriched trades: {len(enriched)} rows, "
+                f"calculated_fields={list(self.calculated_fields.keys())}"
+            )
+            self.trade_table.update_data(enriched)
+            self._update_metrics()
+            self._update_all_detached_pivots(enriched)
+            self._update_all_detached_charts(enriched)
+            self._update_all_detached_groupbys(enriched)
+            self._update_status_bar()
+        except Exception as e:
+            import traceback as _tb
+            self.logger.error(f"_on_data_received: error updating UI: {e}\n{_tb.format_exc()}")
 
     def _on_filtered_data_changed(self, filtered_df: pd.DataFrame):
         """Callback su cambio filtri tabella."""
@@ -534,16 +579,21 @@ class TradeDashboard(BasePyQt5Dashboard, TradeDashboardExtensions):
                 flow_window.add_flow(flow_data)
 
     def _on_error(self, error_msg: str):
-        """Gestisce errori del worker thread."""
+        """Gestisce errori del worker thread — mostra nella status bar senza bloccare il flusso."""
         self.logger.error(f"Worker thread error: {error_msg}")
-        QMessageBox.warning(self, "Worker Error", error_msg)
+        # Mostra nella status bar invece di una modal dialog che blocca l'update loop
+        self.status_bar.showMessage(f"⚠ Error: {error_msg}", 8000)
 
     def _update_metrics(self):
-        """Aggiorna le metriche nella dashboard usando definizioni dinamiche."""
+        """Aggiorna le metriche nella dashboard usando definizioni dinamiche.
+
+        Usa i dati arricchiti (all_trades + campi calcolati) in modo che
+        le metriche possano riferirsi anche a campi calcolati.
+        """
         if not self.metrics_enabled or self.all_trades.empty:
             return
 
-        df = self.all_trades
+        df = self._get_enriched_trades()
 
         for idx, metric_def in enumerate(self.metric_items):
             if not isinstance(metric_def, dict):
@@ -696,8 +746,15 @@ class TradeDashboard(BasePyQt5Dashboard, TradeDashboardExtensions):
         )
 
     def _show_metric_chooser(self):
-        """Apre il dialog per definire le metriche e ricostruisce il pannello."""
-        columns = list(self.all_trades.columns) if not self.all_trades.empty else []
+        """Apre il dialog per definire le metriche e ricostruisce il pannello.
+
+        Le colonne disponibili includono sia quelle raw che i campi calcolati.
+        """
+        enriched = self._get_enriched_trades()
+        columns = list(enriched.columns) if not enriched.empty else []
+        # Se non ci sono dati ma ci sono campi calcolati, aggiungili comunque
+        if not columns and self.calculated_fields:
+            columns = list(self.calculated_fields.keys())
         dialog = MetricDefinitionDialog(
             metric_items=list(self.metric_items),
             data_columns=columns,

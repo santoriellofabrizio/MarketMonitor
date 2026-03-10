@@ -98,6 +98,9 @@ class TradeTableWidget(QWidget):
         self.datetime_format = datetime_format
         self.column_decimals: dict[str, int] = {}
 
+        # Persistenza larghezze colonne: dict {col_name: width_px}
+        self._column_widths: dict[str, int] = {}
+
         # ---- Filters ----
         self.active_filter: Optional[FilterGroup] = None
         # Filtri per valori colonna: {col_name: set di valori esclusi}
@@ -155,6 +158,7 @@ class TradeTableWidget(QWidget):
         header.setSectionResizeMode(QHeaderView.Interactive)
         header.setSectionsMovable(True)
         header.sectionMoved.connect(self._on_section_moved)
+        header.sectionResized.connect(self._on_section_resized)
         header.setContextMenuPolicy(Qt.CustomContextMenu)
         header.customContextMenuRequested.connect(
             self._show_header_context_menu
@@ -181,6 +185,13 @@ class TradeTableWidget(QWidget):
         ]
         self.visible_columns = new_order
         self._refresh_view()
+
+    def _on_section_resized(self, logical: int, old_size: int, new_size: int):
+        """Salva la nuova larghezza della colonna ridimensionata dall'utente."""
+        header_item = self.table.horizontalHeaderItem(logical)
+        if header_item:
+            col_name = header_item.text()
+            self._column_widths[col_name] = new_size
 
     # ==========================================================
     # HEADER CONTEXT MENU
@@ -534,6 +545,12 @@ class TradeTableWidget(QWidget):
         self.table.setColumnCount(len(df.columns))
         self.table.setHorizontalHeaderLabels(df.columns.tolist())
 
+        # Ripristina larghezze colonne salvate dall'utente
+        if self._column_widths:
+            for col_idx, col_name in enumerate(df.columns):
+                if col_name in self._column_widths:
+                    self.table.setColumnWidth(col_idx, self._column_widths[col_name])
+
         side_idx = df.columns.get_loc("side") if "side" in df else None
         own_idx = df.columns.get_loc("own_trade") if "own_trade" in df else None
 
@@ -652,6 +669,7 @@ class TradeTableWidget(QWidget):
         self.filtered_data = pd.DataFrame()
         self.active_filter = None
         self.displayed_rows = 0
+        self._column_widths.clear()
         self.table.clear()
         self.info_label.setText("No data")
 

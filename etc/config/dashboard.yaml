@@ -39,7 +39,10 @@ logging:
   log_name: dashboard
 
 app:
+  # Available Qt styles: Fusion, Windows, WindowsVista, Macintosh
+  # For a dark theme use: dark  (applies a dark Fusion palette)
   style: Fusion
+  theme: light   # light | dark
 
 queue:
   maxsize: 5000
