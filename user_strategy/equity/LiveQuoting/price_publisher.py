@@ -150,6 +150,7 @@ class PricePublisherHub:
             ('live_idx', normalized_prices['live_idx']),
             ('live_clust', normalized_prices['live_clust']),
             ('intraday', normalized_prices['intraday']),
+            ('normalized_mid', normalized_prices['normalized_mid']),
         ]
         mis_fields = [
             ('live_idx_mis', normalized_prices['live_idx']),

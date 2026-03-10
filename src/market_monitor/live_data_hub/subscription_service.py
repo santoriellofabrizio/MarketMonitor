@@ -1,5 +1,5 @@
 import logging
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union, Literal
 
 import pandas as pd
 
@@ -78,7 +78,6 @@ class SubscriptionService:
 
     # ------------------------------------------------------------------
     # Subscription lifecycle API
-    # ------------------------------------------------------------------
     def subscribe_bloomberg(
         self,
         id: str,
@@ -98,6 +97,7 @@ class SubscriptionService:
         )
         self._manager.add_subscription(bloomberg_sub, group=group)
         return bloomberg_sub
+    # ------------------------------------------------------------------
 
     def subscribe_redis(
         self,

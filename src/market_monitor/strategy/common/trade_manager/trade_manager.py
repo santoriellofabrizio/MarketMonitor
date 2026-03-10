@@ -37,6 +37,7 @@ class TradeManager:
     ):
 
         # Validazione book_storage
+        self._last_processed_trades = None
         if not hasattr(book_storage, 'get_last_before'):
             raise TypeError(
                 "book_storage must have 'get_last_before' method. "
@@ -135,8 +136,8 @@ class TradeManager:
         except Exception as e:
             logger.error(f"Error processing trades: {e}", exc_info=True)
             raise
-
-        return self._convert_trades_obj_to_df(processed)
+        self._last_processed_trades = self._convert_trades_obj_to_df(processed)
+        return self._last_processed_trades
 
     def _auto_save(self):
         """Auto-save con retry e gestione errori."""
@@ -330,7 +331,7 @@ class TradeManager:
 
         return self._convert_trades_obj_to_df(trades)
 
-    def get_trades_to_publish(self, processed_trades: pd.DataFrame) -> pd.DataFrame:
+    def get_trades_to_publish(self) -> pd.DataFrame:
         """
         Ritorna i trades da pubblicare alla GUI.
 
@@ -342,8 +343,6 @@ class TradeManager:
            degli orizzonti (10s, 20s, 30s, 40s) senza aspettare l'ultimo
         5. La GUI si occupa della deduplicazione tramite trade_index (keep='last')
 
-        Args:
-            processed_trades: DataFrame dei trades appena processati da on_trade()
 
         Returns:
             DataFrame con i trades da pubblicare (nuovi + elaborati + aggiornamenti orizzonte)
@@ -361,8 +360,10 @@ class TradeManager:
 
             self._pending_partial_indexes -= fully_elaborated
 
+            processed_trades = self._last_processed_trades
+
             # 2. Aggiungi i nuovi trades processati e traccia i parziali
-            if not processed_trades.empty:
+            if processed_trades is not None and not processed_trades.empty:
                 for _, row in processed_trades.iterrows():
                     trade_idx = row.get('trade_index')
                     if trade_idx is not None:

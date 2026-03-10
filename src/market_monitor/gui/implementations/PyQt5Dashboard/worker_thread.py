@@ -236,7 +236,7 @@ class RedisPubSubThread(BaseDashboardThread):
         super().__init__()
         self.batch_queue = deque()
         self.last_emit_time = 0
-        self.batch_interval = 0.5  # 500ms
+        self.batch_interval = redis_config.get('batch_interval', 0.5) # 500ms
         self.batch_max_size = None
 
         self.redis_config = redis_config
@@ -458,7 +458,7 @@ class RabbitPubSubThread(BaseDashboardThread):
         super().__init__()
         self.batch_queue = deque()
         self.last_emit_time = 0
-        self.batch_interval = 0.5   # 500ms
+        self.batch_interval = rabbit_config.get('batch_interval', 0.5)  # 500ms
         self.batch_max_size = None
 
         self.rabbit_config = rabbit_config

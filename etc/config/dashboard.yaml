@@ -11,7 +11,7 @@ dashboard:
     host: localhost
     port: 6379
     db: 0
-    channel: trades_rabbit_test
+    channel: trades_rabbit
 
   rabbit:
     host: rabbitmq.af.tst

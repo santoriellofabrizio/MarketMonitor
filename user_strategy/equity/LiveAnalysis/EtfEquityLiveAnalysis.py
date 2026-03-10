@@ -3,6 +3,7 @@ from time import time, sleep
 from datetime import datetime
 import datetime as dt
 
+import numpy as np
 import pandas as pd
 from sfm_data_provider.interface.bshdata import BshData
 
@@ -49,12 +50,13 @@ class EtfEquityLiveAnalysis(StrategyUI):
         # -------------------------------------- SETTING INSTRUMENTS ---------------------------------------------------
 
         self.mid = pd.Series(index=self.all_isins, name="mid")
+        self.model_price: pd.Series = pd.Series(np.nan, index=self.all_isins, name='model_price')
 
         self._init_redis_dashboard(**kwargs)
         self._init_rabbit_dashboard(**kwargs)
 
         self.trade_manager = TradeManager(self.book_storage,
-                                          **kwargs["trade_manager"])
+                                          **kwargs.get("trade_manager",{}))
 
     def _init_rabbit_dashboard(self, **kwargs):
         rabbit_cfg = kwargs.get('rabbit_data_export', {})
@@ -120,6 +122,8 @@ class EtfEquityLiveAnalysis(StrategyUI):
                                                                      "BID_SIZE": "bidBestLevel.quantity",
                                                                      "ASK_SIZE": "askBestLevel.quantity"})
         self.subscribe_kafka_trades()
+        self.global_subscription_service.subscribe_redis(channel="market:theoretical_live_intraday_price",
+                                                         store='market')
 
     def from_kafka_to_bloomberg(self):
 
@@ -153,8 +157,6 @@ class EtfEquityLiveAnalysis(StrategyUI):
         else:
             logging.warning(f"Price source {self.price_source} not supported.")
 
-        self.global_subscription_service.subscribe_redis(channel="market:theoretical_live_intraday_price", store='market')
-
     def subscribe_kafka_trades(self) -> None:
 
         for isin in self.all_isins:
@@ -184,6 +186,7 @@ class EtfEquityLiveAnalysis(StrategyUI):
 
     def on_trade(self, new_trades):
 
+        new_trades['model_price'] = new_trades['model_price'] = new_trades['isin'].map(self.model_price)
         processed_new = self.trade_manager.on_trade(new_trades)
 
         self.flow_detector.process_trades(processed_new)
@@ -192,7 +195,7 @@ class EtfEquityLiveAnalysis(StrategyUI):
                 for dashboard in [self.rabbit_dashboard, self.rabbit_dashboard]:
                     if dashboard: dashboard.export_flow_detected(channel="trades_rabbit", flow=flow)
 
-        trades_to_publish = self.trade_manager.get_trades_to_publish(processed_new)
+        trades_to_publish = self.trade_manager.get_trades_to_publish()
         self.publish_trades_on_dashboard(trades_to_publish)
 
     def publish_trades_on_dashboard(self, new_trades):
@@ -220,6 +223,8 @@ class EtfEquityLiveAnalysis(StrategyUI):
         if raw is None or raw.empty:
             return
 
+        model = self.market_data.get_data_field(field="theoretical_live_intraday_price")
+        self.model_price.update(model)
         snapshot = {
             isin: FairvaluePrice.scalar(isin, price)
             for isin, price in raw.mean(axis=1).items()
