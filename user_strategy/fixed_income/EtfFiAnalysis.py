@@ -79,9 +79,7 @@ class FIAnalysis(StrategyUI):
                                                                                   index=self.credit_futures_contracts,
                                                                                   name="th live brother credit futures price")
 
-        self.trade_manager = TradeManager(self.book_storage,
-                                          self.theoretical_live_brother_price,
-                                          **kwargs["trade_manager"])
+        self.trade_manager = TradeManager(self.book_storage, **kwargs["trade_manager"])
 
         self.redis_publisher = RedisMessaging()
 

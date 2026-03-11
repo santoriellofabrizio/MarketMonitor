@@ -30,7 +30,6 @@ class TradeManager:
     def __init__(
             self,
             book_storage,
-            model_prices: pd.Series | None = None,
             time_zero_lags: list[float] | None = None,
             trade_folder: Path | None = None,
             **kwargs
@@ -48,7 +47,6 @@ class TradeManager:
         self.trade_storage = TradeStorage()
         self._my_trades_index: list = []
 
-        self.model_price = model_prices
         self.book_storage = book_storage
 
         # Config

@@ -39,8 +39,7 @@ class CBTradeAnalysis(StrategyUI):
         # -------------------------------------- SETTING INSTRUMENTS ---------------------------------------------------
         self.mid = pd.Series(index=self.instruments, name="mid")
         self.trade_dashboard_messaging = RedisMessaging()
-        self.trade_manager = TradeManager(self.book_storage,
-                                          **kwargs["trade_manager"])
+        self.trade_manager = TradeManager(self.book_storage, **kwargs["trade_manager"])
 
     def wait_for_book_initialization(self):
 

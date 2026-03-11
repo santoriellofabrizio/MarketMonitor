@@ -55,8 +55,7 @@ class EtfEquityLiveAnalysis(StrategyUI):
         self._init_redis_dashboard(**kwargs)
         self._init_rabbit_dashboard(**kwargs)
 
-        self.trade_manager = TradeManager(self.book_storage,
-                                          **kwargs.get("trade_manager",{}))
+        self.trade_manager = TradeManager(self.book_storage, **kwargs.get("trade_manager", {}))
 
     def _init_rabbit_dashboard(self, **kwargs):
         rabbit_cfg = kwargs.get('rabbit_data_export', {})

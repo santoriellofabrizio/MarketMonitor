@@ -74,8 +74,7 @@ class CreditTradeAnalysis(StrategyUI):
             sep = "=" * 80
             print(f"""{sep} \n ==== Redis export -> channel: {self.redis_exporting_channel} ==== \n {sep}""".strip())
 
-        self.trade_manager = TradeManager(self.book_storage,
-                                          **kwargs["trade_manager"])
+        self.trade_manager = TradeManager(self.book_storage, **kwargs["trade_manager"])
 
     def wait_for_book_initialization(self):
         while datetime.today().time() < dt.time(8, 50):
