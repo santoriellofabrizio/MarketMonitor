@@ -13,12 +13,11 @@ import pandas as pd
 from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
 
+from src.market_monitor.strategy.common.trade_manager.trade_templates import TradeTyp
+
 logger = logging.getLogger(__name__)
 
 
-class TradeType(Enum):
-    OWN = 1
-    MARKET = 2
 
 
 class MyEventHandler(FileSystemEventHandler):
@@ -48,11 +47,11 @@ class MyEventHandler(FileSystemEventHandler):
                 return
             if not market_trades.empty:
                 market_trades.set_index("ticker", inplace=True)
-                self.trade_thread.put_in_queue(TradeType.MARKET, market_trades)
+                self.trade_thread.put_in_queue(TradeTyp.MARKET, market_trades)
                 logger.info(f"New market trades added to the queue: {market_trades.index.tolist()}")
             if not own_trades.empty:
                 own_trades.set_index("ticker", inplace=True)
-                self.trade_thread.put_in_queue(TradeType.OWN, own_trades)
+                self.trade_thread.put_in_queue(TradeTyp.OWN, own_trades)
                 logger.info(f"New own trades added to the queue: {own_trades.index.tolist()}")
 
 
@@ -87,12 +86,12 @@ class TradeThread(threading.Thread):
         try:
             market_trades, own_trades = self.conn.get_all_trades()
             market_trades.set_index("ticker", inplace=True)
-            self.put_in_queue(TradeType.MARKET, market_trades)
+            self.put_in_queue(TradeTyp.MARKET, market_trades)
 
             try:
                 own_trades.set_index("ticker", inplace=True)
                 if not own_trades.empty:
-                    self.put_in_queue(TradeType.OWN, own_trades)
+                    self.put_in_queue(TradeTyp.OWN, own_trades)
             except KeyError as e:
                 logger.warning(f"own_trades table is Empty. Please update market trades viewer to the latest one.")
 
@@ -134,7 +133,7 @@ class TradeThread(threading.Thread):
         if self.asynchronous:
             self.loop.stop()
 
-    def put_in_queue(self, trade_type: TradeType, item: pd.DataFrame):
+    def put_in_queue(self, trade_type: TradeTyp, item: pd.DataFrame):
         """Aggiunge l'elemento alla coda in modo sicuro. Se è una coda asyncio, utilizza await per l'inserimento."""
         if self.asynchronous:
             # Se la coda è asyncio.Queue, esegui l'inserimento nel loop asincrono

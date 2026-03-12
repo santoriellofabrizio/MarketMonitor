@@ -54,7 +54,7 @@ class EtfEquityLiveAnalysis(StrategyUI):
         self._init_rabbit_dashboard(**kwargs)
 
         self.trade_manager = TradeManager(self.book_storage,
-                                          **kwargs["trade_manager"])
+                                          **kwargs.get("trade_manager",{}))
 
     def _init_rabbit_dashboard(self, **kwargs):
         rabbit_cfg = kwargs.get('rabbit_data_export', {})
@@ -185,7 +185,7 @@ class EtfEquityLiveAnalysis(StrategyUI):
                 for dashboard in [self.rabbit_dashboard, self.rabbit_dashboard]:
                     if dashboard: dashboard.export_flow_detected(channel="trades_rabbit", flow=flow)
 
-        trades_to_publish = self.trade_manager.get_trades_to_publish(processed_new)
+        trades_to_publish = self.trade_manager.get_trades_to_publish()
         self.publish_trades_on_dashboard(trades_to_publish)
 
     def publish_trades_on_dashboard(self, new_trades):

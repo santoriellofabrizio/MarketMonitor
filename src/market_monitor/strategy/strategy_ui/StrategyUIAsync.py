@@ -8,13 +8,12 @@ from time import time
 from typing import Optional, Dict, Any, Union, Coroutine
 
 import pandas as pd
-from market_monitor.gui.implementations.GUI import GUI
-from market_monitor.input_threads.trade import TradeType
+from src.market_monitor.gui.implementations.GUI import GUI
 
-from market_monitor.live_data_hub.real_time_data_hub import RTData
-from market_monitor.utils.command_listener import CommandListener
-from market_monitor.live_data_hub.subscription_service import SubscriptionService
-from market_monitor.utils.config_observer import ConfigChangeHandler
+from src.market_monitor.live_data_hub.real_time_data_hub import RTData
+from src.market_monitor.strategy.common.trade_manager.trade_templates import TradeTyp
+from src.market_monitor.utils.command_listener import CommandListener
+from src.market_monitor.live_data_hub.subscription_service import SubscriptionService
 
 logger = logging.getLogger(__name__)
 
@@ -270,20 +269,20 @@ class StrategyUIAsync(ABC):
                 trade_type, item = self.q_trade.get_nowait()
                 logger.debug(f"Got trade from the queue_trade. batch: {batch_size}")
                 if isinstance(item, pd.DataFrame):
-                    if trade_type == TradeType.MARKET:
+                    if trade_type.name == "MARKET":
                         market_trades.append(item)
-                    elif trade_type == TradeType.OWN:
+                    elif trade_type.name == "OWN":
                         own_trades.append(item)
                     else:
                         logger.error(f"Unknown trade type: {trade_type}")
             try:
                 if len(market_trades):
                     start = time()
-                    self._on_trade(TradeType.MARKET, pd.concat(market_trades))
+                    self._on_trade(TradeTyp.MARKET, pd.concat(market_trades))
                     logger.debug(f"Task market trades completed ({time() - start:.4f}s)")
                 if len(own_trades):
                     start = time()
-                    self._on_trade(TradeType.OWN, pd.concat(own_trades))
+                    self._on_trade(TradeTyp.OWN, pd.concat(own_trades))
                     logger.debug(f"Task own trades completed ({time() - start:.4f}s)")
             except Exception as e:
                 logger.error(f"Task trade: error in processing trades")
@@ -369,15 +368,15 @@ class StrategyUIAsync(ABC):
     def on_book_initialized(self):
         pass
 
-    def _on_trade(self, trade_type: TradeType, trade: pd.DataFrame) -> Optional[Dict[str, Any]]:
+    def _on_trade(self, trade_type: TradeTyp, trade: pd.DataFrame) -> Optional[Dict[str, Any]]:
 
         try:
             start = time()
             logger.debug("Entering _on_trade method.")
-            if trade_type == TradeType.MARKET:
+            if trade_type == TradeTyp.MARKET:
                 self.on_trade(trade)
                 self._publish_lifecycle_event("on_trade", len(trade))
-            elif trade_type == TradeType.OWN:
+            elif trade_type == TradeTyp.OWN:
                 self._on_my_trade(trade)
             else:
                 logger.error(f"Invalid trade_type: {trade_type}")

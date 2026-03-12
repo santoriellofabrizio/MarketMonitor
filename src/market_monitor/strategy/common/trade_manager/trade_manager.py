@@ -4,6 +4,7 @@ trade_manager ottimizzato con miglioramenti chiave.
 
 import datetime
 import logging
+import queue as queue_mod
 from pathlib import Path
 from typing import Optional, Tuple, Union
 from threading import RLock
@@ -29,13 +30,13 @@ class TradeManager:
     def __init__(
             self,
             book_storage,
-            model_prices: pd.Series | None = None,
-            time_zero_lag: float | None = 10.0,
+            time_zero_lags: list[float] | None = None,
             trade_folder: Path | None = None,
             **kwargs
     ):
 
         # Validazione book_storage
+        self._last_processed_trades = None
         if not hasattr(book_storage, 'get_last_before'):
             raise TypeError(
                 "book_storage must have 'get_last_before' method. "
@@ -46,7 +47,6 @@ class TradeManager:
         self.trade_storage = TradeStorage()
         self._my_trades_index: list = []
 
-        self.model_price = model_prices
         self.book_storage = book_storage
 
         # Config
@@ -63,6 +63,8 @@ class TradeManager:
 
         # Tracking dei trades inviati parzialmente (is_elaborated=False)
         self._pending_partial_indexes: set[int] = set()
+        # Thread-safe queue: PL thread pushes trade indexes here after each horizon
+        self._horizon_publish_queue: queue_mod.Queue = queue_mod.Queue()
 
         # Persistenza
         self.engine = kwargs.get("engine", "pyarrow")
@@ -72,14 +74,15 @@ class TradeManager:
         self._trades_since_last_save = 0
         self._last_saved_index = 0
 
-        # Time zero PL manager
+        # Time zero PL manager (supports multiple horizons, e.g. [10, 20, 30, 40] seconds)
+        _effective_lags = time_zero_lags if time_zero_lags is not None else [10., 20., 30., 40.]
         self.time_zero_pl_manager = TimeZeroPLManager(
-            model_price=model_prices,
             mid_price_storage=book_storage,
-            time_zero_lag=time_zero_lag,
-            trade_storage=self.trade_storage
+            time_zero_lags=_effective_lags,
+            trade_storage=self.trade_storage,
+            on_horizon_computed=self._on_horizon_computed
         )
-        if time_zero_lag is not None:
+        if _effective_lags:  # only start if there are horizons to compute
             self.time_zero_pl_manager.start()
 
         # Load trades
@@ -109,20 +112,10 @@ class TradeManager:
                     # Calcola spread PL usando book al momento del trade
                     snapshot = self.book_storage.get_last_before(trade.timestamp)
                     if snapshot:
-                        _, mid_prices = snapshot
                         mid = self._get_mid_by_snapshot(snapshot, trade)
                         if mid is not None:
                             trade.spread_pl = self.time_zero_pl_manager.calculate_time_zero_pl(
                                 trade, mid
-                            )
-
-                    if self.model_price is not None:
-                        model = self.model_price.get(trade.isin)
-                        if model is not None:
-                            trade.spread_pl_model = (
-                                self.time_zero_pl_manager.calculate_time_zero_pl(
-                                    trade, model
-                                )
                             )
 
                 # Store trade
@@ -141,8 +134,8 @@ class TradeManager:
         except Exception as e:
             logger.error(f"Error processing trades: {e}", exc_info=True)
             raise
-
-        return self._convert_trades_obj_to_df(processed)
+        self._last_processed_trades = self._convert_trades_obj_to_df(processed)
+        return self._last_processed_trades
 
     def _auto_save(self):
         """Auto-save con retry e gestione errori."""
@@ -173,8 +166,6 @@ class TradeManager:
     # ========================================================================
     # QUERY METHODS (thread-safe cache)
     # ========================================================================
-
-    from datetime import datetime
 
     @staticmethod
     def _get_mid_by_snapshot(snapshot: tuple, trade: Trade) -> float | None:
@@ -231,8 +222,9 @@ class TradeManager:
 
     def get_my_trades(self, n_of_trades: int | None = None) -> pd.DataFrame:
         """Get solo my trades (ottimizzato a livello storage)."""
-        # Filtra nel storage prima di convertire
         trades_obj = self.trade_storage.get_last_trades(n_of_trades)
+        if isinstance(trades_obj, dict):
+            trades_obj = list(trades_obj.values())
         my_trades_obj = [t for t in trades_obj if t.is_my_trade()]
         return self._convert_trades_obj_to_df(my_trades_obj)
 
@@ -243,8 +235,9 @@ class TradeManager:
         if not isins:
             return pd.DataFrame()
 
-        # Filtra nel storage
         trades_obj = self.trade_storage.get_last_trades(n_of_trades)
+        if isinstance(trades_obj, dict):
+            trades_obj = list(trades_obj.values())
         filtered_obj = [t for t in trades_obj if t.isin in isins]
 
         df = self._convert_trades_obj_to_df(filtered_obj)
@@ -258,6 +251,8 @@ class TradeManager:
             return pd.DataFrame()
 
         trades_obj = self.trade_storage.get_last_trades(n_of_trades)
+        if isinstance(trades_obj, dict):
+            trades_obj = list(trades_obj.values())
         filtered_obj = [t for t in trades_obj if t.ticker in tickers]
 
         df = self._convert_trades_obj_to_df(filtered_obj)
@@ -299,38 +294,76 @@ class TradeManager:
 
         return trades
 
-    def get_trades_to_publish(self, processed_trades: pd.DataFrame) -> pd.DataFrame:
+    def _on_horizon_computed(self, trade) -> None:
+        """Callback invocato da TimeZeroPLManager dopo ogni orizzonte calcolato.
+
+        Inserisce l'indice del trade nella coda thread-safe _horizon_publish_queue
+        e invalida la cache. Il prossimo drenaggio della coda (da get_trades_to_publish
+        o get_horizon_updates) pubblicherà il trade con i dati aggiornati.
+        """
+        self._horizon_publish_queue.put(trade.trade_index)
+        self._invalidate_cache()
+
+    def get_horizon_updates(self) -> pd.DataFrame:
+        """Drena la coda degli orizzonti e ritorna i trades aggiornati come DataFrame.
+
+        Thread-safe. Può essere chiamato dalla strategy in update_LF(), on_trade(),
+        o da qualsiasi contesto. Ritorna un DataFrame vuoto se non ci sono aggiornamenti.
+        """
+        indexes: set[int] = set()
+        while True:
+            try:
+                idx = self._horizon_publish_queue.get_nowait()
+                indexes.add(idx)
+            except queue_mod.Empty:
+                break
+
+        if not indexes:
+            return pd.DataFrame()
+
+        trades = []
+        for idx in indexes:
+            trade = self.trade_storage.get_trades_by_index(idx)
+            if trade:
+                trades.append(trade)
+
+        return self._convert_trades_obj_to_df(trades)
+
+    def get_trades_to_publish(self) -> pd.DataFrame:
         """
         Ritorna i trades da pubblicare alla GUI.
 
         Logica:
         1. I trades appena processati vengono sempre inviati
-        2. Se un trade è parziale (is_elaborated=False), viene tracciato
-        3. I trades precedentemente parziali che ora sono elaborati vengono re-inviati
-        4. La GUI si occupa della deduplicazione
+        2. Se un trade è parziale (is_elaborated=False), viene tracciato in _pending_partial_indexes
+        3. I pending completamente elaborati (is_elaborated=True) vengono re-inviati e rimossi
+        4. Drena la coda _horizon_publish_queue per includere aggiornamenti intermedi
+           degli orizzonti (10s, 20s, 30s, 40s) senza aspettare l'ultimo
+        5. La GUI si occupa della deduplicazione tramite trade_index (keep='last')
 
         Args:
             processed_trades: DataFrame dei trades appena processati da on_trade()
 
         Returns:
-            DataFrame con i trades da pubblicare (nuovi + parziali ora elaborati)
+            DataFrame con i trades da pubblicare (nuovi + elaborati + aggiornamenti orizzonte)
         """
         with self._cache_lock:
             trades_to_publish = []
+            fully_elaborated = set()
 
-            # 1. Controlla i pending che sono diventati elaborati
-            newly_elaborated_indexes = set()
+            # 1. Controlla i pending che sono diventati completamente elaborati
             for idx in list(self._pending_partial_indexes):
                 trade = self.trade_storage.get_trades_by_index(idx)
                 if trade and trade.is_elaborated:
                     trades_to_publish.append(trade)
-                    newly_elaborated_indexes.add(idx)
+                    fully_elaborated.add(idx)
 
-            # Rimuovi dai pending quelli ora elaborati
-            self._pending_partial_indexes -= newly_elaborated_indexes
+            self._pending_partial_indexes -= fully_elaborated
+
+            processed_trades = self._last_processed_trades
 
             # 2. Aggiungi i nuovi trades processati e traccia i parziali
-            if not processed_trades.empty:
+            if processed_trades is not None and not processed_trades.empty:
                 for _, row in processed_trades.iterrows():
                     trade_idx = row.get('trade_index')
                     if trade_idx is not None:
@@ -340,7 +373,19 @@ class TradeManager:
                             if not trade.is_elaborated:
                                 self._pending_partial_indexes.add(int(trade_idx))
 
-            return self._convert_trades_obj_to_df(trades_to_publish)
+            # 3. Drena la coda degli aggiornamenti orizzonte (thread-safe, non-blocking)
+            horizon_df = self.get_horizon_updates()
+            base_df = self._convert_trades_obj_to_df(trades_to_publish)
+
+            if horizon_df.empty:
+                return base_df
+            if base_df.empty:
+                return horizon_df
+
+            combined = pd.concat([base_df, horizon_df], ignore_index=True)
+            if 'trade_index' in combined.columns:
+                combined = combined.drop_duplicates(subset=['trade_index'], keep='last')
+            return combined
 
     # ========================================================================
     # PERSISTENZA (ottimizzata)
@@ -369,12 +414,11 @@ class TradeManager:
         new_df = self._convert_trades_obj_to_df(new_trades)
 
         try:
-            # ✅ Leggi tutto, concatena, riscrivi (sempre funziona)
             if filepath.exists():
                 try:
                     existing_df = pd.read_parquet(filepath, engine="pyarrow")
+                    combined_df = pd.concat([existing_df, new_df], ignore_index=True)
                 except Exception as read_error:
-                    # File corrotto - backup e riparti da zero
                     logger.warning(
                         f"Parquet file corrupted ({read_error}). "
                         f"Backing up and creating new file."
@@ -385,15 +429,8 @@ class TradeManager:
                         logger.info(f"Corrupted file backed up to: {backup_path}")
                     except Exception as backup_error:
                         logger.error(f"Could not backup corrupted file: {backup_error}")
-                    
-                    existing_df = pd.DataFrame()  # Restart from empty
-                else:
-                    combined_df = pd.concat([existing_df, new_df], ignore_index=True)
+                    combined_df = new_df
             else:
-                combined_df = new_df
-
-            # Se non c'è existing_df (file corrotto), usa solo new_df
-            if 'combined_df' not in locals():
                 combined_df = new_df
 
             combined_df.to_parquet(
@@ -452,9 +489,11 @@ class TradeManager:
             if trades_df.empty:
                 return
 
-            elaborated_trades = trades_df[
-                trades_df.get("is_elaborated", False)
-            ]
+            if "is_elaborated" not in trades_df.columns:
+                logger.info("No 'is_elaborated' column found, skipping load")
+                return
+
+            elaborated_trades = trades_df[trades_df["is_elaborated"] == True]
 
             if elaborated_trades.empty:
                 return
@@ -464,10 +503,10 @@ class TradeManager:
                 trade = self._reconstruct_trade_from_row(row)
 
                 if trade:
-                    with self.trade_storage.lock:
-                        self.trade_storage.add_trade(trade)
-                        if trade.is_my_trade():
-                            self._my_trades_index.append(trade.trade_index)
+                    # add_trade is already thread-safe; no outer lock needed here
+                    self.trade_storage.add_trade(trade)
+                    if trade.is_my_trade():
+                        self._my_trades_index.append(trade.trade_index)
                     loaded_count += 1
 
             self._last_saved_index = loaded_count
@@ -485,7 +524,7 @@ class TradeManager:
         try:
             known_params = {'ticker', 'isin', 'timestamp', 'quantity', 'price', 'market',
                             'currency', 'price_multiplier', 'side', 'own_trade',
-                            'spread_pl', 'spread_pl_model', 'is_elaborated', 'trade_index', ...}
+                            'spread_pl', 'is_elaborated', 'trade_index', ...}
             trade_dict = row.to_dict()
             extra = {k: v for k, v in trade_dict.items() if k not in known_params}
 
@@ -500,7 +539,7 @@ class TradeManager:
                 "market": trade_dict.get("market"),
                 "currency": trade_dict.get("currency"),
                 "price_multiplier": trade_dict.get("price_multiplier", 1),
-                "extra": extra
+                **extra   # unpack extra fields directly so Trade(**extra) captures them flat
             }
 
             if TradeClass == MyTrade:
@@ -512,7 +551,12 @@ class TradeManager:
                 trade.side = trade_dict.get("side")
 
             trade.spread_pl = trade_dict.get("spread_pl")
-            trade.spread_pl_model = trade_dict.get("spread_pl_model")
+
+            # Restore all horizon-specific lagged P&L fields (e.g. spread_pl_10s)
+            for key, val in trade_dict.items():
+                if key.startswith("spread_pl_") and val is not None:
+                    setattr(trade, key, val)
+
             trade.is_elaborated = True
 
             return trade

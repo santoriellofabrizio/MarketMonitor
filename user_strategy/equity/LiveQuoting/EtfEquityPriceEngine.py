@@ -16,16 +16,16 @@ from sfm_data_provider.analytics.adjustments.fx_spot import FxSpotComponent
 from sfm_data_provider.analytics.adjustments.ter import TerComponent
 from sfm_data_provider.core.holidays.holiday_manager import HolidayManager
 
-from market_monitor.publishers.timeseries_publisher import TimeSeriesPublisher
+from src.market_monitor.publishers.timeseries_publisher import TimeSeriesPublisher
 from datetime import datetime, time
 from typing import Dict, Set, Optional
 import logging
 
 from sfm_data_provider.interface.bshdata import BshData
 
-from market_monitor.gui.implementations.GUI import GUI
-from market_monitor.publishers.redis_publisher import RedisMessaging
-from market_monitor.strategy.strategy_ui.StrategyUI import StrategyUI
+from src.market_monitor.gui.implementations.GUI import GUI
+from src.market_monitor.publishers.redis_publisher import RedisMessaging
+from src.market_monitor.strategy.strategy_ui.StrategyUI import StrategyUI
 from user_strategy.equity.LiveQuoting.InputParamsQuoting import InputParamsQuoting
 
 from user_strategy.utils.pricing_models.AggregationFunctions import ForecastAggregator, TrimmedMean
@@ -98,7 +98,7 @@ class EtfEquityPriceEngine(StrategyUI):
         self.securities_list: list | None = None
         self.instruments_status: None | pd.Series = None
         self.GUIs: GUI
-        self.today = pd.Timestamp.today().normalize()
+        self.today = kwargs.get('today') or pd.Timestamp.today().normalize()
         self.yesterday = HolidayManager().previous_business_day(self.today)
 
         beta_cluster = self.input_params.beta_cluster

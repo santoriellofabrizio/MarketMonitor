@@ -3,7 +3,7 @@ from typing import Any, Dict, List, Optional, Union
 
 import pandas as pd
 
-from market_monitor.live_data_hub.live_subscription import (
+from src.market_monitor.live_data_hub.live_subscription import (
     BloombergSubscription,
     KafkaSubscription,
     LiveSubscription,

@@ -41,7 +41,7 @@ import threading
 
 import redis
 
-from market_monitor.publishers.redis_publisher import RedisPublisher
+from src.market_monitor.publishers.redis_publisher import RedisPublisher
 
 logger = logging.getLogger(__name__)
 

@@ -17,7 +17,7 @@ market_monitor:
   api_config_path: C:\AFMachineLearning\Libraries\MarketMonitor\etc\config\bshdata_config.yaml
 
   book_filter_params:
-    tau_seconds: 600
+    tau_seconds: 60
 
 
   columns_dashboard: ["description","ticker","isin","trade_index","timestamp","side","ctv","quantity","price","price_multiplier","spread_pl","lagged_spread_pl","market", "currency", "own_trade", "is_elaborated"]
@@ -42,7 +42,7 @@ market_monitor:
       frequency: 1
 
   rabbit_data_export:
-    activate: false      # Impostare true (e redis activate: false) per usare RabbitMQ
+    activate: true      # Impostare true (e redis activate: false) per usare RabbitMQ
     rabbit_params_export:
       rabbit_host: 'rabbitmq.af.tst'
       rabbit_port: 5672
@@ -53,6 +53,7 @@ market_monitor:
   redis_data_export:
     activate: false
     channel: trades_export_redis
+    channel: trades_export_redis_test
     redis_export_params:
       host: localhost
       port: 6379

@@ -48,7 +48,7 @@ import pandas as pd
 from market_monitor.live_data_hub.real_time_data_hub import RTData
 from market_monitor.live_data_hub.live_subscription import KafkaSubscription
 from market_monitor.live_data_hub.subscription_service import SubscriptionService
-from market_monitor.input_threads.trade import TradeType
+from market_monitor.strategy.common.trade_manager.trade_templates import TradeTyp
 
 logger = logging.getLogger(__name__)
 
@@ -129,7 +129,7 @@ class KafkaStreamingThread(threading.Thread):
         self._topics.clear()
 
         for sub_id, sub in all_subs.items():
-            if isinstance(sub, KafkaSubscription):
+            if sub.source == 'kafka':
                 topic = sub.topic
                 if topic not in self._subscriptions_by_topic:
                     self._subscriptions_by_topic[topic] = []
@@ -392,21 +392,21 @@ class KafkaTradeStreamingThread(threading.Thread):
     2. Legge le subscription Kafka dal SubscriptionService (pending + active).
     3. Scarta i messaggi non sottoscritti (fast-path O(1) per ISIN).
     4. Matcha i PublicDeal con i potenziali own-trade (deduplication).
-    5. Mette le tuple (TradeType, pd.DataFrame) nella Queue condivisa.
+    5. Mette le tuple (TradeTyp, pd.DataFrame) nella Queue condivisa.
 
     NON conosce RTData né route_to_store.
 
     Logica di deduplication own-trade vs market-trade:
-    - Own trades emessi subito come (TradeType.OWN, df) e cancellano il primo
+    - Own trades emessi subito come (TradeTyp.OWN, df) e cancellano il primo
       public deal bufferizzato con la stessa chiave.
     - Public deals bufferizzati per `buffer_sec` secondi. Se arriva un own trade
       con la stessa chiave entro la finestra, il public deal viene scartato.
-      Altrimenti viene emesso come (TradeType.MARKET, df) allo scadere del timer.
+      Altrimenti viene emesso come (TradeTyp.MARKET, df) allo scadere del timer.
 
-    TradeType è importato da trade.py (OWN=1, MARKET=2).
+    TradeTyp è importato da trade.py (OWN=1, MARKET=2).
 
     Args:
-        queue: Queue condivisa dove vengono messe le tuple (TradeType, pd.DataFrame)
+        queue: Queue condivisa dove vengono messe le tuple (TradeTyp, pd.DataFrame)
         subscription_service: SubscriptionService iniettato, già popolato con le
             subscription Kafka di tipo trade (es. PublicDeal, Trade)
         bootstrap_servers: Lista server Kafka
@@ -486,7 +486,7 @@ class KafkaTradeStreamingThread(threading.Thread):
 
         count = 0
         for sub in all_subs.values():
-            if isinstance(sub, KafkaSubscription) and self._is_trade_topic(sub.topic):
+            if sub.source == 'kafka' and self._is_trade_topic(sub.topic):
                 topic = sub.topic
                 if topic not in self._subscriptions_by_topic:
                     self._subscriptions_by_topic[topic] = []
@@ -666,7 +666,7 @@ class KafkaTradeStreamingThread(threading.Thread):
         Rilascia i public deal bufferizzati il cui tempo di attesa ha superato _buffer_sec.
 
         Chiamato ad ogni ciclo di poll (~100ms). I public deal non abbinati a un
-        own trade entro la finestra vengono emessi come (TradeType.MARKET, df).
+        own trade entro la finestra vengono emessi come (TradeTyp.MARKET, df).
         """
         now = time.time()
         expired_keys = [
@@ -679,7 +679,7 @@ class KafkaTradeStreamingThread(threading.Thread):
             if not pending_queue:
                 continue
             for df in pending_queue:
-                self.queue_trade.put((TradeType.MARKET, df.set_index("ticker")))
+                self.queue_trade.put((TradeTyp.MARKET, df.set_index("ticker")))
 
     def _handle_public_vs_own_deal(self, data: Dict[str, Any]) -> None:
         """
@@ -688,7 +688,7 @@ class KafkaTradeStreamingThread(threading.Thread):
         La chiave di deduplication è (Isin, Market, Last Update, Price, Quantity).
 
         Own trades (Own Trade != 0):
-            - Emessi subito come (TradeType.OWN, df)
+            - Emessi subito come (TradeTyp.OWN, df)
             - Cancellano il primo public deal bufferizzato con la stessa chiave
 
         Public deals (Own Trade == 0):
@@ -707,8 +707,8 @@ class KafkaTradeStreamingThread(threading.Thread):
         df = pd.DataFrame([data])
 
         if is_own:
-            self.queue_trade.put((TradeType.OWN, df.set_index("ticker")))
-            self.queue_trade.put((TradeType.MARKET, df.set_index("ticker")))
+            self.queue_trade.put((TradeTyp.OWN, df.set_index("ticker")))
+            self.queue_trade.put((TradeTyp.MARKET, df.set_index("ticker")))
             self._seen_own_trades.add(key)
             # Cancella il primo public deal bufferizzato corrispondente
             if key in self._pending_publicdeals and self._pending_publicdeals[key]:
@@ -759,7 +759,7 @@ if __name__ == "__main__":
     # Book thread: KafkaStreamingThread subscribes to BookBest topics
     # ------------------------------------------------------------------
     book_rtdata = RTData(locker=Lock(), fields=["BID", "ASK", "BID_SIZE", "ASK_SIZE"])
-    book_svc = book_rtdata.get_subscription_manager()
+    book_svc = SubscriptionService()
 
     for isin in isin_to_subscribe:
         book_svc.subscribe_kafka(
@@ -776,33 +776,13 @@ if __name__ == "__main__":
             }
         )
 
-    book_thread = KafkaStreamingThread(book_rtdata)
+    book_thread = KafkaStreamingThread(book_rtdata, subscription_service=book_svc)
     book_thread.start()
 
     # ------------------------------------------------------------------
     # Trade thread: KafkaTradeStreamingThread — standalone, no RTData
     # Usa lo stesso SubscriptionService di RTData: filtra *.PublicDeal / *.Trade
     # ------------------------------------------------------------------
-    trade_sub_service = book_rtdata.get_subscription_manager()
-
-    for isin in isin_to_subscribe:
-        for topic in ["COALESCENT_DUMA.ETFP.PublicDeal", "COALESCENT_DUMA.ETFP.Trade"]:
-            trade_sub_service.subscribe_kafka(
-                id=f"{isin}_{topic.split('.')[-1]}",
-                topic=topic,
-                symbol_filter=isin,
-            )
-
-    trade_queue: Queue = Queue()
-    trade_thread = KafkaTradeStreamingThread(
-        queue=trade_queue,
-        subscription_service=trade_sub_service,
-        buffer_sec=10.0,
-    )
-    trade_thread.start()
-
-    # ------------------------------------------------------------------
-    # Monitor both streams
     # ------------------------------------------------------------------
     print("Monitoring ETF book prices and trade queue (Ctrl+C to stop)...")
     try:
@@ -813,12 +793,6 @@ if __name__ == "__main__":
             book_data = book_rtdata.get_data_field()
             if not book_data.empty:
                 print(book_data)
-
-            print("\n=== Trades ===")
-            while not trade_queue.empty():
-                trade_type, df = trade_queue.get_nowait()
-                print(f"[{trade_type.name}]")
-                print(df.to_string(index=False))
 
     except KeyboardInterrupt:
         book_thread.stop()

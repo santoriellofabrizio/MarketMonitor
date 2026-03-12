@@ -1,12 +1,14 @@
 import datetime
 import logging
 import threading
-from locale import currency
+from typing import Optional
 
 import pandas as pd
 from market_monitor.strategy.common.trade_manager.trade_templates import AbstractTrade, TradeStorage, Trade
 
 logger = logging.getLogger(__name__)
+
+_DEFAULT_HORIZONS = [10., 20., 30., 40.]
 
 
 class TimeZeroPLManager(threading.Thread):
@@ -14,14 +16,18 @@ class TimeZeroPLManager(threading.Thread):
     def __init__(self,
                  trade_storage: TradeStorage,
                  mid_price_storage: pd.Series,
-                 model_price: pd.Series | None = None,
-                 time_zero_lag: float = 10.):
+                 time_zero_lags: list[float] | None = None,
+                 on_horizon_computed: Optional[callable] = None):
         # IMPORTANTE: Cambiato nome per evitare conflitti interni di threading
         super().__init__(name="TimeZeroPLThread", daemon=True)
         self.trade_storage = trade_storage
         self.mid_price_storage = mid_price_storage
-        self.model_price = model_price
-        self.time_zero_lag = time_zero_lag
+        self.on_horizon_computed = on_horizon_computed
+
+        # Support multiple horizons; keep backward-compat alias for the first one
+        self.time_zero_lags: list[float] = sorted(time_zero_lags or _DEFAULT_HORIZONS)
+        self.time_zero_lag: float = self.time_zero_lags[0]   # backward-compat alias
+        self._max_lag: float = self.time_zero_lags[-1]
 
         # Flag per la chiusura
         self._is_running = True
@@ -29,8 +35,7 @@ class TimeZeroPLManager(threading.Thread):
 
         logger.info(
             f"TimeZeroPLManager inizializzato | "
-            f"time_zero_lag={self.time_zero_lag}s | "
-            f"model_price_enabled={'Yes' if model_price is not None else 'No'}"
+            f"time_zero_lags={self.time_zero_lags}s"
         )
 
     def stop(self):
@@ -40,157 +45,100 @@ class TimeZeroPLManager(threading.Thread):
         self._stop_event.set()  # Sveglia il thread se sta dormendo
 
     def run(self) -> None:
-        logger.info(f"[START] TimeZeroPLThread avviato")
+        logger.info(f"[START] TimeZeroPLThread avviato | horizons={self.time_zero_lags}s")
+        # pending: trade_index → (trade_object, remaining_lags_list)
+        pending: dict[int, tuple[AbstractTrade, list[float]]] = {}
         trades_processed = 0
 
         try:
             while self._is_running:
-                # Se get_trade_index_to_elaborate è bloccante, assicurati che abbia un timeout
-                trade_index = self.trade_storage.get_trade_index_to_elaborate()
 
-                # Se il manager dello storage restituisce None o un segnale di stop
-                if trade_index is None:
-                    if not self._is_running:
-                        logger.info(f"[EXIT] Stop signal ricevuto, chiusura thread")
+                # 1. Drain the queue non-blocking — pick up all newly added trades
+                while True:
+                    idx = self.trade_storage.get_trade_index_to_elaborate(timeout=0)
+                    if idx is None:
                         break
-                    logger.debug(f"[WAIT] Nessun trade disponibile, riprovo tra 1s")
-                    self._stop_event.wait(1.0)
-                    continue
+                    trade = self.trade_storage.get_trades_by_index(idx)
+                    if trade:
+                        pending[idx] = (trade, list(self.time_zero_lags))
+                        logger.info(
+                            f"[ENQUEUE] trade_id={idx} | isin={trade.isin} | "
+                            f"horizons={self.time_zero_lags}s"
+                        )
 
-                trade = self.trade_storage.get_trades_by_index(trade_index)
-                if trade:
-                    logger.debug(f"[FETCH] Trade {trade_index} recuperato dal storage")
-                    # Se process_trade restituisce False, significa che dobbiamo chiudere
-                    if not self.process_trade(trade):
-                        logger.info(f"[EXIT] Stop signal durante process_trade")
-                        break
-                    trades_processed += 1
-                else:
-                    logger.warning(f"[ERROR] Trade index {trade_index} non trovato nel storage")
-                    self._stop_event.wait(0.5)
+                # 2. Check all in-flight trades against current time
+                now = datetime.datetime.now()
+                to_remove: list[int] = []
+
+                for idx, (trade, remaining) in list(pending.items()):
+                    diff = (now - trade.timestamp).total_seconds()
+
+                    # Hard timeout: 4× the longest horizon
+                    if diff > self._max_lag * 4:
+                        logger.info(
+                            f"[TIMEOUT] trade_id={idx} | elapsed={diff:.1f}s | "
+                            f"remaining={remaining} — marked elaborated"
+                        )
+                        self.trade_storage.set_trade_as_elaborated(trade)
+                        to_remove.append(idx)
+                        continue
+
+                    # Fire all horizons whose threshold has been reached
+                    newly_done = [lag for lag in remaining if diff >= lag]
+                    for lag in newly_done:
+                        self._calculate_pl_at_lag(trade, lag)
+                        remaining.remove(lag)
+
+                    # All horizons done
+                    if not remaining:
+                        self.trade_storage.set_trade_as_elaborated(trade)
+                        to_remove.append(idx)
+                        trades_processed += 1
+                        logger.info(f"[DONE] trade_id={idx} | all horizons computed")
+
+                for idx in to_remove:
+                    del pending[idx]
+
+                # 3. Sleep until next tick (wakes immediately if stop() is called)
+                self._stop_event.wait(timeout=0.5)
+
         except Exception as e:
-            logger.exception(f"[CRITICAL] Eccezione non gestita nel thread principale", exc_info=e)
+            logger.exception(f"[CRITICAL] Eccezione nel thread principale", exc_info=e)
         finally:
             logger.info(
                 f"[SHUTDOWN] TimeZeroPLThread chiuso | "
-                f"trades_processed={trades_processed}"
+                f"trades_processed={trades_processed} | pending_at_shutdown={len(pending)}"
             )
 
-    def process_trade(self, trade: AbstractTrade) -> bool:
+    def _calculate_pl_at_lag(self, trade: AbstractTrade, lag: float):
+        """Calcola il PL a un orizzonte specifico e lo salva sull'oggetto trade.
+
+        Attributi scritti:
+          - ``lagged_spread_pl_{int(lag)}s``  (es. lagged_spread_pl_10s)
+
+        Per il primo orizzonte (backward compat) aggiorna anche ``trade.lagged_spread_pl``.
+        Chiama ``on_horizon_computed(trade)`` al termine per notificare il TradeManager.
         """
-        Elabora un singolo trade per il calcolo PL con time lag.
+        col = f"spread_pl_{int(lag)}s"
+        is_first_horizon = (lag == self.time_zero_lags[0])
 
-        Restituisce:
-        - True: elaborazione completata normalmente
-        - False: interrotto da segnale di stop
-        """
-        trade_timestamp = trade.timestamp
-        logger.info(
-            f"[PROCESS] Inizio elaborazione trade | "
-            f"trade_id={trade.trade_index} | "
-            f"isin={trade.isin} | "
-            f"timestamp={trade_timestamp} | "
-            f"qty={trade.quantity} | "
-            f"price={trade.price} | "
-            f"side={trade.side}"
-        )
-
-        while self._is_running:
-            diff_seconds = (datetime.datetime.now() - trade_timestamp).total_seconds()
-
-            if diff_seconds > self.time_zero_lag * 4:
-                logger.info(
-                    f"[TIMEOUT] Trade {trade.trade_index} timeout (elapsed={diff_seconds:.2f}s > "
-                    f"max={self.time_zero_lag * 4}s), marcato come elaborato senza PL"
-                )
-                self.trade_storage.set_trade_as_elaborated(trade)
-                return True
-
-            elif diff_seconds > self.time_zero_lag:
-                logger.info(
-                    f"[CALC] Tempo di lag raggiunto | "
-                    f"trade_id={trade.trade_index} | "
-                    f"elapsed={diff_seconds:.2f}s > lag={self.time_zero_lag}s"
-                )
-                self._calculate_time_zero_pl(trade)
-                self.trade_storage.set_trade_as_elaborated(trade)
-                logger.info(
-                    f"[DONE] Elaborazione completata | "
-                    f"trade_id={trade.trade_index} | "
-                    f"lagged_pl={trade.lagged_spread_pl}"
-                    + (f" | model_pl={trade.lagged_spread_pl_model}" if self.model_price is not None else "")
-                )
-                return True
-
-            else:
-                wait_time = self.time_zero_lag - diff_seconds
-                logger.debug(
-                    f"[WAIT] Trade in attesa | "
-                    f"trade_id={trade.trade_index} | "
-                    f"elapsed={diff_seconds:.2f}s | "
-                    f"wait={wait_time:.2f}s"
-                )
-
-                # Invece di time.sleep(max(wait_time, 1))
-                # Aspetta wait_time, ma se stop() viene chiamato, si sveglia subito
-                interrupted = self._stop_event.wait(timeout=max(wait_time, 0.1))
-                if interrupted or not self._is_running:
-                    logger.warning(
-                        f"[INTERRUPT] Elaborazione interrotta | "
-                        f"trade_id={trade.trade_index} | "
-                        f"elapsed={diff_seconds:.2f}s | interrupted={interrupted}"
-                    )
-                    return False
-
-        logger.warning(f"[LOOP_EXIT] Uscita dal loop while con _is_running=False")
-        return False
-
-    def _calculate_time_zero_pl(self, trade: AbstractTrade):
-        """Calcola il PL al time zero per mid price e opzionalmente model price."""
-        logger.debug(f"[CALC_START] Inizio calcolo PL per trade {trade.trade_index}")
-
-        # Recupero mid price
-        mid_price, time_snip = self.get_mid(trade)
-
+        mid_price, _ = self.get_mid(trade)
         if mid_price is not None:
+            pl = self.calculate_time_zero_pl(trade, mid_price)
+            setattr(trade, col, pl)
             logger.info(
-                f"[MID_PRICE] trade_id={trade.trade_index} | "
-                f"isin={trade.isin} | "
-                f"mid={mid_price} | "
-                f"time_snip={time_snip}"
-            )
-            trade.lagged_spread_pl = self.calculate_time_zero_pl(trade, mid_price)
-            logger.debug(
-                f"[MID_PL] trade_id={trade.trade_index} | "
-                f"pl={trade.lagged_spread_pl}"
+                f"[LAG_{int(lag)}s] trade_id={trade.trade_index} | "
+                f"isin={trade.isin} | mid={mid_price} | {col}={pl}"
             )
         else:
+            setattr(trade, col, None)
             logger.warning(
-                f"[MID_PRICE_MISSING] trade_id={trade.trade_index} | "
-                f"isin={trade.isin} | "
-                f"impossibile calcolare PL"
+                f"[LAG_{int(lag)}s] Mid price non disponibile | "
+                f"trade_id={trade.trade_index} | isin={trade.isin}"
             )
 
-        # Recupero model price se disponibile
-        if self.model_price is not None:
-            model_price = self.get_model_price(trade.isin)
-            if model_price is not None:
-                logger.info(
-                    f"[MODEL_PRICE] trade_id={trade.trade_index} | "
-                    f"isin={trade.isin} | "
-                    f"model_price={model_price}"
-                )
-                trade.lagged_spread_pl_model = self.calculate_time_zero_pl(trade, model_price)
-                logger.debug(
-                    f"[MODEL_PL] trade_id={trade.trade_index} | "
-                    f"model_pl={trade.lagged_spread_pl_model}"
-                )
-            else:
-                logger.info(
-                    f"[MODEL_PRICE_MISSING] trade_id={trade.trade_index} | "
-                    f"isin={trade.isin} | "
-                    f"impossibile calcolare model PL"
-                )
+        if self.on_horizon_computed is not None:
+            self.on_horizon_computed(trade)
 
     def get_mid(self, trade: Trade):
         try:
@@ -219,57 +167,18 @@ class TimeZeroPLManager(threading.Thread):
             logger.error(f"[GET_MID] Eccezione inaspettata | isin={trade.isin} | error={str(e)}", exc_info=e)
             return None, None
 
-    def get_model_price(self, isin: str):
-        """
-        Recupera il model price per l'ISIN specificato.
-
-        Restituisce:
-        - price: valore trovato (float)
-        - None: ISIN non trovato o errore
-        """
-        try:
-            mid_price = self.model_price.get(isin, None)
-
-            if mid_price is None:
-                logger.debug(f"[GET_MODEL] ISIN {isin} non trovato nel model price storage")
-                return None
-
-            if mid_price <= 0:
-                logger.info(
-                    f"[GET_MODEL] Model price non valido | "
-                    f"isin={isin} | "
-                    f"price={mid_price}"
-                )
-                return None
-
-            logger.debug(f"[GET_MODEL] isin={isin} | model_price={mid_price}")
-            return mid_price
-
-        except KeyError as e:
-            logger.debug(f"[GET_MODEL] KeyError per ISIN {isin}: {str(e)}")
-            return None
-        except Exception as e:
-            logger.error(
-                f"[GET_MODEL] Eccezione inaspettata | "
-                f"isin={isin} | "
-                f"error={str(e)}",
-                exc_info=e
-            )
-            return None
-
     @staticmethod
     def calculate_time_zero_pl(trade: AbstractTrade, price: float):
         """
         Calcola il P&L al time zero usando il prezzo fornito.
 
-        Formula: PL = (price - trade_price) * quantity * side_multiplier
+        Formula: PL = (price - trade_price) * quantity * side_multiplier * price_multiplier
         - side_multiplier: 1 per "bid" (long), -1 per "ask" (short)
 
         Restituisce:
         - pl: valore calcolato (float)
         - None: input non validi
         """
-        # Validazione input
         if price is None or price <= 0:
             logger.debug(
                 f"[CALC_PL] Price non valido, PL non calcolato | "
@@ -283,7 +192,6 @@ class TimeZeroPLManager(threading.Thread):
         side = trade.side
         multiplier = getattr(trade, "price_multiplier", 1)
 
-        # Validazione trade
         if trade_price is None or trade_price <= 0:
             logger.warning(
                 f"[CALC_PL] Trade price non valido | "
@@ -300,7 +208,6 @@ class TimeZeroPLManager(threading.Thread):
             )
             return None
 
-        # Mapping side
         side_map = {"bid": 1, "ask": -1}
         side_multiplier = side_map.get(side, None)
 
@@ -312,7 +219,6 @@ class TimeZeroPLManager(threading.Thread):
             )
             return None
 
-        # Calcolo PL
         pl = (price - trade_price) * qty * side_multiplier * multiplier
 
         logger.debug(

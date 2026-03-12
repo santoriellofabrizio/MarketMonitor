@@ -1,5 +1,5 @@
 load_strategy_info:
-      package_path: C:\AFMachineLearning\Libraries\MarketMonitor\user_strategy\desk_bond
+      package_path: C:\SVN_ML\Libraries\MarketMonitor\user_strategy\desk_bond
       module_name: VTVFutAnalysis
       class_name: VTVFutAnalysis
 
@@ -16,7 +16,7 @@ market_monitor:
       rabbit_user: 'mqclient'
       rabbit_password: 'Mqclient-00'
       rabbit_vhost: 'TestCredEQEtf'
-      channel_rabbit: trades_rabbit
+      channel_rabbit: trades_rabbit_VTVFut
 
   redis_data_export:
     channel_redis: trades_df
@@ -29,15 +29,15 @@ market_monitor:
 
   trade_manager:
     show_my_trades: True
-    time_zero_lag: [5, 10, 30, 60]
+    time_zero_lag: [5, 10, 30, 40, 60]
 
   tasks:
     update_HF:
       activate: true
-      frequency: 2
+      frequency: 0.3
     update_LF:
       activate: true
-      frequency: 60
+      frequency: 5
     trade:
       activate: true
       synchronous: true
@@ -72,5 +72,3 @@ logging:
   log_level: DEBUG
   log_level_console: WARNING
   log_name: LiveAnalysisVTV.log
-
-

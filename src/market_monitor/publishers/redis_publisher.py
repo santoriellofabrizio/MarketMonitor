@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 import redis
 
-from market_monitor.publishers.base import MessageType
+from src.market_monitor.publishers.base import MessageType
 
 logger = logging.getLogger(__name__)
 

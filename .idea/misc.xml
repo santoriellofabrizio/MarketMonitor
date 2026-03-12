@@ -3,7 +3,7 @@
   <component name="Black">
     <option name="sdkName" value="Python 3.11 virtualenv at C:\AFMachineLearning\Projects\Trading\MarketMonitorFI\.venv" />
   </component>
-  <component name="ProjectRootManager" version="2" project-jdk-name="uv (MarketMonitor)" project-jdk-type="Python SDK" />
+  <component name="ProjectRootManager" version="2" project-jdk-name="Remote 3.11 (sftp://GBS07478@afserveria01.af.pro:22/application/software/python/p311-venv/bin/python)" project-jdk-type="Python SDK" />
   <component name="SvnBranchConfigurationManager">
     <option name="myConfigurationMap">
       <map>
