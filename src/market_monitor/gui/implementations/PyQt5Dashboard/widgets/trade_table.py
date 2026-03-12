@@ -17,6 +17,13 @@ from PyQt5.QtWidgets import (
 from market_monitor.gui.implementations.PyQt5Dashboard.common import safe_concat
 from market_monitor.gui.implementations.PyQt5Dashboard.widgets.filter import AdvancedFilterDialog, FilterGroup
 
+# Parole chiave che indicano colonne con valori "con segno" (positivo/negativo)
+# → scala divergente rosso-bianco-verde
+_CF_SIGNED_KEYWORDS = frozenset({
+    "pnl", "profit", "return", "change", "gain", "loss",
+    "delta", "diff", "net", "spread", "edge",
+})
+
 
 class NumericTableWidgetItem(QTableWidgetItem):
     """
@@ -98,6 +105,9 @@ class TradeTableWidget(QWidget):
         self.datetime_format = datetime_format
         self.column_decimals: dict[str, int] = {}
 
+        # ---- Conditional Formatting ----
+        self.conditional_formatting: bool = False
+
         # ---- Filters ----
         self.active_filter: Optional[FilterGroup] = None
         # Filtri per valori colonna: {col_name: set di valori esclusi}
@@ -134,6 +144,16 @@ class TradeTableWidget(QWidget):
         clear_btn = QPushButton("Clear Filters")
         clear_btn.clicked.connect(self._clear_all_filters)
         controls_layout.addWidget(clear_btn)
+
+        self.cf_btn = QPushButton("CF: Off")
+        self.cf_btn.setCheckable(True)
+        self.cf_btn.setToolTip(
+            "Conditional Formatting: colora le celle numeriche con gradienti.\n"
+            "• Colonne PnL/profit/return/change → scala divergente rosso-bianco-verde\n"
+            "• Altre colonne numeriche → scala sequenziale bianco-blu"
+        )
+        self.cf_btn.clicked.connect(self._toggle_cf)
+        controls_layout.addWidget(self.cf_btn)
 
         controls_layout.addStretch()
 
@@ -537,6 +557,15 @@ class TradeTableWidget(QWidget):
         side_idx = df.columns.get_loc("side") if "side" in df else None
         own_idx = df.columns.get_loc("own_trade") if "own_trade" in df else None
 
+        # Pre-calcola min/max per colonne numeriche (sull'intero dataset filtrato)
+        cf_ranges: dict[str, tuple[float, float]] = {}
+        if self.conditional_formatting:
+            for col in df.columns:
+                if pd.api.types.is_numeric_dtype(df[col]):
+                    vals = df[col].dropna()
+                    if len(vals) > 0:
+                        cf_ranges[col] = (float(vals.min()), float(vals.max()))
+
         for i, row in enumerate(df.iloc[start:end].itertuples(index=False), start):
             row_color = None
             is_own = False
@@ -551,13 +580,25 @@ class TradeTableWidget(QWidget):
                 is_own = bool(row[own_idx])
 
             for j, val in enumerate(row):
-                text = self._format_value(df.columns[j], val)
-                # Usa NumericTableWidgetItem per sorting numerico corretto
+                col_name = df.columns[j]
+                text = self._format_value(col_name, val)
                 item = NumericTableWidgetItem(text, sort_value=val)
                 item.setTextAlignment(Qt.AlignCenter)
 
-                if row_color:
+                # ---- Colore sfondo ----
+                if (
+                    self.conditional_formatting
+                    and col_name in cf_ranges
+                    and isinstance(val, (int, float))
+                    and not pd.isna(val)
+                ):
+                    cell_color = self._get_cf_color(col_name, val, *cf_ranges[col_name])
+                    if cell_color:
+                        item.setBackground(cell_color)
+                elif row_color:
                     item.setBackground(row_color)
+
+                # ---- Grassetto per own_trade ----
                 if is_own:
                     f = item.font()
                     f.setBold(True)
@@ -566,6 +607,52 @@ class TradeTableWidget(QWidget):
                 self.table.setItem(i, j, item)
 
         self.table.setSortingEnabled(True)
+
+    # ==========================================================
+    # CONDITIONAL FORMATTING
+    # ==========================================================
+    def _toggle_cf(self, checked: bool):
+        """Attiva/disattiva il conditional formatting per colonne numeriche."""
+        self.conditional_formatting = checked
+        self.cf_btn.setText("CF: On" if checked else "CF: Off")
+        self.cf_btn.setStyleSheet(
+            "background-color: #b2dfdb; font-weight: bold;" if checked else ""
+        )
+        self._refresh_view()
+
+    def _get_cf_color(
+        self, col_name: str, val: float, col_min: float, col_max: float
+    ) -> Optional[QColor]:
+        """
+        Restituisce il QColor per il conditional formatting di una cella.
+
+        • Colonne "con segno" (pnl, profit, return …):
+          scala divergente  rosso (min) → bianco (0) → verde (max)
+        • Altre colonne numeriche:
+          scala sequenziale bianco (min) → blu chiaro (max)
+        """
+        lower = col_name.lower()
+        is_signed = any(kw in lower for kw in _CF_SIGNED_KEYWORDS)
+
+        if is_signed:
+            if val > 0 and col_max > 0:
+                intensity = min(val / col_max, 1.0)
+                green = int(255 - 55 * intensity)   # 255 → 200
+                return QColor(200, green, 200)
+            elif val < 0 and col_min < 0:
+                intensity = min(abs(val) / abs(col_min), 1.0)
+                red = int(255 - 55 * intensity)     # 255 → 200
+                return QColor(red, 200, 200)
+            return None  # zero → nessun colore
+
+        else:
+            # Scala sequenziale: bianco (basso) → blu chiaro (alto)
+            if col_max > col_min:
+                norm = (val - col_min) / (col_max - col_min)
+                r = int(255 - norm * 60)
+                g = int(255 - norm * 40)
+                return QColor(r, g, 255)
+            return None
 
     # ==========================================================
     # FORMATTING
