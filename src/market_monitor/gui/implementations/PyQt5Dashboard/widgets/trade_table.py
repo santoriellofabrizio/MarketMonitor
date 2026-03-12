@@ -53,6 +53,7 @@ class CFRule:
     bg_color: Optional[tuple] = None    # (r,g,b)  — per "color scale": colore min
     fg_color: Optional[tuple] = None    # (r,g,b)
     bold: bool = False
+    apply_to_row: bool = False  # True → applica il formato all'intera riga
     # Campi specifici per "color scale"
     scale_max_color: Optional[tuple] = None   # colore al valore massimo
     scale_mid_value: str = ""                 # valore del punto medio (opzionale)
@@ -197,12 +198,15 @@ class CFRule:
             mx = self.value2 or "auto"
             return f"color scale [{mn} … {mx}]"
         if self.operator in ("is empty", "not empty"):
-            return self.operator
-        v = f"col:{self.value}" if self.value_is_col else self.value
-        if self.operator == "between":
-            v2 = f"col:{self.value2}" if self.value2_is_col else self.value2
-            return f"between {v} and {v2}"
-        return f"{self.operator} {v}"
+            base = self.operator
+        else:
+            v = f"col:{self.value}" if self.value_is_col else self.value
+            if self.operator == "between":
+                v2 = f"col:{self.value2}" if self.value2_is_col else self.value2
+                base = f"between {v} and {v2}"
+            else:
+                base = f"{self.operator} {v}"
+        return base + ("  [→ row]" if self.apply_to_row else "")
 
     # ------------------------------------------------------------------
     # serializzazione JSON
@@ -217,6 +221,7 @@ class CFRule:
             "bg_color":        list(self.bg_color)        if self.bg_color        else None,
             "fg_color":        list(self.fg_color)        if self.fg_color        else None,
             "bold":            self.bold,
+            "apply_to_row":    self.apply_to_row,
             "scale_max_color": list(self.scale_max_color) if self.scale_max_color else None,
             "scale_mid_value": self.scale_mid_value,
             "scale_mid_color": list(self.scale_mid_color) if self.scale_mid_color else None,
@@ -234,6 +239,7 @@ class CFRule:
             bg_color=        _t(d.get("bg_color")),
             fg_color=        _t(d.get("fg_color")),
             bold=            d.get("bold",            False),
+            apply_to_row=    d.get("apply_to_row",    False),
             scale_max_color= _t(d.get("scale_max_color")),
             scale_mid_value= d.get("scale_mid_value", ""),
             scale_mid_color= _t(d.get("scale_mid_color")),
@@ -391,6 +397,13 @@ class CFRuleEditDialog(QDialog):
         self.bold_cb = QCheckBox("Bold")
         self.bold_cb.setChecked(rule.bold if rule else False)
         fmt_form.addRow("Font:", self.bold_cb)
+
+        self.apply_to_row_cb = QCheckBox("Apply to entire row")
+        self.apply_to_row_cb.setToolTip(
+            "Quando la condizione è soddisfatta, applica il formato a tutta la riga"
+        )
+        self.apply_to_row_cb.setChecked(rule.apply_to_row if rule else False)
+        fmt_form.addRow("Scope:", self.apply_to_row_cb)
 
         root.addWidget(self.fmt_box)
 
@@ -561,6 +574,7 @@ class CFRuleEditDialog(QDialog):
             bg_color=self._bg_color,
             fg_color=self._fg_color,
             bold=self.bold_cb.isChecked(),
+            apply_to_row=self.apply_to_row_cb.isChecked(),
         )
 
 
@@ -1295,6 +1309,9 @@ class TradeTableWidget(QWidget):
                         cf_ranges[col] = (float(vals.min()), float(vals.max()))
 
         col_list = df.columns.tolist()
+        # Lista completa colonne (incluse quelle non visibili) per risolvere
+        # i riferimenti a colonne nelle regole CF
+        full_col_list = self.filtered_data.columns.tolist()
 
         for i, row in enumerate(df.iloc[start:end].itertuples(index=False), start):
             row_color = None
@@ -1309,8 +1326,22 @@ class TradeTableWidget(QWidget):
             if own_idx is not None:
                 is_own = bool(row[own_idx])
 
-            # Dizionario riga per riferimenti a colonne nelle regole
-            row_dict = dict(zip(col_list, row))
+            # ---- Bug fix: row_dict usa TUTTE le colonne, non solo le visibili ----
+            # Questo permette alle regole CF di fare riferimento a colonne nascoste
+            row_dict = self.filtered_data.iloc[i].to_dict()
+
+            # ---- Pre-calcola la regola "apply_to_row" per questa riga ----
+            # Prima regola con apply_to_row=True che fa match → formato per tutta la riga
+            row_rule = None
+            for _col, _rules in self._cf_rules.items():
+                _val = row_dict.get(_col)
+                for _r in _rules:
+                    if _r.apply_to_row and _r.operator != "color scale":
+                        if _r.matches(_val, row_data=row_dict):
+                            row_rule = _r
+                            break
+                if row_rule:
+                    break
 
             for j, val in enumerate(row):
                 col_name = col_list[j]
@@ -1318,7 +1349,8 @@ class TradeTableWidget(QWidget):
                 item = NumericTableWidgetItem(text, sort_value=val)
                 item.setTextAlignment(Qt.AlignCenter)
 
-                # ---- Colore sfondo (priorità: regole utente > gradiente CF > BID/ASK) ----
+                # ---- Colore sfondo ----
+                # Priorità: regole per-cella utente > row_rule > gradiente CF > BID/ASK
                 user_rules = self._cf_rules.get(col_name, [])
                 rule_applied = False
                 for rule in user_rules:
@@ -1333,7 +1365,10 @@ class TradeTableWidget(QWidget):
                         break
 
                 if not rule_applied:
-                    if (
+                    if row_rule:
+                        row_rule.apply_to_item(item)
+                        rule_applied = True
+                    elif (
                         self.conditional_formatting
                         and col_name in cf_ranges
                         and isinstance(val, (int, float))
