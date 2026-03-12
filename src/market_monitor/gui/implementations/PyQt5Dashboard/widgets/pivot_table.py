@@ -523,7 +523,13 @@ class PivotTableWidget(QWidget):
 
     def _show_calc_fields_dialog(self):
         """Apre il dialog di gestione dei campi calcolati."""
-        available = list(self.source_data.columns) if not self.source_data.empty else []
+        # Le formule operano sulle colonne del pivot; usiamo quelle come hint
+        if not self.pivot_data.empty:
+            available = [str(c) for c in self.pivot_data.columns]
+        elif not self.source_data.empty:
+            available = list(self.source_data.columns)
+        else:
+            available = []
         dlg = CalcFieldsManagerDialog(self.calculated_fields, available, parent=self)
         if dlg.exec_():
             self.calculated_fields = dlg.get_fields()
@@ -538,11 +544,10 @@ class PivotTableWidget(QWidget):
                 self._apply_pivot_from_config(self.current_config)
 
     def _refresh_values_combo(self):
-        """Aggiorna values_combo includendo i campi calcolati."""
+        """Aggiorna values_combo con le colonne numeriche della sorgente."""
         current = self.values_combo.currentText()
         numeric_cols = list(self.source_data.select_dtypes(include=['number']).columns)
-        calc_names = list(self.calculated_fields.keys())
-        all_values = ['None'] + numeric_cols + calc_names
+        all_values = ['None'] + numeric_cols
         self.values_combo.blockSignals(True)
         self.values_combo.clear()
         self.values_combo.addItems(all_values)
@@ -551,14 +556,17 @@ class PivotTableWidget(QWidget):
         self.values_combo.blockSignals(False)
 
     def _compute_calculated_fields(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Aggiunge le colonne calcolate al DataFrame prima del pivot."""
+        """Aggiunge colonne calcolate al risultato del pivot.
+        Le formule usano i nomi delle colonne del pivot come variabili.
+        In caso di errore (colonna mancante, formula invalida) restituisce NaN.
+        """
         if not self.calculated_fields or df.empty:
             return df
         import numpy as np
         result = df.copy()
         for name, formula in self.calculated_fields.items():
             try:
-                namespace = {col: result[col] for col in result.columns}
+                namespace = {str(col): result[col] for col in result.columns}
                 namespace.update({
                     'abs': np.abs, 'round': np.round,
                     'sqrt': np.sqrt, 'log': np.log,
@@ -567,6 +575,7 @@ class PivotTableWidget(QWidget):
                 result[name] = eval(formula, {"__builtins__": {}}, namespace)  # noqa: S307
             except Exception as e:
                 print(f"Calculated field '{name}' error: {e}")
+                result[name] = float('nan')
         return result
 
     def _show_advanced_filter_dialog(self):
@@ -735,8 +744,8 @@ class PivotTableWidget(QWidget):
         self.cols_combo.clear()
         self.cols_combo.addItems(columns)
 
-        # Solo colonne numeriche per values + campi calcolati
-        numeric_cols = ['None'] + list(df.select_dtypes(include=['number']).columns) + list(self.calculated_fields.keys())
+        # Solo colonne numeriche per values (i campi calcolati sono output del pivot)
+        numeric_cols = ['None'] + list(df.select_dtypes(include=['number']).columns)
         self.values_combo.clear()
         self.values_combo.addItems(numeric_cols)
 
@@ -872,9 +881,6 @@ class PivotTableWidget(QWidget):
             # 2. Filtro temporale rolling
             filtered_data = self._apply_time_filter(filtered_data)
 
-            # 3. Campi calcolati
-            filtered_data = self._compute_calculated_fields(filtered_data)
-
             # Salva conteggi per info label
             original_count = len(self.source_data)
             filtered_count = len(filtered_data)
@@ -920,6 +926,9 @@ class PivotTableWidget(QWidget):
             # Normalizzazione
             if normalize:
                 self.pivot_data = self._apply_normalization(self.pivot_data, normalize)
+
+            # Campi calcolati: applicati sul risultato del pivot
+            self.pivot_data = self._compute_calculated_fields(self.pivot_data)
 
             self._populate_table()
             self.pivot_updated.emit(self.pivot_data)
