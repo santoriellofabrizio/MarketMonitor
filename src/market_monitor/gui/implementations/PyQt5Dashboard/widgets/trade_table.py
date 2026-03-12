@@ -3,6 +3,7 @@ Widget TradeTable con filtri avanzati AND/OR e infinite scrolling
 """
 
 import datetime
+from dataclasses import dataclass
 from typing import Optional, List
 
 import pandas as pd
@@ -11,7 +12,9 @@ from PyQt5.QtGui import QColor, QCursor
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
     QLabel, QPushButton, QGroupBox, QHeaderView, QSpinBox, QCheckBox,
-    QMenu, QAction, QWidgetAction, QScrollArea, QFrame
+    QMenu, QAction, QWidgetAction, QScrollArea, QFrame,
+    QDialog, QDialogButtonBox, QListWidget, QListWidgetItem,
+    QComboBox, QLineEdit, QColorDialog, QFormLayout,
 )
 
 from market_monitor.gui.implementations.PyQt5Dashboard.common import safe_concat
@@ -23,6 +26,398 @@ _CF_SIGNED_KEYWORDS = frozenset({
     "pnl", "profit", "return", "change", "gain", "loss",
     "delta", "diff", "net", "spread", "edge",
 })
+
+_CF_OPERATORS = [
+    ">", ">=", "<", "<=", "==", "!=",
+    "between",
+    "contains", "not contains", "starts with", "ends with",
+    "is empty", "not empty",
+]
+
+
+# ==============================================================================
+# CFRule — singola regola di conditional formatting
+# ==============================================================================
+@dataclass
+class CFRule:
+    """Regola di conditional formatting per una colonna."""
+
+    operator: str
+    value: str = ""
+    value2: str = ""        # solo per "between"
+    bg_color: Optional[tuple] = None   # (r, g, b)
+    fg_color: Optional[tuple] = None   # (r, g, b)
+    bold: bool = False
+
+    def matches(self, cell_val) -> bool:
+        op = self.operator
+        is_empty = (
+            cell_val is None
+            or (isinstance(cell_val, float) and pd.isna(cell_val))
+            or str(cell_val).strip() == ""
+        )
+        if op == "is empty":
+            return is_empty
+        if op == "not empty":
+            return not is_empty
+        if is_empty:
+            return False
+
+        # Prova confronto numerico
+        try:
+            num = float(cell_val)
+            if op in (">", ">=", "<", "<=", "==", "!=", "between"):
+                cmp1 = float(self.value)
+                if op == ">":     return num > cmp1
+                if op == ">=":    return num >= cmp1
+                if op == "<":     return num < cmp1
+                if op == "<=":    return num <= cmp1
+                if op == "==":    return num == cmp1
+                if op == "!=":    return num != cmp1
+                if op == "between":
+                    cmp2 = float(self.value2)
+                    lo, hi = (cmp1, cmp2) if cmp1 <= cmp2 else (cmp2, cmp1)
+                    return lo <= num <= hi
+        except (ValueError, TypeError):
+            pass
+
+        # Confronto testuale
+        s = str(cell_val)
+        v = str(self.value)
+        if op == "==":           return s == v
+        if op == "!=":           return s != v
+        if op == "contains":     return v.lower() in s.lower()
+        if op == "not contains": return v.lower() not in s.lower()
+        if op == "starts with":  return s.lower().startswith(v.lower())
+        if op == "ends with":    return s.lower().endswith(v.lower())
+        return False
+
+    def apply_to_item(self, item: QTableWidgetItem):
+        if self.bg_color:
+            item.setBackground(QColor(*self.bg_color))
+        if self.fg_color:
+            item.setForeground(QColor(*self.fg_color))
+        if self.bold:
+            f = item.font()
+            f.setBold(True)
+            item.setFont(f)
+
+    def describe(self) -> str:
+        if self.operator in ("is empty", "not empty"):
+            return self.operator
+        if self.operator == "between":
+            return f"between {self.value} and {self.value2}"
+        return f"{self.operator} {self.value}"
+
+
+# ==============================================================================
+# CFRuleEditDialog — aggiunta / modifica di una singola regola
+# ==============================================================================
+class CFRuleEditDialog(QDialog):
+    """Dialog per aggiungere o modificare una regola CF."""
+
+    def __init__(
+        self,
+        col_name: str,
+        col_dtype=None,
+        rule: Optional[CFRule] = None,
+        parent=None,
+    ):
+        super().__init__(parent)
+        self.setWindowTitle(("Edit" if rule else "Add") + f" Rule — {col_name}")
+        self.setMinimumWidth(440)
+
+        self._bg_color: Optional[tuple] = rule.bg_color if rule else None
+        self._fg_color: Optional[tuple] = rule.fg_color if rule else None
+
+        root = QVBoxLayout(self)
+
+        # ---- Condition ----
+        cond_box = QGroupBox("Condition")
+        cond_h = QHBoxLayout(cond_box)
+
+        cond_h.addWidget(QLabel("Value"))
+
+        self.op_combo = QComboBox()
+        self.op_combo.addItems(_CF_OPERATORS)
+        if rule:
+            idx = self.op_combo.findText(rule.operator)
+            if idx >= 0:
+                self.op_combo.setCurrentIndex(idx)
+        self.op_combo.currentTextChanged.connect(self._on_op_changed)
+        cond_h.addWidget(self.op_combo)
+
+        self.val1_edit = QLineEdit(rule.value if rule else "")
+        self.val1_edit.setPlaceholderText("valore")
+        cond_h.addWidget(self.val1_edit)
+
+        self.val2_label = QLabel("and")
+        cond_h.addWidget(self.val2_label)
+
+        self.val2_edit = QLineEdit(rule.value2 if rule else "")
+        self.val2_edit.setPlaceholderText("valore")
+        cond_h.addWidget(self.val2_edit)
+
+        root.addWidget(cond_box)
+
+        # ---- Format ----
+        fmt_box = QGroupBox("Format")
+        fmt_form = QFormLayout(fmt_box)
+
+        # Background
+        bg_row = QWidget()
+        bg_h = QHBoxLayout(bg_row)
+        bg_h.setContentsMargins(0, 0, 0, 0)
+        self.bg_swatch = QLabel()
+        self.bg_swatch.setFixedSize(54, 22)
+        self._refresh_swatch(self.bg_swatch, self._bg_color)
+        bg_pick = QPushButton("Pick…")
+        bg_pick.clicked.connect(self._pick_bg)
+        bg_none = QPushButton("None")
+        bg_none.clicked.connect(lambda: self._set_bg(None))
+        bg_h.addWidget(self.bg_swatch)
+        bg_h.addWidget(bg_pick)
+        bg_h.addWidget(bg_none)
+        bg_h.addStretch()
+        fmt_form.addRow("Background:", bg_row)
+
+        # Text color
+        fg_row = QWidget()
+        fg_h = QHBoxLayout(fg_row)
+        fg_h.setContentsMargins(0, 0, 0, 0)
+        self.fg_swatch = QLabel()
+        self.fg_swatch.setFixedSize(54, 22)
+        self._refresh_swatch(self.fg_swatch, self._fg_color)
+        fg_pick = QPushButton("Pick…")
+        fg_pick.clicked.connect(self._pick_fg)
+        fg_none = QPushButton("None")
+        fg_none.clicked.connect(lambda: self._set_fg(None))
+        fg_h.addWidget(self.fg_swatch)
+        fg_h.addWidget(fg_pick)
+        fg_h.addWidget(fg_none)
+        fg_h.addStretch()
+        fmt_form.addRow("Text color:", fg_row)
+
+        # Bold
+        self.bold_cb = QCheckBox("Bold")
+        self.bold_cb.setChecked(rule.bold if rule else False)
+        fmt_form.addRow("Font:", self.bold_cb)
+
+        root.addWidget(fmt_box)
+
+        # ---- Dialog buttons ----
+        btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        btns.accepted.connect(self.accept)
+        btns.rejected.connect(self.reject)
+        root.addWidget(btns)
+
+        self._on_op_changed(self.op_combo.currentText())
+
+    # -- helpers --
+    @staticmethod
+    def _refresh_swatch(label: QLabel, color: Optional[tuple]):
+        if color:
+            label.setStyleSheet(
+                f"background-color: rgb({color[0]},{color[1]},{color[2]});"
+                "border: 1px solid #888;"
+            )
+            label.setText("")
+        else:
+            label.setStyleSheet("background-color: #f0f0f0; border: 1px solid #aaa;")
+            label.setText("  —  ")
+
+    def _set_bg(self, color: Optional[tuple]):
+        self._bg_color = color
+        self._refresh_swatch(self.bg_swatch, color)
+
+    def _set_fg(self, color: Optional[tuple]):
+        self._fg_color = color
+        self._refresh_swatch(self.fg_swatch, color)
+
+    def _pick_bg(self):
+        init = QColor(*self._bg_color) if self._bg_color else QColor(255, 255, 200)
+        c = QColorDialog.getColor(init, self, "Colore di sfondo")
+        if c.isValid():
+            self._set_bg((c.red(), c.green(), c.blue()))
+
+    def _pick_fg(self):
+        init = QColor(*self._fg_color) if self._fg_color else QColor(0, 0, 0)
+        c = QColorDialog.getColor(init, self, "Colore del testo")
+        if c.isValid():
+            self._set_fg((c.red(), c.green(), c.blue()))
+
+    def _on_op_changed(self, op: str):
+        no_val = op in ("is empty", "not empty")
+        is_between = op == "between"
+        self.val1_edit.setVisible(not no_val)
+        self.val2_label.setVisible(is_between)
+        self.val2_edit.setVisible(is_between)
+
+    def get_rule(self) -> CFRule:
+        return CFRule(
+            operator=self.op_combo.currentText(),
+            value=self.val1_edit.text().strip(),
+            value2=self.val2_edit.text().strip(),
+            bg_color=self._bg_color,
+            fg_color=self._fg_color,
+            bold=self.bold_cb.isChecked(),
+        )
+
+
+# ==============================================================================
+# CFRulesDialog — gestione dell'elenco di regole di una colonna
+# ==============================================================================
+class CFRulesDialog(QDialog):
+    """Dialog per gestire le regole CF di una colonna (stile Excel)."""
+
+    def __init__(
+        self,
+        col_name: str,
+        col_dtype,
+        rules: List[CFRule],
+        parent=None,
+    ):
+        super().__init__(parent)
+        self.setWindowTitle(f"Conditional Formatting — {col_name}")
+        self.setMinimumSize(540, 380)
+        self._col_name = col_name
+        self._col_dtype = col_dtype
+        self._rules: List[CFRule] = list(rules)
+
+        root = QVBoxLayout(self)
+
+        hint = QLabel(
+            "Le regole vengono applicate dall'alto verso il basso. "
+            "Vince la prima che corrisponde (come in Excel)."
+        )
+        hint.setWordWrap(True)
+        hint.setStyleSheet("color: #555; font-style: italic;")
+        root.addWidget(hint)
+
+        self.list_widget = QListWidget()
+        self.list_widget.setAlternatingRowColors(True)
+        self.list_widget.itemDoubleClicked.connect(self._edit_rule)
+        root.addWidget(self.list_widget)
+
+        # Toolbar
+        toolbar = QWidget()
+        tb_h = QHBoxLayout(toolbar)
+        tb_h.setContentsMargins(0, 0, 0, 0)
+
+        add_btn = QPushButton("➕ Aggiungi")
+        add_btn.clicked.connect(self._add_rule)
+        tb_h.addWidget(add_btn)
+
+        edit_btn = QPushButton("✏️ Modifica")
+        edit_btn.clicked.connect(self._edit_rule)
+        tb_h.addWidget(edit_btn)
+
+        del_btn = QPushButton("🗑 Elimina")
+        del_btn.clicked.connect(self._delete_rule)
+        tb_h.addWidget(del_btn)
+
+        tb_h.addStretch()
+
+        up_btn = QPushButton("▲")
+        up_btn.setFixedWidth(34)
+        up_btn.clicked.connect(self._move_up)
+        tb_h.addWidget(up_btn)
+
+        dn_btn = QPushButton("▼")
+        dn_btn.setFixedWidth(34)
+        dn_btn.clicked.connect(self._move_down)
+        tb_h.addWidget(dn_btn)
+
+        root.addWidget(toolbar)
+
+        clr_btn = QPushButton("Cancella tutte le regole")
+        clr_btn.clicked.connect(self._clear_all)
+        root.addWidget(clr_btn)
+
+        btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        btns.accepted.connect(self.accept)
+        btns.rejected.connect(self.reject)
+        root.addWidget(btns)
+
+        self._rebuild_list()
+
+    def _rebuild_list(self):
+        cur = self.list_widget.currentRow()
+        self.list_widget.clear()
+        for rule in self._rules:
+            text = f"Value {rule.describe()}"
+            parts = []
+            if rule.bg_color:
+                parts.append(f"bg: rgb{rule.bg_color}")
+            if rule.fg_color:
+                parts.append(f"testo: rgb{rule.fg_color}")
+            if rule.bold:
+                parts.append("bold")
+            if parts:
+                text += f"   →   {', '.join(parts)}"
+            item = QListWidgetItem(text)
+            if rule.bg_color:
+                item.setBackground(QColor(*rule.bg_color))
+            if rule.fg_color:
+                item.setForeground(QColor(*rule.fg_color))
+            if rule.bold:
+                f = item.font()
+                f.setBold(True)
+                item.setFont(f)
+            self.list_widget.addItem(item)
+        if 0 <= cur < self.list_widget.count():
+            self.list_widget.setCurrentRow(cur)
+
+    def _idx(self) -> int:
+        return self.list_widget.currentRow()
+
+    def _add_rule(self):
+        dlg = CFRuleEditDialog(self._col_name, self._col_dtype, parent=self)
+        if dlg.exec_():
+            self._rules.append(dlg.get_rule())
+            self._rebuild_list()
+            self.list_widget.setCurrentRow(len(self._rules) - 1)
+
+    def _edit_rule(self):
+        idx = self._idx()
+        if idx < 0:
+            return
+        dlg = CFRuleEditDialog(
+            self._col_name, self._col_dtype, rule=self._rules[idx], parent=self
+        )
+        if dlg.exec_():
+            self._rules[idx] = dlg.get_rule()
+            self._rebuild_list()
+
+    def _delete_rule(self):
+        idx = self._idx()
+        if idx < 0:
+            return
+        self._rules.pop(idx)
+        self._rebuild_list()
+
+    def _move_up(self):
+        idx = self._idx()
+        if idx <= 0:
+            return
+        self._rules[idx - 1], self._rules[idx] = self._rules[idx], self._rules[idx - 1]
+        self._rebuild_list()
+        self.list_widget.setCurrentRow(idx - 1)
+
+    def _move_down(self):
+        idx = self._idx()
+        if idx < 0 or idx >= len(self._rules) - 1:
+            return
+        self._rules[idx], self._rules[idx + 1] = self._rules[idx + 1], self._rules[idx]
+        self._rebuild_list()
+        self.list_widget.setCurrentRow(idx + 1)
+
+    def _clear_all(self):
+        self._rules.clear()
+        self._rebuild_list()
+
+    def get_rules(self) -> List[CFRule]:
+        return list(self._rules)
 
 
 class NumericTableWidgetItem(QTableWidgetItem):
@@ -107,6 +502,8 @@ class TradeTableWidget(QWidget):
 
         # ---- Conditional Formatting ----
         self.conditional_formatting: bool = False
+        # Regole per-colonna stile Excel: {col_name: [CFRule, ...]}
+        self._cf_rules: dict[str, List[CFRule]] = {}
 
         # ---- Filters ----
         self.active_filter: Optional[FilterGroup] = None
@@ -239,6 +636,13 @@ class TradeTableWidget(QWidget):
             act = QWidgetAction(self)
             act.setDefaultWidget(w)
             menu.addAction(act)
+
+        menu.addSeparator()
+        n_rules = len(self._cf_rules.get(name, []))
+        cf_label = f"🎨 Conditional Formatting…" + (f" ({n_rules})" if n_rules else "")
+        cf_action = QAction(cf_label, self)
+        cf_action.triggered.connect(lambda checked=False, c=name: self._show_cf_rules_dialog(c))
+        menu.addAction(cf_action)
 
         menu.exec_(QCursor.pos())
 
@@ -585,18 +989,27 @@ class TradeTableWidget(QWidget):
                 item = NumericTableWidgetItem(text, sort_value=val)
                 item.setTextAlignment(Qt.AlignCenter)
 
-                # ---- Colore sfondo ----
-                if (
-                    self.conditional_formatting
-                    and col_name in cf_ranges
-                    and isinstance(val, (int, float))
-                    and not pd.isna(val)
-                ):
-                    cell_color = self._get_cf_color(col_name, val, *cf_ranges[col_name])
-                    if cell_color:
-                        item.setBackground(cell_color)
-                elif row_color:
-                    item.setBackground(row_color)
+                # ---- Colore sfondo (priorità: regole utente > gradiente CF > BID/ASK) ----
+                user_rules = self._cf_rules.get(col_name, [])
+                rule_applied = False
+                for rule in user_rules:
+                    if rule.matches(val):
+                        rule.apply_to_item(item)
+                        rule_applied = True
+                        break
+
+                if not rule_applied:
+                    if (
+                        self.conditional_formatting
+                        and col_name in cf_ranges
+                        and isinstance(val, (int, float))
+                        and not pd.isna(val)
+                    ):
+                        cell_color = self._get_cf_color(col_name, val, *cf_ranges[col_name])
+                        if cell_color:
+                            item.setBackground(cell_color)
+                    elif row_color:
+                        item.setBackground(row_color)
 
                 # ---- Grassetto per own_trade ----
                 if is_own:
@@ -755,3 +1168,23 @@ class TradeTableWidget(QWidget):
     def _set_column_decimals(self, col: str, d: int):
         self.column_decimals[col] = d
         self._refresh_view()
+
+    # ==========================================================
+    # CONDITIONAL FORMATTING RULES (per-column, stile Excel)
+    # ==========================================================
+    def _show_cf_rules_dialog(self, col_name: str):
+        """Apre il dialog di gestione delle regole CF per una colonna."""
+        col_dtype = (
+            self.filtered_data[col_name].dtype
+            if not self.filtered_data.empty and col_name in self.filtered_data.columns
+            else None
+        )
+        existing = self._cf_rules.get(col_name, [])
+        dlg = CFRulesDialog(col_name, col_dtype, existing, parent=self)
+        if dlg.exec_():
+            new_rules = dlg.get_rules()
+            if new_rules:
+                self._cf_rules[col_name] = new_rules
+            elif col_name in self._cf_rules:
+                del self._cf_rules[col_name]
+            self._refresh_view()
