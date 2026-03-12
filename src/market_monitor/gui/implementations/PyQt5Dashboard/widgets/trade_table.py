@@ -3,7 +3,9 @@ Widget TradeTable con filtri avanzati AND/OR e infinite scrolling
 """
 
 import datetime
+import json
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional, List
 
 import pandas as pd
@@ -14,7 +16,7 @@ from PyQt5.QtWidgets import (
     QLabel, QPushButton, QGroupBox, QHeaderView, QSpinBox, QCheckBox,
     QMenu, QAction, QWidgetAction, QScrollArea, QFrame,
     QDialog, QDialogButtonBox, QListWidget, QListWidgetItem,
-    QComboBox, QLineEdit, QColorDialog, QFormLayout,
+    QComboBox, QLineEdit, QColorDialog, QFormLayout, QStackedWidget,
 )
 
 from market_monitor.gui.implementations.PyQt5Dashboard.common import safe_concat
@@ -32,6 +34,7 @@ _CF_OPERATORS = [
     "between",
     "contains", "not contains", "starts with", "ends with",
     "is empty", "not empty",
+    "color scale",
 ]
 
 
@@ -44,46 +47,70 @@ class CFRule:
 
     operator: str
     value: str = ""
-    value2: str = ""        # solo per "between"
-    bg_color: Optional[tuple] = None   # (r, g, b)
-    fg_color: Optional[tuple] = None   # (r, g, b)
+    value2: str = ""           # "between": secondo valore; "color scale": max
+    value_is_col: bool = False  # True → value è il nome di un'altra colonna
+    value2_is_col: bool = False # True → value2 è il nome di un'altra colonna
+    bg_color: Optional[tuple] = None    # (r,g,b)  — per "color scale": colore min
+    fg_color: Optional[tuple] = None    # (r,g,b)
     bold: bool = False
+    # Campi specifici per "color scale"
+    scale_max_color: Optional[tuple] = None   # colore al valore massimo
+    scale_mid_value: str = ""                 # valore del punto medio (opzionale)
+    scale_mid_color: Optional[tuple] = None   # colore al punto medio
 
-    def matches(self, cell_val) -> bool:
+    # ------------------------------------------------------------------
+    # matching
+    # ------------------------------------------------------------------
+    def matches(self, cell_val, row_data: Optional[dict] = None) -> bool:
+        """
+        Verifica se la cella soddisfa la condizione.
+        row_data: dizionario {col_name: valore} della riga corrente,
+                  usato per risolvere i riferimenti a colonne.
+        """
+        if self.operator == "color scale":
+            return True  # si applica sempre; il colore viene interpolato
+
         op = self.operator
         is_empty = (
             cell_val is None
             or (isinstance(cell_val, float) and pd.isna(cell_val))
             or str(cell_val).strip() == ""
         )
-        if op == "is empty":
-            return is_empty
-        if op == "not empty":
-            return not is_empty
-        if is_empty:
-            return False
+        if op == "is empty":  return is_empty
+        if op == "not empty": return not is_empty
+        if is_empty:          return False
 
-        # Prova confronto numerico
+        # Risolvi riferimenti a colonna
+        def _resolve(ref: str, is_col: bool) -> str:
+            if is_col and row_data and ref in row_data:
+                v = row_data[ref]
+                return "" if (v is None or (isinstance(v, float) and pd.isna(v))) else str(v)
+            return ref
+
+        cmp1 = _resolve(self.value,  self.value_is_col)
+        cmp2 = _resolve(self.value2, self.value2_is_col)
+
+        # Confronto numerico
         try:
             num = float(cell_val)
             if op in (">", ">=", "<", "<=", "==", "!=", "between"):
-                cmp1 = float(self.value)
-                if op == ">":     return num > cmp1
-                if op == ">=":    return num >= cmp1
-                if op == "<":     return num < cmp1
-                if op == "<=":    return num <= cmp1
-                if op == "==":    return num == cmp1
-                if op == "!=":    return num != cmp1
+                v1 = float(cmp1)
+                if op == ">":     return num > v1
+                if op == ">=":    return num >= v1
+                if op == "<":     return num < v1
+                if op == "<=":    return num <= v1
+                if op == "==":    return num == v1
+                if op == "!=":    return num != v1
                 if op == "between":
-                    cmp2 = float(self.value2)
-                    lo, hi = (cmp1, cmp2) if cmp1 <= cmp2 else (cmp2, cmp1)
+                    v2 = float(cmp2)
+                    lo, hi = (v1, v2) if v1 <= v2 else (v2, v1)
                     return lo <= num <= hi
         except (ValueError, TypeError):
             pass
 
         # Confronto testuale
         s = str(cell_val)
-        v = str(self.value)
+        v = str(cmp1)
         if op == "==":           return s == v
         if op == "!=":           return s != v
         if op == "contains":     return v.lower() in s.lower()
@@ -92,7 +119,21 @@ class CFRule:
         if op == "ends with":    return s.lower().endswith(v.lower())
         return False
 
-    def apply_to_item(self, item: QTableWidgetItem):
+    # ------------------------------------------------------------------
+    # formatting
+    # ------------------------------------------------------------------
+    def apply_to_item(
+        self,
+        item: QTableWidgetItem,
+        val=None,
+        col_min: Optional[float] = None,
+        col_max: Optional[float] = None,
+    ):
+        if self.operator == "color scale":
+            color = self._scale_color(val, col_min, col_max)
+            if color:
+                item.setBackground(color)
+            return
         if self.bg_color:
             item.setBackground(QColor(*self.bg_color))
         if self.fg_color:
@@ -102,42 +143,143 @@ class CFRule:
             f.setBold(True)
             item.setFont(f)
 
+    def _scale_color(
+        self, val, col_min: Optional[float], col_max: Optional[float]
+    ) -> Optional[QColor]:
+        """Interpola il colore per 'color scale'."""
+        if val is None or not isinstance(val, (int, float)):
+            return None
+        try:
+            if pd.isna(val):
+                return None
+        except Exception:
+            return None
+
+        try:
+            lo = float(self.value)  if self.value  else col_min
+            hi = float(self.value2) if self.value2 else col_max
+        except (ValueError, TypeError):
+            lo, hi = col_min, col_max
+
+        if lo is None or hi is None or hi <= lo:
+            return None
+
+        t = max(0.0, min(1.0, (float(val) - lo) / (hi - lo)))
+        c1 = self.bg_color        or (255, 255, 255)
+        c2 = self.scale_max_color or (255, 0,   0  )
+
+        if self.scale_mid_value and self.scale_mid_color:
+            try:
+                mid   = float(self.scale_mid_value)
+                t_mid = max(0.0, min(1.0, (mid - lo) / (hi - lo)))
+                if t <= t_mid:
+                    t_loc = (t / t_mid) if t_mid > 0 else 0.0
+                    ca, cb = c1, self.scale_mid_color
+                else:
+                    t_loc = ((t - t_mid) / (1.0 - t_mid)) if (1.0 - t_mid) > 0 else 1.0
+                    ca, cb = self.scale_mid_color, c2
+            except (ValueError, TypeError):
+                ca, cb, t_loc = c1, c2, t
+        else:
+            ca, cb, t_loc = c1, c2, t
+
+        def lerp(a, b, x): return max(0, min(255, int(a + x * (b - a))))
+        return QColor(lerp(ca[0], cb[0], t_loc),
+                      lerp(ca[1], cb[1], t_loc),
+                      lerp(ca[2], cb[2], t_loc))
+
+    # ------------------------------------------------------------------
+    # descrizione (per la lista nel dialog)
+    # ------------------------------------------------------------------
     def describe(self) -> str:
+        if self.operator == "color scale":
+            mn = self.value  or "auto"
+            mx = self.value2 or "auto"
+            return f"color scale [{mn} … {mx}]"
         if self.operator in ("is empty", "not empty"):
             return self.operator
+        v = f"col:{self.value}" if self.value_is_col else self.value
         if self.operator == "between":
-            return f"between {self.value} and {self.value2}"
-        return f"{self.operator} {self.value}"
+            v2 = f"col:{self.value2}" if self.value2_is_col else self.value2
+            return f"between {v} and {v2}"
+        return f"{self.operator} {v}"
+
+    # ------------------------------------------------------------------
+    # serializzazione JSON
+    # ------------------------------------------------------------------
+    def to_dict(self) -> dict:
+        return {
+            "operator":        self.operator,
+            "value":           self.value,
+            "value2":          self.value2,
+            "value_is_col":    self.value_is_col,
+            "value2_is_col":   self.value2_is_col,
+            "bg_color":        list(self.bg_color)        if self.bg_color        else None,
+            "fg_color":        list(self.fg_color)        if self.fg_color        else None,
+            "bold":            self.bold,
+            "scale_max_color": list(self.scale_max_color) if self.scale_max_color else None,
+            "scale_mid_value": self.scale_mid_value,
+            "scale_mid_color": list(self.scale_mid_color) if self.scale_mid_color else None,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "CFRule":
+        def _t(v): return tuple(v) if v else None
+        return cls(
+            operator=        d.get("operator",        "=="),
+            value=           d.get("value",           ""),
+            value2=          d.get("value2",          ""),
+            value_is_col=    d.get("value_is_col",    False),
+            value2_is_col=   d.get("value2_is_col",   False),
+            bg_color=        _t(d.get("bg_color")),
+            fg_color=        _t(d.get("fg_color")),
+            bold=            d.get("bold",            False),
+            scale_max_color= _t(d.get("scale_max_color")),
+            scale_mid_value= d.get("scale_mid_value", ""),
+            scale_mid_color= _t(d.get("scale_mid_color")),
+        )
 
 
 # ==============================================================================
 # CFRuleEditDialog — aggiunta / modifica di una singola regola
 # ==============================================================================
 class CFRuleEditDialog(QDialog):
-    """Dialog per aggiungere o modificare una regola CF."""
+    """
+    Dialog per aggiungere o modificare una regola CF.
+
+    Funzionalità:
+    • Operatori normali: confronto valore letterale o valore di un'altra colonna
+    • "color scale": gradiente fra min e max con punto medio opzionale
+    """
 
     def __init__(
         self,
         col_name: str,
         col_dtype=None,
         rule: Optional[CFRule] = None,
+        available_columns: Optional[List[str]] = None,
         parent=None,
     ):
         super().__init__(parent)
-        self.setWindowTitle(("Edit" if rule else "Add") + f" Rule — {col_name}")
-        self.setMinimumWidth(440)
+        self.setWindowTitle(("Modifica" if rule else "Aggiungi") + f" Regola — {col_name}")
+        self.setMinimumWidth(480)
 
-        self._bg_color: Optional[tuple] = rule.bg_color if rule else None
-        self._fg_color: Optional[tuple] = rule.fg_color if rule else None
+        self._available_columns: List[str] = available_columns or []
+        is_scale = rule and rule.operator == "color scale"
+
+        # colori interni
+        self._bg_color:         Optional[tuple] = rule.bg_color         if rule else None
+        self._fg_color:         Optional[tuple] = rule.fg_color         if rule else None
+        self._scale_max_color:  Optional[tuple] = rule.scale_max_color  if rule else None
+        self._scale_mid_color:  Optional[tuple] = rule.scale_mid_color  if rule else None
 
         root = QVBoxLayout(self)
 
-        # ---- Condition ----
-        cond_box = QGroupBox("Condition")
-        cond_h = QHBoxLayout(cond_box)
-
-        cond_h.addWidget(QLabel("Value"))
-
+        # ── Selezione operatore ──────────────────────────────────────────────
+        op_row = QWidget()
+        op_h = QHBoxLayout(op_row)
+        op_h.setContentsMargins(0, 0, 0, 0)
+        op_h.addWidget(QLabel("Operatore:"))
         self.op_combo = QComboBox()
         self.op_combo.addItems(_CF_OPERATORS)
         if rule:
@@ -145,67 +287,162 @@ class CFRuleEditDialog(QDialog):
             if idx >= 0:
                 self.op_combo.setCurrentIndex(idx)
         self.op_combo.currentTextChanged.connect(self._on_op_changed)
-        cond_h.addWidget(self.op_combo)
+        op_h.addWidget(self.op_combo)
+        op_h.addStretch()
+        root.addWidget(op_row)
 
-        self.val1_edit = QLineEdit(rule.value if rule else "")
+        # ── Condizione (nascosta per "color scale") ──────────────────────────
+        self.cond_box = QGroupBox("Condizione")
+        cond_h = QHBoxLayout(self.cond_box)
+        cond_h.addWidget(QLabel("Value"))
+
+        # val1: QStackedWidget (pagina 0 = testo, pagina 1 = colonna)
+        self.val1_stack = QStackedWidget()
+        val1_literal = rule.value if (rule and not rule.value_is_col and not is_scale) else ""
+        self.val1_edit = QLineEdit(val1_literal)
         self.val1_edit.setPlaceholderText("valore")
-        cond_h.addWidget(self.val1_edit)
+        self.val1_col_combo = QComboBox()
+        self.val1_col_combo.addItems(self._available_columns)
+        if rule and rule.value_is_col:
+            idx = self.val1_col_combo.findText(rule.value)
+            if idx >= 0:
+                self.val1_col_combo.setCurrentIndex(idx)
+        self.val1_stack.addWidget(self.val1_edit)
+        self.val1_stack.addWidget(self.val1_col_combo)
+        if rule and rule.value_is_col:
+            self.val1_stack.setCurrentIndex(1)
+
+        self.val1_col_btn = QPushButton("⧫")
+        self.val1_col_btn.setCheckable(True)
+        self.val1_col_btn.setFixedWidth(28)
+        self.val1_col_btn.setToolTip("Usa il valore di un'altra colonna come confronto")
+        self.val1_col_btn.setChecked(bool(rule and rule.value_is_col))
+        self.val1_col_btn.clicked.connect(
+            lambda c: self.val1_stack.setCurrentIndex(1 if c else 0)
+        )
+        cond_h.addWidget(self.val1_stack)
+        cond_h.addWidget(self.val1_col_btn)
 
         self.val2_label = QLabel("and")
         cond_h.addWidget(self.val2_label)
 
-        self.val2_edit = QLineEdit(rule.value2 if rule else "")
+        # val2: stesso schema
+        self.val2_stack = QStackedWidget()
+        val2_literal = rule.value2 if (rule and not rule.value2_is_col) else ""
+        self.val2_edit = QLineEdit(val2_literal)
         self.val2_edit.setPlaceholderText("valore")
-        cond_h.addWidget(self.val2_edit)
+        self.val2_col_combo = QComboBox()
+        self.val2_col_combo.addItems(self._available_columns)
+        if rule and rule.value2_is_col:
+            idx = self.val2_col_combo.findText(rule.value2)
+            if idx >= 0:
+                self.val2_col_combo.setCurrentIndex(idx)
+        self.val2_stack.addWidget(self.val2_edit)
+        self.val2_stack.addWidget(self.val2_col_combo)
+        if rule and rule.value2_is_col:
+            self.val2_stack.setCurrentIndex(1)
 
-        root.addWidget(cond_box)
+        self.val2_col_btn = QPushButton("⧫")
+        self.val2_col_btn.setCheckable(True)
+        self.val2_col_btn.setFixedWidth(28)
+        self.val2_col_btn.setToolTip("Usa il valore di un'altra colonna come confronto")
+        self.val2_col_btn.setChecked(bool(rule and rule.value2_is_col))
+        self.val2_col_btn.clicked.connect(
+            lambda c: self.val2_stack.setCurrentIndex(1 if c else 0)
+        )
+        cond_h.addWidget(self.val2_stack)
+        cond_h.addWidget(self.val2_col_btn)
 
-        # ---- Format ----
-        fmt_box = QGroupBox("Format")
-        fmt_form = QFormLayout(fmt_box)
+        root.addWidget(self.cond_box)
 
-        # Background
-        bg_row = QWidget()
-        bg_h = QHBoxLayout(bg_row)
-        bg_h.setContentsMargins(0, 0, 0, 0)
-        self.bg_swatch = QLabel()
-        self.bg_swatch.setFixedSize(54, 22)
-        self._refresh_swatch(self.bg_swatch, self._bg_color)
-        bg_pick = QPushButton("Pick…")
-        bg_pick.clicked.connect(self._pick_bg)
-        bg_none = QPushButton("None")
-        bg_none.clicked.connect(lambda: self._set_bg(None))
-        bg_h.addWidget(self.bg_swatch)
-        bg_h.addWidget(bg_pick)
-        bg_h.addWidget(bg_none)
-        bg_h.addStretch()
-        fmt_form.addRow("Background:", bg_row)
+        # ── Intervallo color scale (nascosto per operatori normali) ──────────
+        self.scale_range_box = QGroupBox("Intervallo  (vuoto = auto da min/max colonna)")
+        sr_form = QFormLayout(self.scale_range_box)
+        self.scale_min_edit = QLineEdit(rule.value  if (rule and is_scale) else "")
+        self.scale_min_edit.setPlaceholderText("min  (vuoto = auto)")
+        self.scale_max_edit = QLineEdit(rule.value2 if (rule and is_scale) else "")
+        self.scale_max_edit.setPlaceholderText("max  (vuoto = auto)")
+        sr_form.addRow("Min:", self.scale_min_edit)
+        sr_form.addRow("Max:", self.scale_max_edit)
+        root.addWidget(self.scale_range_box)
 
-        # Text color
-        fg_row = QWidget()
-        fg_h = QHBoxLayout(fg_row)
-        fg_h.setContentsMargins(0, 0, 0, 0)
-        self.fg_swatch = QLabel()
-        self.fg_swatch.setFixedSize(54, 22)
-        self._refresh_swatch(self.fg_swatch, self._fg_color)
-        fg_pick = QPushButton("Pick…")
-        fg_pick.clicked.connect(self._pick_fg)
-        fg_none = QPushButton("None")
-        fg_none.clicked.connect(lambda: self._set_fg(None))
-        fg_h.addWidget(self.fg_swatch)
-        fg_h.addWidget(fg_pick)
-        fg_h.addWidget(fg_none)
-        fg_h.addStretch()
-        fmt_form.addRow("Text color:", fg_row)
+        # ── Formato normale (nascosto per "color scale") ─────────────────────
+        self.fmt_box = QGroupBox("Formato")
+        fmt_form = QFormLayout(self.fmt_box)
 
-        # Bold
+        bg_row = self._make_color_row(
+            self._bg_color,
+            lambda c: self._set_color("bg", c),
+            lambda: self._set_color("bg", None),
+            "Colore di sfondo",
+        )
+        self.bg_swatch = bg_row[0]
+        fmt_form.addRow("Background:", bg_row[1])
+
+        fg_row = self._make_color_row(
+            self._fg_color,
+            lambda c: self._set_color("fg", c),
+            lambda: self._set_color("fg", None),
+            "Colore del testo",
+        )
+        self.fg_swatch = fg_row[0]
+        fmt_form.addRow("Text color:", fg_row[1])
+
         self.bold_cb = QCheckBox("Bold")
         self.bold_cb.setChecked(rule.bold if rule else False)
         fmt_form.addRow("Font:", self.bold_cb)
 
-        root.addWidget(fmt_box)
+        root.addWidget(self.fmt_box)
 
-        # ---- Dialog buttons ----
+        # ── Colori scala (nascosto per operatori normali) ────────────────────
+        self.scale_fmt_box = QGroupBox("Colori della scala")
+        sf_form = QFormLayout(self.scale_fmt_box)
+
+        sc_min_row = self._make_color_row(
+            self._bg_color,
+            lambda c: self._set_color("scale_min", c),
+            None,
+            "Colore al valore minimo",
+        )
+        self.scale_min_swatch = sc_min_row[0]
+        sf_form.addRow("Colore min:", sc_min_row[1])
+
+        sc_max_row = self._make_color_row(
+            self._scale_max_color,
+            lambda c: self._set_color("scale_max", c),
+            None,
+            "Colore al valore massimo",
+        )
+        self.scale_max_swatch = sc_max_row[0]
+        sf_form.addRow("Colore max:", sc_max_row[1])
+
+        # Punto medio
+        has_mid = bool(rule and rule.scale_mid_value)
+        self.mid_enable_cb = QCheckBox("Punto medio")
+        self.mid_enable_cb.setChecked(has_mid)
+        self.mid_enable_cb.stateChanged.connect(self._on_mid_toggled)
+        sf_form.addRow(self.mid_enable_cb)
+
+        self.mid_container = QWidget()
+        mid_form = QFormLayout(self.mid_container)
+        mid_form.setContentsMargins(16, 0, 0, 0)
+        self.mid_value_edit = QLineEdit(rule.scale_mid_value if rule else "")
+        self.mid_value_edit.setPlaceholderText("valore")
+        mid_form.addRow("Valore:", self.mid_value_edit)
+        sc_mid_row = self._make_color_row(
+            self._scale_mid_color,
+            lambda c: self._set_color("scale_mid", c),
+            None,
+            "Colore al punto medio",
+        )
+        self.scale_mid_swatch = sc_mid_row[0]
+        mid_form.addRow("Colore:", sc_mid_row[1])
+        self.mid_container.setVisible(has_mid)
+        sf_form.addRow(self.mid_container)
+
+        root.addWidget(self.scale_fmt_box)
+
+        # ── Bottoni dialog ───────────────────────────────────────────────────
         btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         btns.accepted.connect(self.accept)
         btns.rejected.connect(self.reject)
@@ -213,7 +450,51 @@ class CFRuleEditDialog(QDialog):
 
         self._on_op_changed(self.op_combo.currentText())
 
-    # -- helpers --
+    # ── Helpers ─────────────────────────────────────────────────────────────
+
+    def _make_color_row(self, color, on_pick, on_none, title: str):
+        """Crea una riga [swatch][Pick][None] e restituisce (swatch, container)."""
+        swatch = QLabel()
+        swatch.setFixedSize(54, 22)
+        self._refresh_swatch(swatch, color)
+        pick_btn = QPushButton("Pick…")
+        pick_btn.clicked.connect(lambda: self._pick_color(swatch, on_pick, title))
+        container = QWidget()
+        h = QHBoxLayout(container)
+        h.setContentsMargins(0, 0, 0, 0)
+        h.addWidget(swatch)
+        h.addWidget(pick_btn)
+        if on_none is not None:
+            none_btn = QPushButton("None")
+            none_btn.clicked.connect(lambda: (on_none(), self._refresh_swatch(swatch, None)))
+            h.addWidget(none_btn)
+        h.addStretch()
+        return swatch, container
+
+    def _pick_color(self, swatch: QLabel, callback, title: str):
+        c = QColorDialog.getColor(QColor(200, 200, 200), self, title)
+        if c.isValid():
+            color = (c.red(), c.green(), c.blue())
+            callback(color)
+            self._refresh_swatch(swatch, color)
+
+    def _set_color(self, which: str, color: Optional[tuple]):
+        if which == "bg":
+            self._bg_color = color
+            self._refresh_swatch(self.bg_swatch, color)
+        elif which == "fg":
+            self._fg_color = color
+            self._refresh_swatch(self.fg_swatch, color)
+        elif which == "scale_min":
+            self._bg_color = color
+            self._refresh_swatch(self.scale_min_swatch, color)
+        elif which == "scale_max":
+            self._scale_max_color = color
+            self._refresh_swatch(self.scale_max_swatch, color)
+        elif which == "scale_mid":
+            self._scale_mid_color = color
+            self._refresh_swatch(self.scale_mid_swatch, color)
+
     @staticmethod
     def _refresh_swatch(label: QLabel, color: Optional[tuple]):
         if color:
@@ -226,38 +507,57 @@ class CFRuleEditDialog(QDialog):
             label.setStyleSheet("background-color: #f0f0f0; border: 1px solid #aaa;")
             label.setText("  —  ")
 
-    def _set_bg(self, color: Optional[tuple]):
-        self._bg_color = color
-        self._refresh_swatch(self.bg_swatch, color)
-
-    def _set_fg(self, color: Optional[tuple]):
-        self._fg_color = color
-        self._refresh_swatch(self.fg_swatch, color)
-
-    def _pick_bg(self):
-        init = QColor(*self._bg_color) if self._bg_color else QColor(255, 255, 200)
-        c = QColorDialog.getColor(init, self, "Colore di sfondo")
-        if c.isValid():
-            self._set_bg((c.red(), c.green(), c.blue()))
-
-    def _pick_fg(self):
-        init = QColor(*self._fg_color) if self._fg_color else QColor(0, 0, 0)
-        c = QColorDialog.getColor(init, self, "Colore del testo")
-        if c.isValid():
-            self._set_fg((c.red(), c.green(), c.blue()))
-
     def _on_op_changed(self, op: str):
-        no_val = op in ("is empty", "not empty")
+        is_scale   = op == "color scale"
+        no_val     = op in ("is empty", "not empty", "color scale")
         is_between = op == "between"
-        self.val1_edit.setVisible(not no_val)
-        self.val2_label.setVisible(is_between)
-        self.val2_edit.setVisible(is_between)
+
+        self.cond_box.setVisible(not is_scale)
+        self.scale_range_box.setVisible(is_scale)
+        self.fmt_box.setVisible(not is_scale)
+        self.scale_fmt_box.setVisible(is_scale)
+
+        if not is_scale:
+            self.val1_stack.setVisible(not no_val)
+            self.val1_col_btn.setVisible(not no_val)
+            self.val2_label.setVisible(is_between)
+            self.val2_stack.setVisible(is_between)
+            self.val2_col_btn.setVisible(is_between)
+
+    def _on_mid_toggled(self, state: int):
+        self.mid_container.setVisible(state == Qt.Checked)
+
+    # ── Lettura risultato ────────────────────────────────────────────────────
 
     def get_rule(self) -> CFRule:
+        op = self.op_combo.currentText()
+        if op == "color scale":
+            return CFRule(
+                operator="color scale",
+                value=self.scale_min_edit.text().strip(),
+                value2=self.scale_max_edit.text().strip(),
+                bg_color=self._bg_color,
+                scale_max_color=self._scale_max_color,
+                scale_mid_value=(
+                    self.mid_value_edit.text().strip()
+                    if self.mid_enable_cb.isChecked() else ""
+                ),
+                scale_mid_color=(
+                    self._scale_mid_color if self.mid_enable_cb.isChecked() else None
+                ),
+            )
+
+        v1_col = self.val1_col_btn.isChecked()
+        v1 = self.val1_col_combo.currentText() if v1_col else self.val1_edit.text().strip()
+        v2_col = self.val2_col_btn.isChecked()
+        v2 = self.val2_col_combo.currentText() if v2_col else self.val2_edit.text().strip()
+
         return CFRule(
-            operator=self.op_combo.currentText(),
-            value=self.val1_edit.text().strip(),
-            value2=self.val2_edit.text().strip(),
+            operator=op,
+            value=v1,
+            value2=v2,
+            value_is_col=v1_col,
+            value2_is_col=v2_col,
             bg_color=self._bg_color,
             fg_color=self._fg_color,
             bold=self.bold_cb.isChecked(),
@@ -275,6 +575,7 @@ class CFRulesDialog(QDialog):
         col_name: str,
         col_dtype,
         rules: List[CFRule],
+        available_columns: Optional[List[str]] = None,
         parent=None,
     ):
         super().__init__(parent)
@@ -282,6 +583,7 @@ class CFRulesDialog(QDialog):
         self.setMinimumSize(540, 380)
         self._col_name = col_name
         self._col_dtype = col_dtype
+        self._available_columns: List[str] = available_columns or []
         self._rules: List[CFRule] = list(rules)
 
         root = QVBoxLayout(self)
@@ -346,18 +648,23 @@ class CFRulesDialog(QDialog):
         self.list_widget.clear()
         for rule in self._rules:
             text = f"Value {rule.describe()}"
-            parts = []
-            if rule.bg_color:
-                parts.append(f"bg: rgb{rule.bg_color}")
-            if rule.fg_color:
-                parts.append(f"testo: rgb{rule.fg_color}")
-            if rule.bold:
-                parts.append("bold")
-            if parts:
-                text += f"   →   {', '.join(parts)}"
+            if rule.operator == "color scale":
+                parts = []
+                if rule.bg_color:        parts.append(f"min rgb{rule.bg_color}")
+                if rule.scale_max_color: parts.append(f"max rgb{rule.scale_max_color}")
+                if rule.scale_mid_value: parts.append(f"mid={rule.scale_mid_value}")
+                if parts: text += f"   →   {', '.join(parts)}"
+            else:
+                parts = []
+                if rule.bg_color: parts.append(f"bg: rgb{rule.bg_color}")
+                if rule.fg_color: parts.append(f"testo: rgb{rule.fg_color}")
+                if rule.bold:     parts.append("bold")
+                if parts: text += f"   →   {', '.join(parts)}"
+
             item = QListWidgetItem(text)
-            if rule.bg_color:
-                item.setBackground(QColor(*rule.bg_color))
+            preview_color = rule.bg_color or rule.scale_max_color
+            if preview_color:
+                item.setBackground(QColor(*preview_color))
             if rule.fg_color:
                 item.setForeground(QColor(*rule.fg_color))
             if rule.bold:
@@ -372,7 +679,10 @@ class CFRulesDialog(QDialog):
         return self.list_widget.currentRow()
 
     def _add_rule(self):
-        dlg = CFRuleEditDialog(self._col_name, self._col_dtype, parent=self)
+        dlg = CFRuleEditDialog(
+            self._col_name, self._col_dtype,
+            available_columns=self._available_columns, parent=self,
+        )
         if dlg.exec_():
             self._rules.append(dlg.get_rule())
             self._rebuild_list()
@@ -383,7 +693,9 @@ class CFRulesDialog(QDialog):
         if idx < 0:
             return
         dlg = CFRuleEditDialog(
-            self._col_name, self._col_dtype, rule=self._rules[idx], parent=self
+            self._col_name, self._col_dtype,
+            rule=self._rules[idx],
+            available_columns=self._available_columns, parent=self,
         )
         if dlg.exec_():
             self._rules[idx] = dlg.get_rule()
@@ -481,6 +793,7 @@ class TradeTableWidget(QWidget):
         dedup_column: str = "trade_index",
         datetime_columns="timestamp",
         datetime_format: str = "%H:%M:%S.%f",
+        cf_rules_path: Optional[str] = None,
         parent=None,
     ):
         super().__init__(parent)
@@ -504,6 +817,11 @@ class TradeTableWidget(QWidget):
         self.conditional_formatting: bool = False
         # Regole per-colonna stile Excel: {col_name: [CFRule, ...]}
         self._cf_rules: dict[str, List[CFRule]] = {}
+        # Percorso file di persistenza
+        self._cf_rules_path: str = cf_rules_path or str(
+            Path.home() / ".config" / "marketmonitor" / "cf_rules.json"
+        )
+        self._load_cf_rules()
 
         # ---- Filters ----
         self.active_filter: Optional[FilterGroup] = None
@@ -961,14 +1279,22 @@ class TradeTableWidget(QWidget):
         side_idx = df.columns.get_loc("side") if "side" in df else None
         own_idx = df.columns.get_loc("own_trade") if "own_trade" in df else None
 
-        # Pre-calcola min/max per colonne numeriche (sull'intero dataset filtrato)
+        # Pre-calcola min/max per colonne numeriche.
+        # Serve per: gradiente CF automatico E regole "color scale" dell'utente.
         cf_ranges: dict[str, tuple[float, float]] = {}
-        if self.conditional_formatting:
+        needs_ranges = self.conditional_formatting or any(
+            r.operator == "color scale"
+            for rules in self._cf_rules.values()
+            for r in rules
+        )
+        if needs_ranges:
             for col in df.columns:
                 if pd.api.types.is_numeric_dtype(df[col]):
                     vals = df[col].dropna()
                     if len(vals) > 0:
                         cf_ranges[col] = (float(vals.min()), float(vals.max()))
+
+        col_list = df.columns.tolist()
 
         for i, row in enumerate(df.iloc[start:end].itertuples(index=False), start):
             row_color = None
@@ -983,8 +1309,11 @@ class TradeTableWidget(QWidget):
             if own_idx is not None:
                 is_own = bool(row[own_idx])
 
+            # Dizionario riga per riferimenti a colonne nelle regole
+            row_dict = dict(zip(col_list, row))
+
             for j, val in enumerate(row):
-                col_name = df.columns[j]
+                col_name = col_list[j]
                 text = self._format_value(col_name, val)
                 item = NumericTableWidgetItem(text, sort_value=val)
                 item.setTextAlignment(Qt.AlignCenter)
@@ -993,7 +1322,12 @@ class TradeTableWidget(QWidget):
                 user_rules = self._cf_rules.get(col_name, [])
                 rule_applied = False
                 for rule in user_rules:
-                    if rule.matches(val):
+                    if rule.operator == "color scale":
+                        c_min, c_max = cf_ranges.get(col_name, (None, None))
+                        rule.apply_to_item(item, val=val, col_min=c_min, col_max=c_max)
+                        rule_applied = True
+                        break
+                    elif rule.matches(val, row_data=row_dict):
                         rule.apply_to_item(item)
                         rule_applied = True
                         break
@@ -1179,12 +1513,50 @@ class TradeTableWidget(QWidget):
             if not self.filtered_data.empty and col_name in self.filtered_data.columns
             else None
         )
+        available_cols = [
+            c for c in self.all_data.columns if c != col_name
+        ] if not self.all_data.empty else []
+
         existing = self._cf_rules.get(col_name, [])
-        dlg = CFRulesDialog(col_name, col_dtype, existing, parent=self)
+        dlg = CFRulesDialog(
+            col_name, col_dtype, existing,
+            available_columns=available_cols, parent=self,
+        )
         if dlg.exec_():
             new_rules = dlg.get_rules()
             if new_rules:
                 self._cf_rules[col_name] = new_rules
             elif col_name in self._cf_rules:
                 del self._cf_rules[col_name]
+            self._save_cf_rules()
             self._refresh_view()
+
+    def _save_cf_rules(self):
+        """Salva tutte le regole CF in JSON."""
+        try:
+            path = Path(self._cf_rules_path)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            data = {
+                col: [r.to_dict() for r in rules]
+                for col, rules in self._cf_rules.items()
+                if rules
+            }
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+        except Exception:
+            pass  # salvataggio silenzioso
+
+    def _load_cf_rules(self):
+        """Carica le regole CF da JSON (se il file esiste)."""
+        try:
+            path = Path(self._cf_rules_path)
+            if not path.exists():
+                return
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            self._cf_rules = {
+                col: [CFRule.from_dict(d) for d in rules_list]
+                for col, rules_list in data.items()
+            }
+        except Exception:
+            self._cf_rules = {}
