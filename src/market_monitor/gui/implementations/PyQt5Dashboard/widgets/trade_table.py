@@ -54,6 +54,7 @@ class CFRule:
     fg_color: Optional[tuple] = None    # (r,g,b)
     bold: bool = False
     apply_to_row: bool = False  # True → applica il formato all'intera riga
+    condition_col: str = ""     # Se non vuoto, la condizione usa il valore di questa colonna
     # Campi specifici per "color scale"
     scale_max_color: Optional[tuple] = None   # colore al valore massimo
     scale_mid_value: str = ""                 # valore del punto medio (opzionale)
@@ -70,6 +71,10 @@ class CFRule:
         """
         if self.operator == "color scale":
             return True  # si applica sempre; il colore viene interpolato
+
+        # Se condition_col è impostato, testa il valore di quella colonna invece della cella corrente
+        if self.condition_col and row_data is not None and self.condition_col in row_data:
+            cell_val = row_data[self.condition_col]
 
         op = self.operator
         is_empty = (
@@ -206,6 +211,8 @@ class CFRule:
                 base = f"between {v} and {v2}"
             else:
                 base = f"{self.operator} {v}"
+        if self.condition_col:
+            base = f"[se {self.condition_col}] " + base
         return base + ("  [→ row]" if self.apply_to_row else "")
 
     # ------------------------------------------------------------------
@@ -222,6 +229,7 @@ class CFRule:
             "fg_color":        list(self.fg_color)        if self.fg_color        else None,
             "bold":            self.bold,
             "apply_to_row":    self.apply_to_row,
+            "condition_col":   self.condition_col,
             "scale_max_color": list(self.scale_max_color) if self.scale_max_color else None,
             "scale_mid_value": self.scale_mid_value,
             "scale_mid_color": list(self.scale_mid_color) if self.scale_mid_color else None,
@@ -240,6 +248,7 @@ class CFRule:
             fg_color=        _t(d.get("fg_color")),
             bold=            d.get("bold",            False),
             apply_to_row=    d.get("apply_to_row",    False),
+            condition_col=   d.get("condition_col",   ""),
             scale_max_color= _t(d.get("scale_max_color")),
             scale_mid_value= d.get("scale_mid_value", ""),
             scale_mid_color= _t(d.get("scale_mid_color")),
@@ -299,7 +308,14 @@ class CFRuleEditDialog(QDialog):
 
         # ── Condizione (nascosta per "color scale") ──────────────────────────
         self.cond_box = QGroupBox("Condizione")
-        cond_h = QHBoxLayout(self.cond_box)
+        cond_v = QVBoxLayout(self.cond_box)
+
+        # riga valore
+        cond_val_row = QWidget()
+        cond_h = QHBoxLayout(cond_val_row)
+        cond_h.setContentsMargins(0, 0, 0, 0)
+        cond_v.addWidget(cond_val_row)
+
         cond_h.addWidget(QLabel("Value"))
 
         # val1: QStackedWidget (pagina 0 = testo, pagina 1 = colonna)
@@ -358,6 +374,23 @@ class CFRuleEditDialog(QDialog):
         )
         cond_h.addWidget(self.val2_stack)
         cond_h.addWidget(self.val2_col_btn)
+
+        # riga "Se colonna:" — condition_col
+        cond_col_row = QWidget()
+        cond_col_h = QHBoxLayout(cond_col_row)
+        cond_col_h.setContentsMargins(0, 0, 0, 0)
+        cond_col_h.addWidget(QLabel("Se colonna:"))
+        self.condition_col_combo = QComboBox()
+        self.condition_col_combo.addItem("(questa colonna)")
+        self.condition_col_combo.addItems(self._available_columns)
+        existing_cond_col = rule.condition_col if rule else ""
+        if existing_cond_col:
+            idx = self.condition_col_combo.findText(existing_cond_col)
+            if idx >= 0:
+                self.condition_col_combo.setCurrentIndex(idx)
+        cond_col_h.addWidget(self.condition_col_combo)
+        cond_col_h.addStretch()
+        cond_v.addWidget(cond_col_row)
 
         root.addWidget(self.cond_box)
 
@@ -565,6 +598,9 @@ class CFRuleEditDialog(QDialog):
         v2_col = self.val2_col_btn.isChecked()
         v2 = self.val2_col_combo.currentText() if v2_col else self.val2_edit.text().strip()
 
+        cond_col_text = self.condition_col_combo.currentText()
+        cond_col = "" if cond_col_text == "(questa colonna)" else cond_col_text
+
         return CFRule(
             operator=op,
             value=v1,
@@ -575,6 +611,7 @@ class CFRuleEditDialog(QDialog):
             fg_color=self._fg_color,
             bold=self.bold_cb.isChecked(),
             apply_to_row=self.apply_to_row_cb.isChecked(),
+            condition_col=cond_col,
         )
 
 
