@@ -4,7 +4,9 @@ Widget Pivot Table con filtri avanzati AND/OR, controllo decimali e filtro rolli
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QTableWidget,
                              QTableWidgetItem, QPushButton, QLabel, QComboBox,
                              QGroupBox, QHeaderView, QFileDialog, QMessageBox,
-                             QCheckBox, QMenu, QAction, QWidgetAction, QSpinBox)
+                             QCheckBox, QMenu, QAction, QWidgetAction, QSpinBox,
+                             QDialog, QDialogButtonBox, QListWidget, QListWidgetItem,
+                             QFormLayout, QLineEdit, QTextEdit, QSplitter)
 from PyQt5.QtCore import Qt, pyqtSignal, QPoint
 from PyQt5.QtGui import QColor, QCursor
 import pandas as pd
@@ -13,6 +15,161 @@ from typing import Optional, Dict, Any, List
 
 # Import sistema filtri avanzati
 from market_monitor.gui.implementations.PyQt5Dashboard.widgets.filter import AdvancedFilterDialog, FilterGroup
+
+
+class CalcFieldDialog(QDialog):
+    """Dialog per creare/modificare un campo calcolato."""
+
+    def __init__(self, available_columns: List[str], name: str = "", formula: str = "", parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Calculated Field")
+        self.setMinimumWidth(500)
+        self.setMinimumHeight(300)
+
+        layout = QVBoxLayout(self)
+
+        form = QFormLayout()
+        self.name_edit = QLineEdit(name)
+        self.name_edit.setPlaceholderText("e.g. gross_value")
+        form.addRow("Field Name:", self.name_edit)
+        layout.addLayout(form)
+
+        layout.addWidget(QLabel("Formula (use column names as variables):"))
+
+        self.formula_edit = QLineEdit(formula)
+        self.formula_edit.setPlaceholderText("e.g. price * qty")
+        layout.addWidget(self.formula_edit)
+
+        # Column hints
+        if available_columns:
+            hint_label = QLabel("Available columns: " + ", ".join(available_columns))
+            hint_label.setWordWrap(True)
+            hint_label.setStyleSheet("color: #555; font-size: 11px; padding: 4px;")
+            layout.addWidget(hint_label)
+
+        # Operator hints
+        ops_label = QLabel(
+            "Supported: +  -  *  /  **  abs()  round()  sqrt()  log()  exp()  np.where(cond, a, b)"
+        )
+        ops_label.setWordWrap(True)
+        ops_label.setStyleSheet("color: #777; font-size: 10px; font-style: italic; padding: 2px;")
+        layout.addWidget(ops_label)
+
+        self.error_label = QLabel("")
+        self.error_label.setStyleSheet("color: red; font-size: 11px;")
+        layout.addWidget(self.error_label)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self._validate_and_accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def _validate_and_accept(self):
+        name = self.name_edit.text().strip()
+        formula = self.formula_edit.text().strip()
+        if not name:
+            self.error_label.setText("Field name cannot be empty.")
+            return
+        if not name.isidentifier():
+            self.error_label.setText("Field name must be a valid identifier (letters, digits, _).")
+            return
+        if not formula:
+            self.error_label.setText("Formula cannot be empty.")
+            return
+        self.accept()
+
+    def get_name(self) -> str:
+        return self.name_edit.text().strip()
+
+    def get_formula(self) -> str:
+        return self.formula_edit.text().strip()
+
+
+class CalcFieldsManagerDialog(QDialog):
+    """Dialog per gestire l'elenco dei campi calcolati."""
+
+    def __init__(self, calculated_fields: Dict[str, str], available_columns: List[str], parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Calculated Fields")
+        self.setMinimumSize(480, 320)
+
+        self.calculated_fields: Dict[str, str] = dict(calculated_fields)
+        self.available_columns = available_columns
+
+        layout = QVBoxLayout(self)
+
+        layout.addWidget(QLabel("Defined calculated fields:"))
+
+        self.list_widget = QListWidget()
+        self.list_widget.setAlternatingRowColors(True)
+        layout.addWidget(self.list_widget)
+
+        btn_row = QHBoxLayout()
+        add_btn = QPushButton("Add")
+        add_btn.clicked.connect(self._add_field)
+        btn_row.addWidget(add_btn)
+
+        edit_btn = QPushButton("Edit")
+        edit_btn.clicked.connect(self._edit_field)
+        btn_row.addWidget(edit_btn)
+
+        del_btn = QPushButton("Delete")
+        del_btn.clicked.connect(self._delete_field)
+        btn_row.addWidget(del_btn)
+
+        btn_row.addStretch()
+        layout.addLayout(btn_row)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+        self._rebuild_list()
+
+    def _rebuild_list(self):
+        self.list_widget.clear()
+        for name, formula in self.calculated_fields.items():
+            self.list_widget.addItem(f"{name}  =  {formula}")
+
+    def _add_field(self):
+        dlg = CalcFieldDialog(self.available_columns, parent=self)
+        if dlg.exec_():
+            name = dlg.get_name()
+            formula = dlg.get_formula()
+            self.calculated_fields[name] = formula
+            self._rebuild_list()
+
+    def _edit_field(self):
+        row = self.list_widget.currentRow()
+        if row < 0:
+            return
+        name = list(self.calculated_fields.keys())[row]
+        formula = self.calculated_fields[name]
+        dlg = CalcFieldDialog(self.available_columns, name=name, formula=formula, parent=self)
+        if dlg.exec_():
+            new_name = dlg.get_name()
+            new_formula = dlg.get_formula()
+            # Rebuild dict preserving order
+            new_fields = {}
+            for k, v in self.calculated_fields.items():
+                if k == name:
+                    new_fields[new_name] = new_formula
+                else:
+                    new_fields[k] = v
+            self.calculated_fields = new_fields
+            self._rebuild_list()
+
+    def _delete_field(self):
+        row = self.list_widget.currentRow()
+        if row < 0:
+            return
+        name = list(self.calculated_fields.keys())[row]
+        del self.calculated_fields[name]
+        self._rebuild_list()
+
+    def get_fields(self) -> Dict[str, str]:
+        return dict(self.calculated_fields)
 
 
 class NumericTableWidgetItem(QTableWidgetItem):
@@ -67,6 +224,9 @@ class PivotTableWidget(QWidget):
         # Filtri avanzati e decimali
         self.column_decimals = {}
         self.active_filter: Optional[FilterGroup] = None
+
+        # Campi calcolati: name -> formula
+        self.calculated_fields: Dict[str, str] = {}
 
         # Configurazione pending per restore dopo set_source_data
         self._pending_config: Optional[Dict[str, Any]] = None
@@ -233,6 +393,23 @@ class PivotTableWidget(QWidget):
         self.export_btn.clicked.connect(self._export_excel)
         btn_layout.addWidget(self.export_btn)
 
+        self.calc_fields_btn = QPushButton("∑ Calculated Fields")
+        self.calc_fields_btn.setToolTip("Define virtual columns computed from formulas")
+        self.calc_fields_btn.clicked.connect(self._show_calc_fields_dialog)
+        self.calc_fields_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #6a0dad;
+                color: white;
+                font-weight: bold;
+                padding: 5px 12px;
+                border-radius: 3px;
+            }
+            QPushButton:hover {
+                background-color: #8b00ff;
+            }
+        """)
+        btn_layout.addWidget(self.calc_fields_btn)
+
         btn_layout.addStretch()
 
         config_layout.addLayout(btn_layout)
@@ -343,6 +520,54 @@ class PivotTableWidget(QWidget):
         self.column_decimals[column_name] = decimals
         if not self.pivot_data.empty:
             self._populate_table()
+
+    def _show_calc_fields_dialog(self):
+        """Apre il dialog di gestione dei campi calcolati."""
+        available = list(self.source_data.columns) if not self.source_data.empty else []
+        dlg = CalcFieldsManagerDialog(self.calculated_fields, available, parent=self)
+        if dlg.exec_():
+            self.calculated_fields = dlg.get_fields()
+            n = len(self.calculated_fields)
+            label = f"∑ Calculated Fields ({n})" if n else "∑ Calculated Fields"
+            self.calc_fields_btn.setText(label)
+            # Refresh values combo to include/remove calc field names
+            if not self.source_data.empty:
+                self._refresh_values_combo()
+            # Re-apply pivot if active
+            if self.current_config:
+                self._apply_pivot_from_config(self.current_config)
+
+    def _refresh_values_combo(self):
+        """Aggiorna values_combo includendo i campi calcolati."""
+        current = self.values_combo.currentText()
+        numeric_cols = list(self.source_data.select_dtypes(include=['number']).columns)
+        calc_names = list(self.calculated_fields.keys())
+        all_values = ['None'] + numeric_cols + calc_names
+        self.values_combo.blockSignals(True)
+        self.values_combo.clear()
+        self.values_combo.addItems(all_values)
+        if current in all_values:
+            self.values_combo.setCurrentText(current)
+        self.values_combo.blockSignals(False)
+
+    def _compute_calculated_fields(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Aggiunge le colonne calcolate al DataFrame prima del pivot."""
+        if not self.calculated_fields or df.empty:
+            return df
+        import numpy as np
+        result = df.copy()
+        for name, formula in self.calculated_fields.items():
+            try:
+                namespace = {col: result[col] for col in result.columns}
+                namespace.update({
+                    'abs': np.abs, 'round': np.round,
+                    'sqrt': np.sqrt, 'log': np.log,
+                    'exp': np.exp, 'np': np,
+                })
+                result[name] = eval(formula, {"__builtins__": {}}, namespace)  # noqa: S307
+            except Exception as e:
+                print(f"Calculated field '{name}' error: {e}")
+        return result
 
     def _show_advanced_filter_dialog(self):
         """Mostra dialog filtro avanzato"""
@@ -510,8 +735,8 @@ class PivotTableWidget(QWidget):
         self.cols_combo.clear()
         self.cols_combo.addItems(columns)
 
-        # Solo colonne numeriche per values
-        numeric_cols = ['None'] + list(df.select_dtypes(include=['number']).columns)
+        # Solo colonne numeriche per values + campi calcolati
+        numeric_cols = ['None'] + list(df.select_dtypes(include=['number']).columns) + list(self.calculated_fields.keys())
         self.values_combo.clear()
         self.values_combo.addItems(numeric_cols)
 
@@ -522,6 +747,11 @@ class PivotTableWidget(QWidget):
             self.cols_combo.setCurrentText(current_cols)
         if current_values in numeric_cols:
             self.values_combo.setCurrentText(current_values)
+
+        # Update calc fields button label
+        n = len(self.calculated_fields)
+        if n:
+            self.calc_fields_btn.setText(f"∑ Calculated Fields ({n})")
 
         # Applica pending config se presente
         if self._pending_config:
@@ -536,6 +766,13 @@ class PivotTableWidget(QWidget):
         config = self._pending_config
         if not config:
             return
+
+        # Ripristina campi calcolati
+        if 'calculated_fields' in config:
+            self.calculated_fields = dict(config['calculated_fields'])
+            n = len(self.calculated_fields)
+            if n:
+                self.calc_fields_btn.setText(f"∑ Calculated Fields ({n})")
 
         # Applica selezioni combo box
         if 'rows' in config and config['rows']:
@@ -634,6 +871,9 @@ class PivotTableWidget(QWidget):
 
             # 2. Filtro temporale rolling
             filtered_data = self._apply_time_filter(filtered_data)
+
+            # 3. Campi calcolati
+            filtered_data = self._compute_calculated_fields(filtered_data)
 
             # Salva conteggi per info label
             original_count = len(self.source_data)
@@ -909,6 +1149,8 @@ class PivotTableWidget(QWidget):
             'column_decimals': self.column_decimals.copy(),
             # Filtro temporale rapido
             'quick_time_filter': self.quick_time_filter.currentText(),
+            # Campi calcolati
+            'calculated_fields': dict(self.calculated_fields),
         }
 
     def restore_config(self, config: dict):
@@ -922,6 +1164,13 @@ class PivotTableWidget(QWidget):
             # Salva column_decimals subito (non dipende dai dati)
             if 'column_decimals' in config:
                 self.column_decimals = config['column_decimals'].copy()
+
+            # Ripristina campi calcolati
+            if 'calculated_fields' in config:
+                self.calculated_fields = dict(config['calculated_fields'])
+                n = len(self.calculated_fields)
+                if n:
+                    self.calc_fields_btn.setText(f"∑ Calculated Fields ({n})")
 
             # Ripristina settings visibility subito
             if 'settings_visible' in config:
