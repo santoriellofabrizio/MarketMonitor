@@ -256,6 +256,9 @@ class TradeDashboard(BasePyQt5Dashboard, TradeDashboardExtensions):
 
         self.all_trades = pd.DataFrame()
         self.current_filtered_data = pd.DataFrame()
+        # Dict-based incremental dedup: {trade_index -> row_dict}
+        # Avoids O(N log N) sort+groupby+sort sull'intero dataset ad ogni update
+        self._trades_index: dict = {}
 
         self.dashboard_state = DashboardState()
         self.worker_thread = None
@@ -469,6 +472,9 @@ class TradeDashboard(BasePyQt5Dashboard, TradeDashboardExtensions):
         if self.paused:
             return
 
+        import time
+        _t0 = time.perf_counter()
+
         self.logger.debug(f"Received {len(df)} new trades")
 
         # NORMALIZZAZIONE TIMESTAMP: Assicurati che timestamp sia SEMPRE datetime pandas
@@ -476,61 +482,71 @@ class TradeDashboard(BasePyQt5Dashboard, TradeDashboardExtensions):
             if df['timestamp'].dtype != 'datetime64[ns]':
                 df['timestamp'] = pd.to_datetime(df['timestamp'], errors='coerce')
 
-        if self.all_trades.empty:
-            self.all_trades = df.copy()
-        else:
-            # NORMALIZZA anche all_trades se necessario
-            if 'timestamp' in self.all_trades.columns:
-                if self.all_trades['timestamp'].dtype != 'datetime64[ns]':
-                    self.logger.info("Normalizing all_trades timestamps to datetime")
-                    self.all_trades['timestamp'] = pd.to_datetime(self.all_trades['timestamp'], errors='coerce')
-            
-            self.all_trades = safe_concat(
-                [self.all_trades, df],
-                ignore_index=True
-            )
+        _t1 = time.perf_counter()
 
-            if 'trade_index' in self.all_trades.columns:
-                # Sort ascending so the most recent row is last in each group,
-                # then groupby.last() keeps the last non-null value per column.
-                # This prevents losing horizon PL values when a later partial update arrives.
-                sort_cols = (
-                    ['timestamp', 'trade_index']
-                    if 'timestamp' in self.all_trades.columns
-                    else ['trade_index']
-                )
+        # DEDUP INCREMENTALE: aggiorna solo le righe nuove nel dict,
+        # evitando il ciclo sort+groupby+sort O(N log N) sull'intero storico.
+        # Per ogni trade: se trade_index esiste, aggiorna solo i campi non-NaN
+        # (preserva i valori horizon PL da update precedenti, come faceva groupby.last())
+        if 'trade_index' in df.columns:
+            for _, row in df.iterrows():
+                tid = row['trade_index']
+                if tid in self._trades_index:
+                    existing = self._trades_index[tid]
+                    for col, val in row.items():
+                        if pd.notna(val):
+                            existing[col] = val
+                else:
+                    self._trades_index[tid] = row.to_dict()
+
+            self.all_trades = pd.DataFrame(list(self._trades_index.values()))
+
+            # Sort descending per display (timestamp desc, trade_index desc)
+            if 'timestamp' in self.all_trades.columns:
                 try:
                     self.all_trades = self.all_trades.sort_values(
-                        by=sort_cols, ascending=True, na_position='first'
+                        by=["timestamp", "trade_index"],
+                        ascending=False
                     )
                 except Exception as e:
                     self.logger.error(f"Failed to sort trades: {e}")
-
-                self.all_trades = (
-                    self.all_trades
-                    .groupby('trade_index', sort=False)
-                    .last()
-                    .reset_index()
+                    ts_types = self.all_trades['timestamp'].apply(type).value_counts()
+                    self.logger.error(f"Timestamp types: {ts_types.to_dict()}")
+        else:
+            # Fallback senza trade_index: concat senza dedup
+            if self.all_trades.empty:
+                self.all_trades = df.copy()
+            else:
+                self.all_trades = safe_concat(
+                    [self.all_trades, df],
+                    ignore_index=True
                 )
 
-                # Re-sort descending for display
-                if 'timestamp' in self.all_trades.columns:
-                    try:
-                        self.all_trades = self.all_trades.sort_values(
-                            by=["timestamp", "trade_index"],
-                            ascending=False
-                        )
-                    except Exception as e:
-                        self.logger.error(f"Failed to sort by timestamp: {e}")
-                        ts_types = self.all_trades['timestamp'].apply(type).value_counts()
-                        self.logger.error(f"Timestamp types: {ts_types.to_dict()}")
+        _t2 = time.perf_counter()
 
         enriched = self._get_enriched_trades()
+        _t3 = time.perf_counter()
+
         self.trade_table.update_data(enriched)
+        _t4 = time.perf_counter()
+
         self._update_metrics()
+        _t5 = time.perf_counter()
+
         self._update_all_detached_pivots(enriched)
         self._update_all_detached_charts(enriched)
         self._update_all_detached_groupbys(enriched)
+        _t6 = time.perf_counter()
+
+        self.logger.info(
+            f"[PERF] total={_t6-_t0:.3f}s | "
+            f"dedup={_t2-_t1:.3f}s | "
+            f"enrich={_t3-_t2:.3f}s | "
+            f"table={_t4-_t3:.3f}s | "
+            f"metrics={_t5-_t4:.3f}s | "
+            f"detached={_t6-_t5:.3f}s | "
+            f"N={len(self.all_trades)}"
+        )
 
     def _on_filtered_data_changed(self, filtered_df: pd.DataFrame):
         """Callback su cambio filtri tabella."""

@@ -87,6 +87,8 @@ class ChartWidget(QWidget):
         self._last_chart_mode: Optional[str] = None
         # Stili personalizzati dall'utente: {label: {color, linewidth, linestyle, marker, markersize, alpha}}
         self._user_line_styles: Dict[str, Dict] = {}
+        # Posizione legenda personalizzata dall'utente (salvata tra i redraw)
+        self._user_legend_config: Optional[Dict] = None
 
         # Filtri avanzati
         self.active_filter: Optional[FilterGroup] = None
@@ -834,6 +836,7 @@ class ChartWidget(QWidget):
 
         self.current_config = config
         self._user_line_styles.clear()  # nuova config → reset stili utente
+        self._user_legend_config = None  # nuova config → reset posizione legenda
         self._apply_chart_from_config(config)
 
     def _get_static_config(self) -> Optional[Dict[str, Any]]:
@@ -924,6 +927,19 @@ class ChartWidget(QWidget):
                 except Exception:
                     pass
 
+            # Salva posizione/visibilità legenda prima di distruggerla
+            _prev_ax = next(iter(self.figure.axes), None)
+            if _prev_ax is not None:
+                _prev_legend = _prev_ax.get_legend()
+                if _prev_legend is not None:
+                    try:
+                        self._user_legend_config = {
+                            'loc': _prev_legend._loc,
+                            'visible': _prev_legend.get_visible(),
+                        }
+                    except Exception:
+                        pass
+
             # Clear figure
             self._line_objects.clear()
             self.figure.clear()
@@ -952,6 +968,17 @@ class ChartWidget(QWidget):
                             line.set_alpha(s['alpha'])
                     except Exception:
                         pass
+
+            # Ripristina legenda con handles aggiornati (colori ripristinati)
+            # e posizione salvata dall'utente
+            _handles, _labels = ax.get_legend_handles_labels()
+            if _handles:
+                _legend_kwargs: Dict[str, Any] = {'fontsize': 'small'}
+                if self._user_legend_config and self._user_legend_config.get('loc') is not None:
+                    _legend_kwargs['loc'] = self._user_legend_config['loc']
+                _new_legend = ax.legend(handles=_handles, labels=_labels, **_legend_kwargs)
+                if self._user_legend_config:
+                    _new_legend.set_visible(self._user_legend_config.get('visible', True))
 
             self.canvas.draw()
             self._last_chart_mode = config['mode']
@@ -1203,6 +1230,7 @@ class ChartWidget(QWidget):
         self.current_config = None
         self._line_objects.clear()
         self._user_line_styles.clear()
+        self._user_legend_config = None
         self._last_chart_mode = None
         self.figure.clear()
         self.canvas.draw()
