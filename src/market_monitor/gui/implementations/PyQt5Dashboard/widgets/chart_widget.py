@@ -85,6 +85,8 @@ class ChartWidget(QWidget):
         # Riferimenti per aggiornamento incrementale (Fase 3)
         self._line_objects: Dict[str, Any] = {}
         self._last_chart_mode: Optional[str] = None
+        # Stili personalizzati dall'utente: {label: {color, linewidth, linestyle, marker, markersize, alpha}}
+        self._user_line_styles: Dict[str, Dict] = {}
 
         # Filtri avanzati
         self.active_filter: Optional[FilterGroup] = None
@@ -831,6 +833,7 @@ class ChartWidget(QWidget):
             return
 
         self.current_config = config
+        self._user_line_styles.clear()  # nuova config → reset stili utente
         self._apply_chart_from_config(config)
 
     def _get_static_config(self) -> Optional[Dict[str, Any]]:
@@ -907,7 +910,22 @@ class ChartWidget(QWidget):
                 self.canvas.draw()
                 return
 
+            # Salva stili utente dalle linee correnti prima di distruggerle
+            for label, line in self._line_objects.items():
+                try:
+                    self._user_line_styles[label] = {
+                        'color': line.get_color(),
+                        'linewidth': line.get_linewidth(),
+                        'linestyle': line.get_linestyle(),
+                        'marker': line.get_marker(),
+                        'markersize': line.get_markersize(),
+                        'alpha': line.get_alpha(),
+                    }
+                except Exception:
+                    pass
+
             # Clear figure
+            self._line_objects.clear()
             self.figure.clear()
             ax = self.figure.add_subplot(111)
 
@@ -919,6 +937,21 @@ class ChartWidget(QWidget):
                 self._plot_static(ax, filtered_data, config)
             else:
                 self._plot_time_evolution(ax, filtered_data, config)
+
+            # Ripristina stili utente sulle nuove linee
+            for label, line in self._line_objects.items():
+                if label in self._user_line_styles:
+                    s = self._user_line_styles[label]
+                    try:
+                        line.set_color(s['color'])
+                        line.set_linewidth(s['linewidth'])
+                        line.set_linestyle(s['linestyle'])
+                        line.set_marker(s['marker'])
+                        line.set_markersize(s['markersize'])
+                        if s['alpha'] is not None:
+                            line.set_alpha(s['alpha'])
+                    except Exception:
+                        pass
 
             self.canvas.draw()
             self._last_chart_mode = config['mode']
@@ -1168,7 +1201,8 @@ class ChartWidget(QWidget):
     def clear_chart(self):
         """Pulisce il chart e resetta lo stato interno."""
         self.current_config = None
-        self._line_objects.clear()  # Reset riferimenti linee (Fase 3)
+        self._line_objects.clear()
+        self._user_line_styles.clear()
         self._last_chart_mode = None
         self.figure.clear()
         self.canvas.draw()
