@@ -1,11 +1,31 @@
 import pandas as pd
-from PyQt5.QtCore import pyqtSignal
-from PyQt5.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QLabel, QMessageBox
+from PyQt5.QtCore import pyqtSignal, Qt
+from PyQt5.QtWidgets import (
+    QMainWindow, QWidget, QVBoxLayout, QLabel, QMessageBox,
+    QInputDialog,
+)
 
 from market_monitor.gui.implementations.PyQt5Dashboard.widgets.chart_widget import ChartWidget
 from market_monitor.gui.implementations.PyQt5Dashboard.widgets.flow_monitor_widget import FlowMonitorWidget
 from market_monitor.gui.implementations.PyQt5Dashboard.widgets.pivot_table import PivotTableWidget
 from market_monitor.gui.implementations.PyQt5Dashboard.widgets.groupby_widget import GroupByWidget
+
+
+def _make_renameable_label(label: QLabel, window: QMainWindow, prefix: str = "") -> None:
+    """Rende un info_label rinominabile con doppio clic."""
+    label.setCursor(Qt.PointingHandCursor)
+    label.setToolTip("Double-click to rename")
+
+    def on_double_click(event):
+        current = window.windowTitle()
+        new_name, ok = QInputDialog.getText(
+            window, "Rename", "New name:", text=current
+        )
+        if ok and new_name.strip():
+            window.setWindowTitle(new_name.strip())
+            label.setText(new_name.strip())
+
+    label.mouseDoubleClickEvent = on_double_click
 
 
 class DetachedPivotWindow(QMainWindow):
@@ -27,8 +47,9 @@ class DetachedPivotWindow(QMainWindow):
         layout = QVBoxLayout(central)
 
         # Info label
-        self.info_label = QLabel(f"Detached Pivot Window #{window_number}")
+        self.info_label = QLabel(f"Pivot Table #{window_number}")
         self.info_label.setStyleSheet("font-weight: bold; padding: 5px; background-color: #e0f7fa;")
+        _make_renameable_label(self.info_label, self)
         layout.addWidget(self.info_label)
 
         # Pivot widget
@@ -66,8 +87,9 @@ class DetachedChartWindow(QMainWindow):
         layout = QVBoxLayout(central)
 
         # Info label
-        self.info_label = QLabel(f"Detached Chart Window #{window_number}")
+        self.info_label = QLabel(f"Charts #{window_number}")
         self.info_label.setStyleSheet("font-weight: bold; padding: 5px; background-color: #fff3e0;")
+        _make_renameable_label(self.info_label, self)
         layout.addWidget(self.info_label)
 
         # Chart widget
@@ -102,6 +124,7 @@ class DetachedFlowWindow(QMainWindow):
         # Info label
         self.info_label = QLabel(f"Flow Monitor #{window_number}")
         self.info_label.setStyleSheet("font-weight: bold; padding: 5px; background-color: #e3f2fd;")
+        _make_renameable_label(self.info_label, self)
         layout.addWidget(self.info_label)
 
         # Flow Monitor widget (sempre visibile in finestra detached)
@@ -142,8 +165,9 @@ class DetachedGroupByWindow(QMainWindow):
         self.setCentralWidget(central)
         layout = QVBoxLayout(central)
 
-        self.info_label = QLabel(f"GroupBy Window #{window_number}")
+        self.info_label = QLabel(f"GroupBy #{window_number}")
         self.info_label.setStyleSheet("font-weight: bold; padding: 5px; background-color: #e8f5e9;")
+        _make_renameable_label(self.info_label, self)
         layout.addWidget(self.info_label)
 
         self.groupby_widget = GroupByWidget()

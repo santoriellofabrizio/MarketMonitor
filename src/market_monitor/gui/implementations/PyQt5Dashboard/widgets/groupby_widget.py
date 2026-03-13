@@ -830,9 +830,51 @@ class GroupByWidget(QWidget):
         elif self.current_config:
             self._apply_groupby_from_config(self.current_config)
 
+    def _check_config_compatibility(self, config: dict) -> bool:
+        """
+        Verifica che le colonne referenziate nella config esistano nei dati correnti.
+        Restituisce True se si può procedere, False se l'utente vuole resettare.
+        """
+        if self.source_data.empty:
+            return True
+
+        available = set(self.source_data.columns.tolist())
+        cc = config.get('current_config') or {}
+        missing = []
+
+        rows_val = cc.get('rows') or config.get('rows')
+        if rows_val and rows_val != 'None' and rows_val not in available:
+            missing.append(f"  • rows: '{rows_val}'")
+
+        pairs = cc.get('value_agg_pairs') or config.get('value_agg_pairs') or []
+        for col, _ in pairs:
+            if col and col not in available:
+                missing.append(f"  • value column: '{col}'")
+
+        if not missing:
+            return True
+
+        msg = (
+            "La configurazione salvata fa riferimento a colonne non presenti nei dati ricevuti:\n"
+            + "\n".join(missing)
+            + "\n\nVuoi resettare la configurazione e ricominciare da capo?"
+        )
+        reply = QMessageBox.question(
+            self,
+            "Configurazione incompatibile",
+            msg,
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.Yes,
+        )
+        return reply == QMessageBox.No
+
     def _apply_pending_config(self):
         config = self._pending_config
         if not config:
+            return
+
+        if not self._check_config_compatibility(config):
+            self._pending_config = None
             return
 
         if 'rows' in config and config['rows']:
@@ -992,6 +1034,14 @@ class GroupByWidget(QWidget):
             self.table.setColumnCount(0)
             return
 
+        # Salva larghezze colonne correnti prima di ripopolare
+        if self.table.columnCount() > 0:
+            self._saved_col_widths = {
+                self.table.horizontalHeaderItem(i).text(): self.table.columnWidth(i)
+                for i in range(self.table.columnCount())
+                if self.table.horizontalHeaderItem(i)
+            }
+
         is_normalized = self.norm_rows_radio.isChecked() or self.norm_cols_radio.isChecked()
 
         self.table.setSortingEnabled(False)
@@ -1052,10 +1102,12 @@ class GroupByWidget(QWidget):
 
                 self.table.setItem(i, j, item)
 
+        saved_widths = getattr(self, "_saved_col_widths", {})
         header = self.table.horizontalHeader()
-        for i in range(len(self.result_data.columns)):
+        for i, col in enumerate(self.result_data.columns):
             header.setSectionResizeMode(i, QHeaderView.Interactive)
-            self.table.setColumnWidth(i, 120 if i == 0 else 100)
+            width = saved_widths.get(str(col), 120 if i == 0 else 100)
+            self.table.setColumnWidth(i, width)
 
         self.table.setSortingEnabled(True)
 
@@ -1140,6 +1192,9 @@ class GroupByWidget(QWidget):
 
             if self.source_data.empty:
                 self._pending_config = config.copy()
+                return
+
+            if not self._check_config_compatibility(config):
                 return
 
             if 'rows' in config and config['rows']:

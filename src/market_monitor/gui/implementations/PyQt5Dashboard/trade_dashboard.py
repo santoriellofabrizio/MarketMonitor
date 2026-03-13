@@ -400,8 +400,57 @@ class TradeDashboard(BasePyQt5Dashboard, TradeDashboardExtensions):
             metrics_btn.clicked.connect(self._show_metric_chooser)
             layout.addWidget(metrics_btn)
 
+        refresh_btn = QPushButton("🔄 Refresh")
+        refresh_btn.setToolTip("Forza il re-render di tutti i widget con i dati correnti")
+        refresh_btn.clicked.connect(self._force_refresh)
+        layout.addWidget(refresh_btn)
+
+        rename_btn = QPushButton("✏️ Rename")
+        rename_btn.setToolTip("Rinomina questa finestra dashboard")
+        rename_btn.clicked.connect(self._rename_dashboard)
+        layout.addWidget(rename_btn)
+
         layout.addStretch()
+
+        # Connection info label (right side)
+        self.conn_info_label = QLabel(self._build_conn_info())
+        self.conn_info_label.setStyleSheet(
+            "color: #444; font-size: 11px; padding: 0 8px;"
+        )
+        layout.addWidget(self.conn_info_label)
+
         return controls
+
+    def _build_conn_info(self) -> str:
+        """Costruisce la stringa di connessione per il label."""
+        if self.mode == "redis":
+            host = self.redis_config.get("host", "localhost")
+            port = self.redis_config.get("port", 6379)
+            channel = self.redis_config.get("channel", "?")
+            return f"🔴 Redis  {host}:{port}  ▶ {channel}"
+        elif self.mode == "rabbit":
+            host = self.rabbit_config.get("host", "?")
+            exchange = self.rabbit_config.get("exchange", "?")
+            return f"🐇 RabbitMQ  {host}  ▶ {exchange}"
+        elif self.mode == "queue":
+            return "📦 Queue (in-process)"
+        return f"? {self.mode}"
+
+    def _force_refresh(self):
+        """Forza il re-render di tutti i widget con i dati correnti."""
+        enriched = self._get_enriched_trades()
+        self.trade_table.update_data(enriched)
+        self._update_metrics()
+        self._update_all_detached_pivots(enriched)
+        self._update_all_detached_charts(enriched)
+        self._update_all_detached_groupbys(enriched)
+
+    def _rename_dashboard(self):
+        from PyQt5.QtWidgets import QInputDialog
+        current = self.windowTitle()
+        new_name, ok = QInputDialog.getText(self, "Rename Dashboard", "New name:", text=current)
+        if ok and new_name.strip():
+            self.setWindowTitle(new_name.strip())
 
     def _toggle_pause(self):
         """Gestisce pausa/ripresa del flusso dati."""

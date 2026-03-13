@@ -770,10 +770,50 @@ class PivotTableWidget(QWidget):
         elif self.current_config:
             self._apply_pivot_from_config(self.current_config)
 
+    def _check_config_compatibility(self, config: dict) -> bool:
+        """
+        Verifica che le colonne referenziate nella config esistano nei dati correnti.
+        Se incompatibile, chiede all'utente se vuole resettare la configurazione.
+        Restituisce True se si può procedere, False se la config va ignorata.
+        """
+        if self.source_data.empty:
+            return True  # non possiamo verificare ancora
+
+        available = set(self.source_data.columns.tolist())
+        cc = config.get('current_config') or {}
+        missing = []
+        for key in ('rows', 'cols', 'values'):
+            val = cc.get(key) or config.get(key)
+            if val and val != 'None' and val not in available:
+                missing.append(f"  • {key}: '{val}'")
+
+        if not missing:
+            return True
+
+        msg = (
+            "La configurazione salvata fa riferimento a colonne non presenti nei dati ricevuti:\n"
+            + "\n".join(missing)
+            + "\n\nVuoi resettare la configurazione e ricominciare da capo?"
+        )
+        reply = QMessageBox.question(
+            self,
+            "Configurazione incompatibile",
+            msg,
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.Yes,
+        )
+        return reply == QMessageBox.No  # No = mantieni (anche se non funzionerà); Yes = resetta
+
     def _apply_pending_config(self):
         """Applica la configurazione pending dopo che le combo box sono state popolate."""
         config = self._pending_config
         if not config:
+            return
+
+        # Controlla compatibilità con i dati correnti
+        if not self._check_config_compatibility(config):
+            # Utente ha scelto di resettare
+            self._pending_config = None
             return
 
         # Ripristina campi calcolati
@@ -1016,6 +1056,15 @@ class PivotTableWidget(QWidget):
             self.table.setColumnCount(0)
             return
 
+        # Salva larghezze colonne correnti prima di ripopolare
+        if self.table.columnCount() > 0:
+            header = self.table.horizontalHeader()
+            self._saved_col_widths = {
+                self.table.horizontalHeaderItem(i).text(): self.table.columnWidth(i)
+                for i in range(self.table.columnCount())
+                if self.table.horizontalHeaderItem(i)
+            }
+
         self.table.setSortingEnabled(False)
 
         # Setup
@@ -1092,14 +1141,13 @@ class PivotTableWidget(QWidget):
 
                 self.table.setItem(i, j, item)
 
-        # Auto-resize
+        # Ripristina larghezze colonne se presenti, altrimenti usa default
         header = self.table.horizontalHeader()
-        for i in range(len(self.pivot_data.columns)):
+        saved_widths = getattr(self, "_saved_col_widths", {})
+        for i, col in enumerate(self.pivot_data.columns):
             header.setSectionResizeMode(i, QHeaderView.Interactive)
-            if i == 0:
-                self.table.setColumnWidth(i, 120)
-            else:
-                self.table.setColumnWidth(i, 100)
+            width = saved_widths.get(str(col), 120 if i == 0 else 100)
+            self.table.setColumnWidth(i, width)
 
         self.table.setSortingEnabled(True)
 
@@ -1195,6 +1243,10 @@ class PivotTableWidget(QWidget):
             if self.source_data.empty:
                 self._pending_config = config.copy()
                 return
+
+            # Controlla compatibilità con i dati correnti
+            if not self._check_config_compatibility(config):
+                return  # utente ha scelto di resettare
 
             # Altrimenti applica subito
             if 'rows' in config and config['rows']:
