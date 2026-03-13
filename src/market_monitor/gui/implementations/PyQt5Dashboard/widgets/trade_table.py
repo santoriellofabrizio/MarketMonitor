@@ -946,6 +946,11 @@ class TradeTableWidget(QWidget):
         clear_btn.clicked.connect(self._clear_all_filters)
         controls_layout.addWidget(clear_btn)
 
+        clear_cf_btn = QPushButton("🚫 Remove All CF")
+        clear_cf_btn.setToolTip("Rimuove tutte le regole di conditional formatting")
+        clear_cf_btn.clicked.connect(self._remove_all_cf)
+        controls_layout.addWidget(clear_cf_btn)
+
         controls_layout.addStretch()
 
         self.filter_info_label = QLabel("No filters active")
@@ -1352,7 +1357,6 @@ class TradeTableWidget(QWidget):
         self.table.setColumnCount(len(df.columns))
         self.table.setHorizontalHeaderLabels(df.columns.tolist())
 
-        side_idx = df.columns.get_loc("side") if "side" in df else None
         own_idx = df.columns.get_loc("own_trade") if "own_trade" in df else None
 
         # Pre-calcola min/max per colonne numeriche (serve per regole "color scale").
@@ -1377,12 +1381,6 @@ class TradeTableWidget(QWidget):
         for i, row in enumerate(df.iloc[start:end].itertuples(index=False), start):
             row_color = None
             is_own = False
-
-            if side_idx is not None:
-                if str(row[side_idx]).upper() == "BID":
-                    row_color = QColor(220, 235, 255)
-                elif str(row[side_idx]).upper() == "ASK":
-                    row_color = QColor(255, 235, 235)
 
             if own_idx is not None:
                 is_own = bool(row[own_idx])
@@ -1548,6 +1546,12 @@ class TradeTableWidget(QWidget):
     # ==========================================================
     # CONDITIONAL FORMATTING RULES (per-column, stile Excel)
     # ==========================================================
+    def _remove_all_cf(self):
+        """Rimuove tutte le regole CF e aggiorna la vista."""
+        self._cf_rules.clear()
+        self._save_cf_rules()
+        self._refresh_view()
+
     def _show_cf_rules_dialog(self, col_name: str):
         """Apre il dialog di gestione delle regole CF per una colonna."""
         col_dtype = (
