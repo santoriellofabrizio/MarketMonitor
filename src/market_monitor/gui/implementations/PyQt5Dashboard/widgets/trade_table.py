@@ -1328,7 +1328,14 @@ class TradeTableWidget(QWidget):
     # ==========================================================
     def _refresh_view(self):
         """Reset completo - solo quando filtri cambiano"""
-        self.table.setRowCount(0)  # ✅ Pulisci TUTTO
+        # Salva larghezze colonne correnti prima di azzerarle
+        if self.table.columnCount() > 0:
+            self._saved_col_widths = {
+                self.table.horizontalHeaderItem(i).text(): self.table.columnWidth(i)
+                for i in range(self.table.columnCount())
+                if self.table.horizontalHeaderItem(i)
+            }
+        self.table.setRowCount(0)
         self.table.setColumnCount(0)
         self.displayed_rows = 0
         self._load_more_rows()
@@ -1356,6 +1363,13 @@ class TradeTableWidget(QWidget):
         self.table.setRowCount(end)
         self.table.setColumnCount(len(df.columns))
         self.table.setHorizontalHeaderLabels(df.columns.tolist())
+
+        # Ripristina larghezze colonne salvate (se presenti)
+        saved = getattr(self, "_saved_col_widths", {})
+        if saved:
+            for i, col in enumerate(df.columns):
+                if col in saved:
+                    self.table.setColumnWidth(i, saved[col])
 
         own_idx = df.columns.get_loc("own_trade") if "own_trade" in df else None
 
