@@ -22,19 +22,13 @@ from PyQt5.QtWidgets import (
 from market_monitor.gui.implementations.PyQt5Dashboard.common import safe_concat
 from market_monitor.gui.implementations.PyQt5Dashboard.widgets.filter import AdvancedFilterDialog, FilterGroup
 
-# Parole chiave che indicano colonne con valori "con segno" (positivo/negativo)
-# → scala divergente rosso-bianco-verde
-_CF_SIGNED_KEYWORDS = frozenset({
-    "pnl", "profit", "return", "change", "gain", "loss",
-    "delta", "diff", "net", "spread", "edge",
-})
-
 _CF_OPERATORS = [
     ">", ">=", "<", "<=", "==", "!=",
     "between",
     "contains", "not contains", "starts with", "ends with",
     "is empty", "not empty",
     "color scale",
+    "formula",
 ]
 
 
@@ -71,6 +65,14 @@ class CFRule:
         """
         if self.operator == "color scale":
             return True  # si applica sempre; il colore viene interpolato
+
+        if self.operator == "formula":
+            if not self.value or row_data is None:
+                return False
+            try:
+                return bool(eval(self.value, {"__builtins__": {}}, dict(row_data)))  # noqa: S307
+            except Exception:
+                return False
 
         # Se condition_col è impostato, testa il valore di quella colonna invece della cella corrente
         if self.condition_col and row_data is not None and self.condition_col in row_data:
@@ -202,6 +204,9 @@ class CFRule:
             mn = self.value  or "auto"
             mx = self.value2 or "auto"
             return f"color scale [{mn} … {mx}]"
+        if self.operator == "formula":
+            base = f"formula: {self.value}"
+            return base + ("  [→ row]" if self.apply_to_row else "")
         if self.operator in ("is empty", "not empty"):
             base = self.operator
         else:
@@ -310,17 +315,34 @@ class CFRuleEditDialog(QDialog):
         self.cond_box = QGroupBox("Condizione")
         cond_v = QVBoxLayout(self.cond_box)
 
+        # ── Formula row (visibile solo quando op == "formula") ────────────────
+        self.formula_row = QWidget()
+        formula_h = QHBoxLayout(self.formula_row)
+        formula_h.setContentsMargins(0, 0, 0, 0)
+        formula_h.addWidget(QLabel("Expr:"))
+        is_formula = rule and rule.operator == "formula"
+        self.formula_edit = QLineEdit(rule.value if is_formula else "")
+        self.formula_edit.setPlaceholderText("es. spread_pl / ctv < 0.01")
+        cols_hint = ", ".join(self._available_columns[:8])
+        self.formula_edit.setToolTip(
+            f"Espressione Python con i nomi delle colonne come variabili.\n"
+            f"Colonne disponibili: {cols_hint}…\n"
+            f"Esempio: spread_pl / ctv < 0.01"
+        )
+        formula_h.addWidget(self.formula_edit)
+        cond_v.addWidget(self.formula_row)
+
         # riga valore
-        cond_val_row = QWidget()
-        cond_h = QHBoxLayout(cond_val_row)
+        self.cond_val_row = QWidget()
+        cond_h = QHBoxLayout(self.cond_val_row)
         cond_h.setContentsMargins(0, 0, 0, 0)
-        cond_v.addWidget(cond_val_row)
+        cond_v.addWidget(self.cond_val_row)
 
         cond_h.addWidget(QLabel("Value"))
 
         # val1: QStackedWidget (pagina 0 = testo, pagina 1 = colonna)
         self.val1_stack = QStackedWidget()
-        val1_literal = rule.value if (rule and not rule.value_is_col and not is_scale) else ""
+        val1_literal = rule.value if (rule and not rule.value_is_col and not is_scale and not is_formula) else ""
         self.val1_edit = QLineEdit(val1_literal)
         self.val1_edit.setPlaceholderText("valore")
         self.val1_col_combo = QComboBox()
@@ -555,7 +577,8 @@ class CFRuleEditDialog(QDialog):
 
     def _on_op_changed(self, op: str):
         is_scale   = op == "color scale"
-        no_val     = op in ("is empty", "not empty", "color scale")
+        is_formula = op == "formula"
+        no_val     = op in ("is empty", "not empty", "color scale", "formula")
         is_between = op == "between"
 
         self.cond_box.setVisible(not is_scale)
@@ -564,11 +587,14 @@ class CFRuleEditDialog(QDialog):
         self.scale_fmt_box.setVisible(is_scale)
 
         if not is_scale:
-            self.val1_stack.setVisible(not no_val)
-            self.val1_col_btn.setVisible(not no_val)
-            self.val2_label.setVisible(is_between)
-            self.val2_stack.setVisible(is_between)
-            self.val2_col_btn.setVisible(is_between)
+            self.formula_row.setVisible(is_formula)
+            self.cond_val_row.setVisible(not is_formula)
+            if not is_formula:
+                self.val1_stack.setVisible(not no_val)
+                self.val1_col_btn.setVisible(not no_val)
+                self.val2_label.setVisible(is_between)
+                self.val2_stack.setVisible(is_between)
+                self.val2_col_btn.setVisible(is_between)
 
     def _on_mid_toggled(self, state: int):
         self.mid_container.setVisible(state == Qt.Checked)
@@ -591,6 +617,16 @@ class CFRuleEditDialog(QDialog):
                 scale_mid_color=(
                     self._scale_mid_color if self.mid_enable_cb.isChecked() else None
                 ),
+            )
+
+        if op == "formula":
+            return CFRule(
+                operator="formula",
+                value=self.formula_edit.text().strip(),
+                bg_color=self._bg_color,
+                fg_color=self._fg_color,
+                bold=self.bold_cb.isChecked(),
+                apply_to_row=self.apply_to_row_cb.isChecked(),
             )
 
         v1_col = self.val1_col_btn.isChecked()
@@ -865,7 +901,6 @@ class TradeTableWidget(QWidget):
         self.column_decimals: dict[str, int] = {}
 
         # ---- Conditional Formatting ----
-        self.conditional_formatting: bool = False
         # Regole per-colonna stile Excel: {col_name: [CFRule, ...]}
         self._cf_rules: dict[str, List[CFRule]] = {}
         # Percorso file di persistenza
@@ -910,16 +945,6 @@ class TradeTableWidget(QWidget):
         clear_btn = QPushButton("Clear Filters")
         clear_btn.clicked.connect(self._clear_all_filters)
         controls_layout.addWidget(clear_btn)
-
-        self.cf_btn = QPushButton("CF: Off")
-        self.cf_btn.setCheckable(True)
-        self.cf_btn.setToolTip(
-            "Conditional Formatting: colora le celle numeriche con gradienti.\n"
-            "• Colonne PnL/profit/return/change → scala divergente rosso-bianco-verde\n"
-            "• Altre colonne numeriche → scala sequenziale bianco-blu"
-        )
-        self.cf_btn.clicked.connect(self._toggle_cf)
-        controls_layout.addWidget(self.cf_btn)
 
         controls_layout.addStretch()
 
@@ -1330,10 +1355,9 @@ class TradeTableWidget(QWidget):
         side_idx = df.columns.get_loc("side") if "side" in df else None
         own_idx = df.columns.get_loc("own_trade") if "own_trade" in df else None
 
-        # Pre-calcola min/max per colonne numeriche.
-        # Serve per: gradiente CF automatico E regole "color scale" dell'utente.
+        # Pre-calcola min/max per colonne numeriche (serve per regole "color scale").
         cf_ranges: dict[str, tuple[float, float]] = {}
-        needs_ranges = self.conditional_formatting or any(
+        needs_ranges = any(
             r.operator == "color scale"
             for rules in self._cf_rules.values()
             for r in rules
@@ -1404,16 +1428,6 @@ class TradeTableWidget(QWidget):
                 if not rule_applied:
                     if row_rule:
                         row_rule.apply_to_item(item)
-                        rule_applied = True
-                    elif (
-                        self.conditional_formatting
-                        and col_name in cf_ranges
-                        and isinstance(val, (int, float))
-                        and not pd.isna(val)
-                    ):
-                        cell_color = self._get_cf_color(col_name, val, *cf_ranges[col_name])
-                        if cell_color:
-                            item.setBackground(cell_color)
                     elif row_color:
                         item.setBackground(row_color)
 
@@ -1429,50 +1443,6 @@ class TradeTableWidget(QWidget):
 
     # ==========================================================
     # CONDITIONAL FORMATTING
-    # ==========================================================
-    def _toggle_cf(self, checked: bool):
-        """Attiva/disattiva il conditional formatting per colonne numeriche."""
-        self.conditional_formatting = checked
-        self.cf_btn.setText("CF: On" if checked else "CF: Off")
-        self.cf_btn.setStyleSheet(
-            "background-color: #b2dfdb; font-weight: bold;" if checked else ""
-        )
-        self._refresh_view()
-
-    def _get_cf_color(
-        self, col_name: str, val: float, col_min: float, col_max: float
-    ) -> Optional[QColor]:
-        """
-        Restituisce il QColor per il conditional formatting di una cella.
-
-        • Colonne "con segno" (pnl, profit, return …):
-          scala divergente  rosso (min) → bianco (0) → verde (max)
-        • Altre colonne numeriche:
-          scala sequenziale bianco (min) → blu chiaro (max)
-        """
-        lower = col_name.lower()
-        is_signed = any(kw in lower for kw in _CF_SIGNED_KEYWORDS)
-
-        if is_signed:
-            if val > 0 and col_max > 0:
-                intensity = min(val / col_max, 1.0)
-                green = int(255 - 55 * intensity)   # 255 → 200
-                return QColor(200, green, 200)
-            elif val < 0 and col_min < 0:
-                intensity = min(abs(val) / abs(col_min), 1.0)
-                red = int(255 - 55 * intensity)     # 255 → 200
-                return QColor(red, 200, 200)
-            return None  # zero → nessun colore
-
-        else:
-            # Scala sequenziale: bianco (basso) → blu chiaro (alto)
-            if col_max > col_min:
-                norm = (val - col_min) / (col_max - col_min)
-                r = int(255 - norm * 60)
-                g = int(255 - norm * 40)
-                return QColor(r, g, 255)
-            return None
-
     # ==========================================================
     # FORMATTING
     # ==========================================================
