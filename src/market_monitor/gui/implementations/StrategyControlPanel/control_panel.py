@@ -243,11 +243,16 @@ class StrategyControlPanel(QMainWindow):
     def _save_settings(self) -> None:
         try:
             _SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
-            geo = self.geometry()
+            # Use normalGeometry() so saved dimensions are the restored (non-maximized) size
+            geo = self.normalGeometry()
             log_levels = {key: combo.currentText() for key, combo in self._log_filters.items()}
             data = {
                 "version": "1.0",
-                "window": {"x": geo.x(), "y": geo.y(), "width": geo.width(), "height": geo.height()},
+                "window": {
+                    "x": geo.x(), "y": geo.y(),
+                    "width": geo.width(), "height": geo.height(),
+                    "maximized": self.isMaximized(),
+                },
                 "configs": [inst.config_name for inst in self._instances],
                 "log_levels": log_levels,
             }
@@ -393,6 +398,16 @@ class StrategyControlPanel(QMainWindow):
         y = saved_win.get("y", 200)
         w = saved_win.get("width", 1100)
         h = saved_win.get("height", 740)
+
+        # Clamp geometry to available screen so window can't be stuck off-screen
+        screen = QApplication.primaryScreen()
+        if screen:
+            avail = screen.availableGeometry()
+            x = max(avail.x(), min(x, avail.x() + avail.width() - 100))
+            y = max(avail.y(), min(y, avail.y() + avail.height() - 100))
+            w = min(w, avail.width())
+            h = min(h, avail.height())
+
         self.setGeometry(x, y, w, h)
         self.setMinimumSize(820, 560)
         self.setWindowTitle("Strategy Control Panel")
