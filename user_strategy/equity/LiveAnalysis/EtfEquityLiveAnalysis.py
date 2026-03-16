@@ -21,6 +21,7 @@ class EtfEquityLiveAnalysis(StrategyUI):
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
 
+        self.quoting_instances = []
         self.price_source = kwargs.get("price_source", "kafka")
 
         self.API = BshData(config_path=r"C:\AFMachineLearning\Libraries\MarketMonitor\etc\config\bshdata_config.yaml")
@@ -123,6 +124,10 @@ class EtfEquityLiveAnalysis(StrategyUI):
         self.subscribe_kafka_trades()
         self.global_subscription_service.subscribe_redis(channel="market:theoretical_live_intraday_price",
                                                          store='market')
+
+        self.quoting_instances = [instances for instances, _bool
+                                  in self.redis_dashboard.get_key('quoting_instances').items() if _bool == 'true']
+
 
     def from_kafka_to_bloomberg(self):
 

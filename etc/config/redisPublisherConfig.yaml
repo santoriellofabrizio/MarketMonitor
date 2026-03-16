@@ -1,4 +1,7 @@
-strategy_name: RedisPublisherStrategy
+load_strategy_info:
+      package_path: C:\AFMachineLearning\Libraries\MarketMonitor\user_strategy\test_strategy
+      module_name: TestTradeManagerStrategy
+      class_name: TestTradeManagerStrategy
 
 market_monitor:
 
@@ -152,12 +155,16 @@ market_monitor:
       activate: false
       frequency: 600
     trade:
-      activate: false
+      activate: true
       synchronous: false
       frequency: 1
 
-gui:
-  gui_type: GUIRedis
+
+trade_distributor:
+  activate: true
+#  path: C:\AFMachineLearning\Libraries\MarketMonitor\etc\marketrades.db
+  path: "C:\\AFMachineLearning\\Libraries\\MarketMonitor\\user_strategy\\test_strategy\\markettrades.db"
+
 
 logging:
   log_level: DEBUG

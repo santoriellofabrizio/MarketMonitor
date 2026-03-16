@@ -21,7 +21,7 @@ market_monitor:
       channel_rabbit: trades_rabbit
 
   redis_data_export:
-    channel_redis: trades_rabbit
+    channel_redis: trades_test
     activate: true       # Impostare false se si usa rabbit_data_distributor
     redis_params:
       redis_host: 'localhost'

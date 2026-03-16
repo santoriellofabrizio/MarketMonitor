@@ -7,7 +7,7 @@ from market_monitor.publishers.redis_publisher import RedisMessaging
 from market_monitor.strategy.strategy_ui.StrategyUI import StrategyUI
 from market_monitor.strategy.common.trade_manager.book_memory import BookStorage
 
-from market_monitor.strategy.common.trade_manager import TradeManager
+from market_monitor.strategy.common.trade_manager.trade_manager import TradeManager
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +66,7 @@ class TestTradeManagerStrategy(StrategyUI):
     def wait_for_book_initialization(self) -> bool:
         """Attendi book initialization."""
         mid = self.market_data.get_mid()
-        return len(mid[~mid.isna()]) >= 1
+        return True
 
     def on_book_initialized(self):
         """Callback initialization."""
@@ -85,8 +85,8 @@ class TestTradeManagerStrategy(StrategyUI):
 
         processed = self.trade_manager.on_trade(trades)
         # Invia trades: nuovi parziali + parziali precedenti ora elaborati
-        trades_to_publish = self.trade_manager.get_trades_to_publish(processed)
-        self.redis_publisher.export_message(channel="trades", value=trades_to_publish)
+        trades_to_publish = self.trade_manager.get_trades_to_publish()
+        self.redis_publisher.export_message(channel="trades_test", value=trades_to_publish)
 
     def on_stop(self):
         self.trade_manager.close()

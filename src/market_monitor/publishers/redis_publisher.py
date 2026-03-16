@@ -605,6 +605,13 @@ class RedisMessaging(RedisPublisher):
         """
         self.export_data(skip_if_unchanged=skip_if_unchanged, **kwargs)
 
+    def get_key(self, key: str, deserialize: bool = True) -> Any:
+
+        out = self.redis_client.get(key)
+        if deserialize:
+            return json.loads(out)
+        return out
+
     # ========================================================================
     # Store-aware publishing (con auto-timestamp per eventi)
     # ========================================================================
