@@ -472,6 +472,14 @@ class TradeDashboard(BasePyQt5Dashboard, TradeDashboardExtensions):
         if self.paused:
             return
 
+        if df is None or df.empty:
+            self.logger.debug("_on_data_received: empty or None DataFrame, skipping")
+            return
+
+        self.logger.debug(
+            f"_on_data_received: {len(df)} rows, cols={list(df.columns)}, "
+            f"all_trades_shape={self.all_trades.shape}"
+        )
         import time
         _t0 = time.perf_counter()
 

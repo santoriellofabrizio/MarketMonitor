@@ -5,8 +5,9 @@ Gestiscono polling dati da Queue o RedisPublisher Pub/Sub.
 AGGIORNAMENTO: Supporto completo per formato flat RTD-compatible.
 """
 import json
+import logging
+import traceback
 from collections import deque
-from unittest.util import safe_repr
 
 from PyQt5.QtCore import QThread, pyqtSignal
 import pandas as pd
@@ -15,6 +16,8 @@ from queue import Empty
 import time
 
 from market_monitor.gui.implementations.PyQt5Dashboard.common import safe_concat
+
+logger = logging.getLogger(__name__)
 
 
 # ============================================================================
@@ -34,7 +37,7 @@ def parse_redis_message(json_str: str) -> Tuple[Any, Dict[str, Any]]:
         else:
             msg = json_str  # Già dict (da Queue)
     except json.JSONDecodeError as e:
-        print(f"Errore parsing JSON: {e}")
+        logger.error(f"JSON parsing error: {e} — raw={repr(json_str)[:200]}")
         raise
 
     # Formato flat (nuovo)
@@ -84,26 +87,41 @@ class BaseDashboardThread(QThread):
         elif isinstance(data, dict):
             df = pd.DataFrame([data])
         elif isinstance(data, list):
+            if not data:
+                logger.debug("_to_dataframe: received empty list, returning None")
+                return None
             df = pd.DataFrame(data)
         elif isinstance(data, str):
             try:
                 df = pd.DataFrame.from_records(json.loads(data))
             except Exception as e:
-                print("dump df as records", e)
+                logger.error(f"_to_dataframe: failed to parse string as JSON records: {e} — data={repr(data)[:200]}")
                 return None
         else:
+            logger.warning(f"_to_dataframe: unsupported data type {type(data).__name__}, returning None")
             return None
+
+        if df.empty:
+            logger.debug("_to_dataframe: resulting DataFrame is empty")
+            return df
 
         # CONVERSIONE TIMESTAMP: Converti colonne timestamp in datetime pandas
         timestamp_cols = ['timestamp', 'time', 'datetime', 'last_update']
-
         for col in timestamp_cols:
             if col in df.columns:
                 try:
+                    before_nulls = df[col].isna().sum()
                     df[col] = pd.to_datetime(df[col], errors='coerce')
+                    after_nulls = df[col].isna().sum()
+                    if after_nulls > before_nulls:
+                        logger.warning(
+                            f"_to_dataframe: {after_nulls - before_nulls} values in '{col}' "
+                            f"could not be parsed as datetime"
+                        )
                 except Exception as e:
-                    print(f"Warning: Could not convert {col} to datetime: {e}")
+                    logger.error(f"_to_dataframe: unexpected error converting '{col}' to datetime: {e}")
 
+        logger.debug(f"_to_dataframe: produced DataFrame shape={df.shape}, columns={list(df.columns)}")
         return df
 
     def stop(self):
@@ -136,14 +154,14 @@ class QueuePollingThread(BaseDashboardThread):
     def run(self):
         """Main loop - polling dalla queue"""
         self.running = True
-        print(f"[QueuePolling] Thread started")
+        logger.info("[QueuePolling] Thread started")
 
         while self.running:
             try:
                 # Blocking get con timeout dalla queue
                 message = self.queue.get(timeout=0.05)
 
-                # ✅ NUOVO: Processa con parser universale
+                logger.debug(f"[QueuePolling] Received message type={type(message).__name__}")
                 self._process_message_universal(message)
 
             except Empty:
@@ -151,10 +169,12 @@ class QueuePollingThread(BaseDashboardThread):
                 continue
 
             except Exception as e:
-                self.error_occurred.emit(f"Queue polling error: {str(e)}")
+                error_detail = traceback.format_exc()
+                logger.error(f"[QueuePolling] Unexpected error: {e}\n{error_detail}")
+                self.error_occurred.emit(f"Queue polling error: {e}")
                 time.sleep(0.1)
 
-        print("[QueuePolling] Thread stopped")
+        logger.info("[QueuePolling] Thread stopped")
 
     def _process_message_universal(self, message):
         """
@@ -185,7 +205,7 @@ class QueuePollingThread(BaseDashboardThread):
 
             else:
                 # Tipo sconosciuto: tratta come dati
-                print(f"[QueuePolling] Unknown message type: {msg_type}, treating as data")
+                logger.warning(f"[QueuePolling] Unknown message type: '{msg_type}', treating as data")
                 self._handle_data(data, metadata)
 
         except Exception as e:
@@ -195,9 +215,15 @@ class QueuePollingThread(BaseDashboardThread):
         """Gestisce messaggi di tipo data"""
         try:
             df = self._to_dataframe(data)
+            if df is None:
+                logger.warning("[QueuePolling] _handle_data: _to_dataframe returned None, skipping emit")
+                return
+            logger.debug(f"[QueuePolling] Emitting data_updated: {len(df)} rows")
             self.data_updated.emit(df)
         except Exception as e:
-            self.error_occurred.emit(f"Data conversion error: {str(e)}")
+            error_detail = traceback.format_exc()
+            logger.error(f"[QueuePolling] Data conversion error: {e}\n{error_detail}")
+            self.error_occurred.emit(f"Data conversion error: {e}")
 
     def _handle_status(self, msg_type: str, data: Any, metadata: Dict):
         """Gestisce messaggi di status/command/flow"""
@@ -254,26 +280,30 @@ class RedisPubSubThread(BaseDashboardThread):
             return
 
         self.running = True
-        print(f"[RedisPubSub] Thread started")
+        host = self.redis_config.get('host', 'localhost')
+        port = self.redis_config.get('port', 6379)
+        db = self.redis_config.get('db', 0)
+        channel = self.redis_config.get('channel', 'trades_df')
+        logger.info(f"[RedisPubSub] Thread started — host={host}:{port} db={db} channel={channel}")
 
         try:
             # Connetti RedisPublisher
             self.redis_client = redis.Redis(
-                host=self.redis_config.get('host', 'localhost'),
-                port=self.redis_config.get('port', 6379),
-                db=self.redis_config.get('db', 0),
+                host=host,
+                port=port,
+                db=db,
                 decode_responses=True
             )
 
             # Test connessione
             self.redis_client.ping()
+            logger.info(f"[RedisPubSub] Connected to Redis at {host}:{port}")
 
             # Sottoscrivi canale
-            channel = self.redis_config.get('channel', 'trades_df')
             self.pubsub = self.redis_client.pubsub()
             self.pubsub.subscribe(channel)
 
-            print(f"[RedisPubSub] Subscribed to channel: {channel}")
+            logger.info(f"[RedisPubSub] Subscribed to channel: {channel}")
 
             # Listen messaggi
             for message in self.pubsub.listen():
@@ -282,23 +312,27 @@ class RedisPubSubThread(BaseDashboardThread):
 
                 if message['type'] == 'message':
                     try:
-                        # ✅ NUOVO: Parser universale
-                        data, metadata = parse_redis_message(message['data'])
+                        raw = message['data']
+                        logger.debug(f"[RedisPubSub] Raw message received, len={len(raw) if raw else 0}")
+                        data, metadata = parse_redis_message(raw)
+                        msg_type = metadata.get('type', 'DATA')
+                        logger.debug(f"[RedisPubSub] Parsed message type={msg_type}")
 
-                        # Ricostruisci messaggio normalizzato
                         normalized_msg = {
                             'data': data,
                             'metadata': metadata,
-                            'type': metadata.get('type', 'DATA')
+                            'type': msg_type,
                         }
 
-                        # Enqueue per batching
                         self._enqueue_message(normalized_msg)
 
                     except json.JSONDecodeError as e:
-                        self.error_occurred.emit(f"Invalid JSON: {str(e)}")
+                        logger.error(f"[RedisPubSub] Invalid JSON from channel '{channel}': {e}")
+                        self.error_occurred.emit(f"Invalid JSON: {e}")
                     except Exception as e:
-                        self.error_occurred.emit(f"Event processing error: {str(e)}")
+                        error_detail = traceback.format_exc()
+                        logger.error(f"[RedisPubSub] Event processing error: {e}\n{error_detail}")
+                        self.error_occurred.emit(f"Event processing error: {e}")
 
                 # Controllo flush batch
                 now = time.time()
@@ -306,14 +340,15 @@ class RedisPubSubThread(BaseDashboardThread):
                     self._flush_batch()
 
         except Exception as e:
-            self.error_occurred.emit(f"RedisPublisher error: {str(e)}")
+            error_detail = traceback.format_exc()
+            logger.error(f"[RedisPubSub] Fatal error: {e}\n{error_detail}")
+            self.error_occurred.emit(f"Redis error: {e}")
 
         finally:
             # flush finale dei messaggi residui
             self._flush_batch()
             self._cleanup_redis()
-
-        print("[RedisPubSub] Thread stopped")
+            logger.info("[RedisPubSub] Thread stopped")
 
     def _process_single_message(self, message: dict):
         """
@@ -328,11 +363,18 @@ class RedisPubSubThread(BaseDashboardThread):
         if msg_type in ('data', 'DATA'):
             try:
                 df = self._to_dataframe(data)
+                if df is None:
+                    logger.warning("[RedisPubSub] _to_dataframe returned None, skipping emit")
+                    return
+                logger.debug(f"[RedisPubSub] Emitting data_updated: {len(df)} rows, cols={list(df.columns)}")
                 self.data_updated.emit(df)
             except Exception as e:
-                self.error_occurred.emit(f"Data conversion error: {str(e)}")
+                error_detail = traceback.format_exc()
+                logger.error(f"[RedisPubSub] Data conversion error: {e}\n{error_detail}")
+                self.error_occurred.emit(f"Data conversion error: {e}")
 
         elif msg_type in ('status', 'flow_detected', 'command', 'config', 'error'):
+            logger.debug(f"[RedisPubSub] Status/event message type={msg_type}")
             status_data = {
                 'type': msg_type,
                 'data': data
@@ -478,7 +520,10 @@ class RabbitPubSubThread(BaseDashboardThread):
             return
 
         self.running = True
-        print("[RabbitPubSub] Thread started")
+        exchange = self.rabbit_config.get('exchange', 'trades_df')
+        host = self.rabbit_config.get('host', 'rabbitmq.af.tst')
+        port = self.rabbit_config.get('port', 5672)
+        logger.info(f"[RabbitPubSub] Thread started — host={host}:{port} exchange={exchange}")
 
         try:
             credentials = pika.PlainCredentials(
@@ -498,6 +543,7 @@ class RabbitPubSubThread(BaseDashboardThread):
             self._channel = self._connection.channel()
 
             exchange = self.rabbit_config.get('exchange', 'trades_df')
+            logger.info(f"[RabbitPubSub] Connected to RabbitMQ at {host}:{port}")
 
             # Dichiara exchange fanout (idempotente)
             self._channel.exchange_declare(
@@ -517,7 +563,7 @@ class RabbitPubSubThread(BaseDashboardThread):
                 exchange=exchange, queue=self._queue_name
             )
 
-            print(
+            logger.info(
                 f"[RabbitPubSub] Subscribed to exchange: {exchange}, "
                 f"queue: {self._queue_name}"
             )
@@ -529,21 +575,23 @@ class RabbitPubSubThread(BaseDashboardThread):
                     return
                 try:
                     json_str = body.decode('utf-8')
+                    logger.debug(f"[RabbitPubSub] Raw message received, len={len(json_str)}")
                     data, metadata = parse_redis_message(json_str)
+                    msg_type = metadata.get('type', 'DATA')
+                    logger.debug(f"[RabbitPubSub] Parsed message type={msg_type}")
                     normalized_msg = {
                         'data': data,
                         'metadata': metadata,
-                        'type': metadata.get('type', 'DATA'),
+                        'type': msg_type,
                     }
                     self._enqueue_message(normalized_msg)
                 except json.JSONDecodeError as e:
-                    self.error_occurred.emit(
-                        f"Invalid JSON da RabbitMQ: {str(e)}"
-                    )
+                    logger.error(f"[RabbitPubSub] Invalid JSON: {e}")
+                    self.error_occurred.emit(f"Invalid JSON from RabbitMQ: {e}")
                 except Exception as e:
-                    self.error_occurred.emit(
-                        f"Errore processing messaggio RabbitMQ: {str(e)}"
-                    )
+                    error_detail = traceback.format_exc()
+                    logger.error(f"[RabbitPubSub] Message processing error: {e}\n{error_detail}")
+                    self.error_occurred.emit(f"RabbitMQ message processing error: {e}")
 
                 # Flush batch se l'intervallo è scaduto
                 now = time.time()
@@ -560,13 +608,14 @@ class RabbitPubSubThread(BaseDashboardThread):
             self._channel.start_consuming()
 
         except Exception as e:
-            self.error_occurred.emit(f"RabbitMQ error: {str(e)}")
+            error_detail = traceback.format_exc()
+            logger.error(f"[RabbitPubSub] Fatal error: {e}\n{error_detail}")
+            self.error_occurred.emit(f"RabbitMQ error: {e}")
 
         finally:
             self._flush_batch()
             self._cleanup_rabbit()
-
-        print("[RabbitPubSub] Thread stopped")
+            logger.info("[RabbitPubSub] Thread stopped")
 
     # ------------------------------------------------------------------
     # Batching (speculare a RedisPubSubThread)
@@ -611,11 +660,18 @@ class RabbitPubSubThread(BaseDashboardThread):
         if msg_type in ('data', 'DATA'):
             try:
                 df = self._to_dataframe(data)
+                if df is None:
+                    logger.warning("[RabbitPubSub] _to_dataframe returned None, skipping emit")
+                    return
+                logger.debug(f"[RabbitPubSub] Emitting data_updated: {len(df)} rows, cols={list(df.columns)}")
                 self.data_updated.emit(df)
             except Exception as e:
-                self.error_occurred.emit(f"Data conversion error: {str(e)}")
+                error_detail = traceback.format_exc()
+                logger.error(f"[RabbitPubSub] Data conversion error: {e}\n{error_detail}")
+                self.error_occurred.emit(f"Data conversion error: {e}")
 
         elif msg_type in ('status', 'flow_detected', 'command', 'config', 'error'):
+            logger.debug(f"[RabbitPubSub] Status/event message type={msg_type}")
             status_data = {'type': msg_type, 'data': data}
             if metadata:
                 status_data['metadata'] = metadata
