@@ -29,7 +29,6 @@ def build_dashboard(config: str | None = None) -> TradeDashboard:
                 print(f"⚠️ Config non caricata: {e}")
 
     logger = logging.getLogger("TradeDashboard")
-    logger.propagate = False
     logger.setLevel(logging.INFO)
 
     dashboard_cfg = config.get("dashboard", {})

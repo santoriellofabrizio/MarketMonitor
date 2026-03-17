@@ -168,6 +168,14 @@ class TradeDashboardExtensions:
             except DashboardStateError as e:
                 QMessageBox.critical(self, "Load Error", str(e))
 
+    def _save_as_default(self):
+        """Salva come default"""
+        try:
+            self.dashboard_state.save_dashboard("_default", self, description="Default dashboard")
+            QMessageBox.information(self, "Success", "Default dashboard saved!")
+        except DashboardStateError as e:
+            QMessageBox.critical(self, "Error", str(e))
+
     def _reset_to_default(self):
         """Reset a default"""
         reply = QMessageBox.question(
