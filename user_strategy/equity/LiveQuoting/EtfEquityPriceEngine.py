@@ -295,6 +295,9 @@ class EtfEquityPriceEngine(StrategyUI):
             except (TypeError, ValueError) as e:
                 logger.error(f"Invalid alpha value: {e}")
 
+        elif action == "debug_isin":
+            self._handle_debug_isin(payload)
+
         else:
             logger.warning(f"Unknown command: '{action}'")
 
@@ -331,6 +334,93 @@ class EtfEquityPriceEngine(StrategyUI):
             f"Forecaster updated → type={forecaster_type}, "
             f"params={params}, models={target_models}"
         )
+
+    def _handle_debug_isin(self, payload: dict) -> None:
+        """Genera un file Excel di debug per un singolo ISIN.
+
+        Esempio:
+            redis-cli PUBLISH engine:commands '{"action": "debug_isin", "isin": "IE00B4L5Y983", "model": "cluster"}'
+
+        Il file Excel contiene 4 sheet:
+            - beta:         driver attivi (beta != 0) con il loro peso
+            - breakdown:    output di intraday_adjuster.get_breakdown() per l'ISIN
+            - clean_returns: corrected_return_intraday per l'ETF e i suoi driver
+            - predictions:  predict_prices del modello scelto per l'ISIN
+        """
+        raw_id = payload.get("isin")
+        if not raw_id:
+            logger.error("debug_isin: 'isin' mancante nel payload")
+            return
+
+        isin = self.as_isin(raw_id)
+        if isin not in self.etfs:
+            logger.error(f"debug_isin: ISIN '{isin}' non trovato nell'universo ETF attivo")
+            return
+
+        if self.mid_eur is None or self.mid_eur.isna().all():
+            logger.error("debug_isin: mid_eur non ancora inizializzato")
+            return
+
+        model_name = payload.get("model", "cluster")
+        if model_name not in self.models:
+            logger.error(f"debug_isin: modello '{model_name}' non trovato. "
+                         f"Validi: {self.models.model_names}")
+            return
+
+        entry = self.models._entries[model_name]
+        model = entry.model
+
+        # ── Step 1: beta dei driver (beta != 0) ──────────────────────────────
+        if isin not in model.beta.index:
+            logger.error(f"debug_isin: ISIN '{isin}' non nella beta del modello '{model_name}'")
+            return
+
+        beta_row = model.beta.loc[isin]
+        active_beta = beta_row[beta_row != 0].rename("beta").to_frame()
+        drivers = active_beta.index.tolist()
+
+        # ── Step 2: breakdown intraday adjuster ──────────────────────────────
+        try:
+            breakdown_df = self.intraday_adjuster.get_breakdown(ticker=isin)
+        except Exception as e:
+            logger.error(f"debug_isin: errore in get_breakdown: {e}")
+            breakdown_df = pd.DataFrame()
+
+        # ── Step 3: clean returns per ETF + driver ───────────────────────────
+        returns_T = self.corrected_return_intraday.T  # index=timestamps, cols=ISINs
+        available_cols = [c for c in [isin] + drivers if c in returns_T.columns]
+        clean_returns_df = returns_T[available_cols]
+
+        # ── Step 4: predict_prices del modello per l'ISIN ────────────────────
+        try:
+            predictions_all = model.predict_prices(self.mid_eur, entry.returns_source.T)
+            if isin in predictions_all.columns:
+                predictions_df = predictions_all[[isin]]
+            else:
+                predictions_df = pd.DataFrame()
+                logger.warning(f"debug_isin: ISIN '{isin}' non nelle predizioni del modello")
+        except Exception as e:
+            logger.error(f"debug_isin: errore in predict_prices: {e}")
+            predictions_df = pd.DataFrame()
+
+        # ── Step 5: salva Excel ───────────────────────────────────────────────
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        out_dir = ".cache/debug"
+        os.makedirs(out_dir, exist_ok=True)
+        file_path = os.path.join(out_dir, f"{isin}_{model_name}_{ts}.xlsx")
+
+        try:
+            with pd.ExcelWriter(file_path, engine="openpyxl") as writer:
+                active_beta.to_excel(writer, sheet_name="beta", index=True)
+                if not breakdown_df.empty:
+                    breakdown_df.to_excel(writer, sheet_name="breakdown", index=True)
+                if not clean_returns_df.empty:
+                    clean_returns_df.to_excel(writer, sheet_name="clean_returns", index=True)
+                if not predictions_df.empty:
+                    predictions_df.to_excel(writer, sheet_name="predictions", index=True)
+            logger.info(f"debug_isin: file salvato in '{file_path}'")
+        except Exception as e:
+            logger.error(f"debug_isin: errore nel salvataggio Excel: {e}")
 
     # =========================================================================
     # Market data setup
