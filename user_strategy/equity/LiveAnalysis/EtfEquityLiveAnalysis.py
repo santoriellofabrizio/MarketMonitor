@@ -126,7 +126,7 @@ class EtfEquityLiveAnalysis(StrategyUI):
                                                          store='market')
 
         self.quoting_instances = [instances for instances, _bool
-                                  in self.redis_dashboard.get_key('quoting_instances').items() if _bool == 'true']
+                                  in self.redis_dashboard.get_key('quoting_instances').items() if _bool]
 
 
     def from_kafka_to_bloomberg(self):
@@ -201,6 +201,16 @@ class EtfEquityLiveAnalysis(StrategyUI):
 
         trades_to_publish = self.trade_manager.get_trades_to_publish()
         self.publish_trades_on_dashboard(trades_to_publish)
+        self.publish_trades_on_excel()
+
+
+    def publish_trades_on_excel(self):
+
+        trades_to_publish = self.trade_manager.get_trades(n_seconds=70)
+        self.redis_dashboard.export_message(channel=f"{self.channel_redis}_excel",
+                                                value=trades_to_publish,
+                                                date_format='iso',
+                                                orient="records")
 
     def publish_trades_on_dashboard(self, new_trades):
 
