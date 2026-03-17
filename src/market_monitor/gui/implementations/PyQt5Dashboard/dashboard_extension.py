@@ -4,13 +4,13 @@ TradeDashboard con integrazione DashboardState
 Aggiungi questo codice alla tua TradeDashboard esistente
 """
 import pandas as pd
-from PyQt5.QtWidgets import (QMenu, QAction, QDialog, QVBoxLayout, QHBoxLayout,
+from PyQt5.QtWidgets import (QAction, QDialog, QVBoxLayout, QHBoxLayout,
                              QLabel, QLineEdit, QTextEdit, QDialogButtonBox,
                              QListWidget, QPushButton, QGroupBox, QMessageBox,
-                             QInputDialog, QFileDialog, QListWidgetItem,
+                             QInputDialog, QFileDialog,
                              QTableWidget, QTableWidgetItem, QHeaderView,
                              QAbstractItemView, QFormLayout)
-from PyQt5.QtCore import Qt
+
 from PyQt5.QtGui import QKeySequence, QIcon
 from pathlib import Path
 
@@ -167,14 +167,6 @@ class TradeDashboardExtensions:
 
             except DashboardStateError as e:
                 QMessageBox.critical(self, "Load Error", str(e))
-
-    def _save_as_default(self):
-        """Salva come default"""
-        try:
-            self.dashboard_state.save_dashboard("_default", self, description="Default dashboard")
-            QMessageBox.information(self, "Success", "Default dashboard saved!")
-        except DashboardStateError as e:
-            QMessageBox.critical(self, "Error", str(e))
 
     def _reset_to_default(self):
         """Reset a default"""

@@ -1,3 +1,5 @@
+import logging
+
 import pandas as pd
 from PyQt5.QtCore import pyqtSignal, Qt, QSettings
 from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QLabel,
