@@ -544,10 +544,9 @@ class PivotTableWidget(QWidget):
                 self._apply_pivot_from_config(self.current_config)
 
     def _refresh_values_combo(self):
-        """Aggiorna values_combo con le colonne numeriche della sorgente."""
+        """Aggiorna values_combo con tutte le colonne della sorgente."""
         current = self.values_combo.currentText()
-        numeric_cols = list(self.source_data.select_dtypes(include=['number']).columns)
-        all_values = ['None'] + numeric_cols
+        all_values = ['None'] + list(self.source_data.columns)
         self.values_combo.blockSignals(True)
         self.values_combo.clear()
         self.values_combo.addItems(all_values)
@@ -744,17 +743,17 @@ class PivotTableWidget(QWidget):
         self.cols_combo.clear()
         self.cols_combo.addItems(columns)
 
-        # Solo colonne numeriche per values (i campi calcolati sono output del pivot)
-        numeric_cols = ['None'] + list(df.select_dtypes(include=['number']).columns)
+        # Tutte le colonne per values (stringhe supportate con min/max/first/last/count/nunique)
+        all_value_cols = ['None'] + list(df.columns)
         self.values_combo.clear()
-        self.values_combo.addItems(numeric_cols)
+        self.values_combo.addItems(all_value_cols)
 
         # Ripristina selezione se possibile
         if current_rows in columns:
             self.rows_combo.setCurrentText(current_rows)
         if current_cols in columns:
             self.cols_combo.setCurrentText(current_cols)
-        if current_values in numeric_cols:
+        if current_values in all_value_cols:
             self.values_combo.setCurrentText(current_values)
 
         # Update calc fields button label
@@ -943,7 +942,11 @@ class PivotTableWidget(QWidget):
 
             if cols == 'None':
                 # Simple groupby
-                self.pivot_data = filtered_data.groupby(rows)[values].agg(agg).reset_index()
+                try:
+                    self.pivot_data = filtered_data.groupby(rows)[values].agg(agg).reset_index()
+                except Exception:
+                    groups = filtered_data[rows].dropna().unique()
+                    self.pivot_data = pd.DataFrame({rows: groups, '_': 'err'})
                 self.pivot_data.columns = [rows, f'{agg}_{values}']
             else:
                 # Full pivot table
@@ -951,17 +954,20 @@ class PivotTableWidget(QWidget):
                     self.info_label.setText(f"Column '{cols}' not found in data")
                     return
 
-                self.pivot_data = pd.pivot_table(
-                    filtered_data,
-                    values=values,
-                    index=rows,
-                    columns=cols,
-                    aggfunc=agg,
-                    fill_value=0
-                ).reset_index()
-                
-                # Fix FutureWarning: infer objects dopo fillna
-                self.pivot_data = self.pivot_data.infer_objects(copy=False)
+                try:
+                    self.pivot_data = pd.pivot_table(
+                        filtered_data,
+                        values=values,
+                        index=rows,
+                        columns=cols,
+                        aggfunc=agg,
+                        fill_value=0
+                    ).reset_index()
+                    # Fix FutureWarning: infer objects dopo fillna
+                    self.pivot_data = self.pivot_data.infer_objects(copy=False)
+                except Exception:
+                    groups = filtered_data[rows].dropna().unique()
+                    self.pivot_data = pd.DataFrame({rows: groups, f'{agg}({values})': 'err'})
 
             # Normalizzazione
             if normalize:

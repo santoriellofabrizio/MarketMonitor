@@ -573,12 +573,12 @@ class GroupByWidget(QWidget):
             QMessageBox.warning(self, "No Data", "No source data available yet.")
             return
 
-        numeric_cols = list(self.source_data.select_dtypes(include=['number']).columns)
-        if not numeric_cols:
-            QMessageBox.warning(self, "No Columns", "No numeric columns available.")
+        all_cols = list(self.source_data.columns)
+        if not all_cols:
+            QMessageBox.warning(self, "No Columns", "No columns available.")
             return
 
-        dialog = AddValueAggDialog(numeric_cols, self)
+        dialog = AddValueAggDialog(all_cols, self)
         if dialog.exec_() == QDialog.Accepted:
             col, agg = dialog.get_pair()
             self.value_agg_pairs.append((col, agg))
@@ -976,17 +976,16 @@ class GroupByWidget(QWidget):
                 self.info_label.setText(f"Columns not found: {missing}")
                 return
 
-            # GroupBy multi-aggregazione
-            # Resolve custom function names to callables
-            agg_dict = {
-                col: CUSTOM_AGG_MAP.get(agg, agg)
-                for col, agg in pairs
-            }
-            result = filtered.groupby(rows).agg(agg_dict).reset_index()
-
-            # Rinomina colonne: col -> agg_col
-            new_cols = [rows] + [f'{agg}_{col}' for col, agg in pairs]
-            result.columns = new_cols
+            # GroupBy multi-aggregazione: colonna per colonna per gestire errori su stringhe
+            grouped = filtered.groupby(rows)
+            result = grouped.size().rename('__n__').reset_index()[[rows]]
+            for col, agg in pairs:
+                fn = CUSTOM_AGG_MAP.get(agg, agg)
+                col_name = f'{agg}_{col}'
+                try:
+                    result[col_name] = grouped[col].agg(fn).values
+                except Exception:
+                    result[col_name] = 'err'
 
             # Normalizzazione (dopo groupby, prima dei campi calcolati)
             normalize_mode = config.get('normalize', self._get_normalize_mode())
