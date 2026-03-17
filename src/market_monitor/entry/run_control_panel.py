@@ -94,7 +94,10 @@ def launch_control_panel(
         panel_config=panel_config,
     )
     panel.setWindowTitle(title)
-    panel.show()
+    if panel._settings.get("window", {}).get("maximized", False):
+        panel.showMaximized()
+    else:
+        panel.show()
 
     sys.exit(app.exec_())
 
