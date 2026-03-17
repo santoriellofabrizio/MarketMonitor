@@ -15,6 +15,7 @@ from datetime import timedelta
 from typing import Optional, Dict, Any, List, Tuple
 
 from market_monitor.gui.implementations.PyQt5Dashboard.widgets.filter import AdvancedFilterDialog, FilterGroup
+from market_monitor.gui.implementations.PyQt5Dashboard.widgets.calc_utils import build_calc_namespace, CALC_OPS_HINT
 
 
 class NumericTableWidgetItem(QTableWidgetItem):
@@ -243,8 +244,15 @@ class GroupByCalcFieldsDialog(QDialog):
 
         layout.addWidget(QLabel(
             "<b>GroupBy Calculated Fields</b> — Define columns computed from GroupBy result columns.<br>"
-            "Example: <b>ratio = sum_ctv / sum_spread</b>"
+            "Examples: <b>ratio = sum_ctv / sum_spread</b> &nbsp;|&nbsp; "
+            "<b>label = concat('_', ticker, isin)</b> &nbsp;|&nbsp; "
+            "<b>ticker_up = upper(ticker)</b>"
         ))
+
+        ops_label = QLabel(CALC_OPS_HINT)
+        ops_label.setWordWrap(True)
+        ops_label.setStyleSheet("color: #777; font-size: 10px; font-style: italic; padding: 2px;")
+        layout.addWidget(ops_label)
 
         self.table = QTableWidget()
         self.table.setColumnCount(2)
@@ -1028,7 +1036,8 @@ class GroupByWidget(QWidget):
             # Applica campi calcolati sul risultato GroupBy
             for calc_name, calc_expr in self.groupby_calc_fields.items():
                 try:
-                    self.result_data[calc_name] = self.result_data.eval(calc_expr)
+                    ns = build_calc_namespace(self.result_data)
+                    self.result_data[calc_name] = eval(calc_expr, {"__builtins__": {}}, ns)  # noqa: S307
                 except Exception as calc_err:
                     print(f"[GroupByCalcField] '{calc_name}' error: {calc_err}")
 

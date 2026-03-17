@@ -15,6 +15,7 @@ from typing import Optional, Dict, Any, List
 
 # Import sistema filtri avanzati
 from market_monitor.gui.implementations.PyQt5Dashboard.widgets.filter import AdvancedFilterDialog, FilterGroup
+from market_monitor.gui.implementations.PyQt5Dashboard.widgets.calc_utils import build_calc_namespace, CALC_OPS_HINT
 
 
 class CalcFieldDialog(QDialog):
@@ -48,9 +49,7 @@ class CalcFieldDialog(QDialog):
             layout.addWidget(hint_label)
 
         # Operator hints
-        ops_label = QLabel(
-            "Supported: +  -  *  /  **  abs()  round()  sqrt()  log()  exp()  np.where(cond, a, b)"
-        )
+        ops_label = QLabel(CALC_OPS_HINT)
         ops_label.setWordWrap(True)
         ops_label.setStyleSheet("color: #777; font-size: 10px; font-style: italic; padding: 2px;")
         layout.addWidget(ops_label)
@@ -561,16 +560,10 @@ class PivotTableWidget(QWidget):
         """
         if not self.calculated_fields or df.empty:
             return df
-        import numpy as np
         result = df.copy()
         for name, formula in self.calculated_fields.items():
             try:
-                namespace = {str(col): result[col] for col in result.columns}
-                namespace.update({
-                    'abs': np.abs, 'round': np.round,
-                    'sqrt': np.sqrt, 'log': np.log,
-                    'exp': np.exp, 'np': np,
-                })
+                namespace = build_calc_namespace(result)
                 result[name] = eval(formula, {"__builtins__": {}}, namespace)  # noqa: S307
             except Exception as e:
                 print(f"Calculated field '{name}' error: {e}")
