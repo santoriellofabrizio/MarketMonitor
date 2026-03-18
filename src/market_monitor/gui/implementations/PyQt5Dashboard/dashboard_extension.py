@@ -194,6 +194,14 @@ class TradeDashboardExtensions:
             except DashboardStateError:
                 QMessageBox.warning(self, "No Default", "No default dashboard found.")
 
+    def _save_as_default(self):
+        """Salva come default"""
+        try:
+            self.dashboard_state.save_dashboard("_default", self, description="Default dashboard")
+            QMessageBox.information(self, "Success", "Default dashboard saved!")
+        except DashboardStateError as e:
+            QMessageBox.critical(self, "Error", str(e))
+
     def _manage_dashboards_dialog(self):
         """Dialog per gestire dashboards"""
         dialog = ManageDashboardsDialog(self.dashboard_state, self)
