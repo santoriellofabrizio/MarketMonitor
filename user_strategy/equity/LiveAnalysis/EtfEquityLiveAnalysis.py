@@ -209,7 +209,6 @@ class EtfEquityLiveAnalysis(StrategyUI):
         trades['quoting'] = trades.apply(lambda row: f"{row.exchange}-{row.name}" in self.quoting_instances, axis=1)
         return trades
 
-
     def publish_trades_on_excel(self):
 
         trades_to_publish = self.trade_manager.get_trades(n_seconds=10)
@@ -222,9 +221,9 @@ class EtfEquityLiveAnalysis(StrategyUI):
                                axis=1)
 
         trades_to_publish.drop(["is_elaborated",
-                                      "model_price",
-                                     "price_multiplier",
-                                   "description"], axis=1,
+                                "model_price",
+                                "price_multiplier",
+                                "description"], axis=1,
                                inplace=True)
 
         trades_to_publish["quoting"] = trades_to_publish.apply(lambda row:

@@ -75,6 +75,7 @@ class PricesProvider:
         self.logger = logging.getLogger()
         self.historical_fx: pd.DataFrame = pd.DataFrame()
         self.historical_prices: pd.DataFrame = pd.DataFrame()
+        self.nav_data: pd.DataFrame = pd.DataFrame()
 
         # Clear cache if needed
         if not self.use_cache_ts:
@@ -103,6 +104,7 @@ class PricesProvider:
                                                 drivers_anagraphic=pd.concat([self.drivers_anagraphic, self.index_anagraphic, self.additional_contracts]))],
                                            axis=1)
         self._impute_missing_values_from_bbg()
+        self._download_nav_data()
 
 
     def get_adjustments(self, cumulative: bool = False) -> pd.DataFrame:
@@ -117,6 +119,9 @@ class PricesProvider:
 
     def get_hist_fx_prices(self) -> pd.DataFrame:
         return self.historical_fx
+
+    def get_nav_data(self) -> pd.DataFrame:
+        return self.nav_data
 
     @save_to_excel("prices ETF")
     def get_hist_etf_prices_from_oracle(self) -> DataFrame:
@@ -237,6 +242,9 @@ class PricesProvider:
                     df.bfill(inplace=True)
                     df.ffill(inplace=True)
             assert df.isna().sum().sum() == 0
+
+    def _download_nav_data(self) -> None:
+        self._nav_data = pd.DataFrame()
 
     def _count_missing_prices(self) -> int:
         """
