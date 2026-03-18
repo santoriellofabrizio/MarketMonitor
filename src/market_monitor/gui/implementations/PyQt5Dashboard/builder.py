@@ -31,6 +31,12 @@ def build_dashboard(config: str | None = None) -> TradeDashboard:
     logger = logging.getLogger("TradeDashboard")
     logger.propagate = False
     logger.setLevel(logging.INFO)
+    if not logger.handlers:
+        _h = logging.StreamHandler()
+        _h.setFormatter(logging.Formatter(
+            "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+        ))
+        logger.addHandler(_h)
 
     dashboard_cfg = config.get("dashboard", {})
 
