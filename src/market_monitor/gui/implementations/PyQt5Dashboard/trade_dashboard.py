@@ -520,6 +520,14 @@ class TradeDashboard(BasePyQt5Dashboard, TradeDashboardExtensions):
                 self.all_trades = df_indexed.copy()
                 self._trades_index = set(df_indexed.index.tolist())
             else:
+                # Porta all_trades su indice trade_index per il confronto vettorizzato.
+                # Questo è necessario ad ogni ciclo perché reset_index() alla fine
+                # lo riporta su RangeIndex. Ricostruisce anche _trades_index in caso
+                # all_trades sia stato ripopolato esternamente (es. load_dashboard).
+                if 'trade_index' in self.all_trades.columns:
+                    self.all_trades = self.all_trades.set_index('trade_index')
+                self._trades_index = set(self.all_trades.index.tolist())
+
                 is_existing = df['trade_index'].isin(self._trades_index)
                 updates = df_indexed[is_existing.values]
                 new_rows = df_indexed[~is_existing.values]
