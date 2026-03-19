@@ -5,9 +5,6 @@ load_strategy_info:
       module_name: EtfFiPriceEngine
       class_name: EtfFiPriceEngine
 
-
-
-
 market_monitor:
 
   #strategy_name: MarketMonitorDummy
@@ -15,7 +12,7 @@ market_monitor:
   number_of_days: 12
   price_snipping_time_string: "17:15:00"  # Ricorda di mettere l'ora come stringa in YAML
   use_cache_TS: true
-  bloomberg_subscription_config_path: C:\AFMachineLearning\Libraries\MarketMonitor\etc\configFolder\bbg_subscription\config_bloomberg_subscription.yaml
+  bloomberg_subscription_config_path: C:\AFMachineLearning\Libraries\MarketMonitor\etc\config\bbg_subscription\config_bloomberg_subscription.yaml
 
 ####trade params###########################
 
@@ -80,10 +77,6 @@ market_monitor:
       activate: false
       synchronous: false
       frequency: 1
-    dynamic_params:
-      activate: false
-      dynamic_config_path: C:\AFMachineLearning\Projects\Trading\MarketMonitorFI\etc\configFolder\dynamic_config.yaml
-      frequency: 1
 
   sql_db_fi_file: 'C:\AFMachineLearning\Projects\Trading\FxdIncomeEtfAnalysis\FxdIncomeEtfDB.db'
 
@@ -132,7 +125,7 @@ timescale_connection:
   database: aidb
   port: 5432
   user: aivwr
-  password: Aivwr-00
+  password: 63903918ce20c5d534c3eb551202d4ea
 
  # connection to ts test db
 #timescale_connection:

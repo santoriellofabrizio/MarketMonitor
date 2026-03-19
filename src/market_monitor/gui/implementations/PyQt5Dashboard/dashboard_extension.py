@@ -18,6 +18,7 @@ from market_monitor.gui.implementations.PyQt5Dashboard.widgets.dashboard_state i
 from market_monitor.gui.implementations.PyQt5Dashboard.detached_windows import (
     DetachedChartWindow, DetachedFlowWindow, DetachedPivotWindow, DetachedGroupByWindow
 )
+from market_monitor.gui.implementations.PyQt5Dashboard.widgets.calc_utils import build_calc_namespace, CALC_OPS_HINT
 
 
 # ============================================================================
@@ -167,6 +168,14 @@ class TradeDashboardExtensions:
 
             except DashboardStateError as e:
                 QMessageBox.critical(self, "Load Error", str(e))
+
+    def _save_as_default(self):
+        """Salva come default"""
+        try:
+            self.dashboard_state.save_dashboard("_default", self, description="Default dashboard")
+            QMessageBox.information(self, "Success", "Default dashboard saved!")
+        except DashboardStateError as e:
+            QMessageBox.critical(self, "Error", str(e))
 
     def _reset_to_default(self):
         """Reset a default"""
@@ -671,10 +680,7 @@ class AddEditCalcFieldDialog(QDialog):
         test_row.addWidget(self.test_result_label, 1)
         layout.addLayout(test_row)
 
-        hint = QLabel(
-            "<i>Supported: arithmetic operators (+, -, *, /), column names (use exact column names). "
-            "Example: <b>spread_pl / ctv</b></i>"
-        )
+        hint = QLabel(f"<i>{CALC_OPS_HINT}</i>")
         hint.setWordWrap(True)
         hint.setStyleSheet("color: #666; font-size: 11px;")
         layout.addWidget(hint)
@@ -696,8 +702,12 @@ class AddEditCalcFieldDialog(QDialog):
 
         try:
             sample = self._sample_data.head(5)
-            result = sample.eval(expr)
-            preview = str(result.iloc[0]) if len(result) > 0 else "N/A"
+            ns = build_calc_namespace(sample)
+            result = eval(expr, {"__builtins__": {}}, ns)  # noqa: S307
+            if hasattr(result, 'iloc'):
+                preview = str(result.iloc[0]) if len(result) > 0 else "N/A"
+            else:
+                preview = str(result)
             self.test_result_label.setText(f"✅ OK — first value: {preview}")
             self.test_result_label.setStyleSheet("color: green;")
         except Exception as e:

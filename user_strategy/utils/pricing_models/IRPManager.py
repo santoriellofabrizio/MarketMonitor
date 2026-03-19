@@ -15,6 +15,7 @@ class IRPManager:
         """
 
         self._cutoff_date = cutoff_date   # cutting off meeting dates allows us to subscribe to only strictly relevant irp (up to 6 months from now)
+        self._todays_date = dt.datetime.today().date()
         self._ir_data = irp_data.reset_index().merge(irs_data.reset_index(), left_on="REGION", right_on="REGION").set_index("INSTRUMENT_ID_x").rename(columns={"INSTRUMENT_ID_y": "IRS"})
         self._irs_contracts_list = irs_data.index.to_list()
         self._irp_contracts_dict, self._irp_contracts_list, self._irp_date_contract_mapping = self._generate_irp_contracts()
@@ -31,7 +32,8 @@ class IRPManager:
         irp_date_contract_mapping = {}
         for id_irp, row in self._ir_data.iterrows():
             meeting_dates_list = pd.to_datetime(row['MEETING_DATE'], format='%d/%m/%Y')
-            meeting_dates_list_refined = [d.date() for d in meeting_dates_list if d.date() < self._cutoff_date]
+            meeting_dates_list_refined = [d.date() for d in meeting_dates_list if
+                                          self._cutoff_date > d.date() >= self._todays_date]
             irp_contracts_dict[id_irp] = []
             for date in meeting_dates_list_refined:
                 contract = id_irp + f' {date.strftime("%b%Y").upper()} Index'
@@ -49,7 +51,7 @@ class IRPManager:
         spread = pd.Series(0., index=irp_mapping.index)
         irs_mapping = pd.Series(self._ir_data.loc[irp_mapping.values, "IRS"].values, index=irp_mapping.index)
 
-        meeting_dates = pd.Series(index=irp_mapping.index)
+        meeting_dates = pd.Series(index=irp_mapping.index, dtype=object)
         relevant_contracts = pd.Series([[] for _ in irp_mapping.index], index=irp_mapping.index)
         relevant_times = pd.Series([[] for _ in irp_mapping.index], index=irp_mapping.index)
         index_start = pd.Series(0, index=irp_mapping.index, dtype=int)

@@ -15,7 +15,7 @@ from user_strategy.utils.pricing_models.DataFetching.PricesProviderFI import Pri
 from user_strategy.utils.InputParamsFIQuoting import InputParamsFIQuoting
 from user_strategy.utils.pricing_models.NAVBasisCalculator import NAVBasisCalculator
 from user_strategy.utils.pricing_models.PricingModel import ClusterPricingModel, DriverPricingModel, \
-    CreditFuturesCalendarSpreadPricingModel, CreditFuturesInterestRatePricingModel
+    CreditFuturesCalendarSpreadPricingModel, CreditFuturesInterestRatePricingModel, NavPricingModel
 from user_strategy.utils.pricing_models.TheoreticalPriceManager import TheoreticalPriceManager
 from user_strategy.utils.pricing_models.IRPManager import IRPManager
 from user_strategy.utils.bloomberg_subscription_utils.SubscriptionManager import SubscriptionManager
@@ -226,7 +226,16 @@ class EtfFiPriceEngine(StrategyUI):
         self.historical_fx: pd.DataFrame = self.prices_provider.get_hist_fx_prices()
 
         self.irp_manager.save_historical_prices(self.historical_prices)
-
+        self.nav_data: pd.DataFrame = self.prices_provider.get_nav_data()
+        self.theoretical_price_manager.add_pricing(dtype=float,
+                                                   name="th live nav price",
+                                                   instruments=self.etf_isins,
+                                                   model=NavPricingModel(name="th live nav price",
+                                                                         target_variables=self.etf_isins,
+                                                                         irs_data=self.irs_data,
+                                                                         nav_data=self.nav_data,
+                                                                         )
+                                                   )
 
         # Set up the NAV NAVs calculator
         # self.nav_basis_calculator: NAVBasisCalculator = NAVBasisCalculator(
@@ -373,6 +382,11 @@ class EtfFiPriceEngine(StrategyUI):
             self.book_mid.update(last_price_ir)
         else:
             self.book_mid = self.market_data.get_mid()
+
+        rets = self.get_live_returns().loc[['IE00BNH72088', 'IE00BDT6FP91']].T
+        fx_corr = self.get_live_fx_return_correction().T.loc[['IE00BNH72088', 'IE00BDT6FP91']].T
+        ret_corr = self.return_adjustments.T.loc[['IE00BNH72088', 'IE00BDT6FP91']].T
+
         self.corrected_returns = (self.get_live_returns().
                                   add(self.get_live_fx_return_correction().T, fill_value=0).
                                   add(self.return_adjustments.T, fill_value=0))

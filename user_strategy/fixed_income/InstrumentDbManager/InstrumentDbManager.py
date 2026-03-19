@@ -3,8 +3,7 @@ from typing import List, Tuple, Any, Dict, Optional, Union
 
 import pandas as pd
 
-from sfm_dbconnections.SQLiteConnection import SQLiteConnection
-
+from sfm_datalibrary.connections.db_connections.SQLiteConnection import SQLiteConnection
 
 class InstrumentDbManager(SQLiteConnection):
 

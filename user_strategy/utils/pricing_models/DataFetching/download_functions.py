@@ -15,15 +15,15 @@ from datetime import timedelta, time, date
 from typing import Optional, List, Dict
 
 import pandas as pd
-
+import pytz
 from pandas import DatetimeIndex, DataFrame, Series
 from tqdm import tqdm
 from xbbg import blp
 from xbbg.blp import bdh, bdib, bdp
 
-from sfm_dbconnections.DbConnectionParameters import DbConnectionParameters, TimescaleConnectionParameters
-from sfm_timescaledb_queries.QueryTSMarkets import QueryTSMarkets
-from sfm_timescaledb_queries.callable_functions import download_daily_fairvalues, download_daily_fairvalues_currency
+from sfm_datalibrary.connections.db_connections import DbConnectionParameters, TimescaleConnectionParameters, PostgreSQLConnection
+from sfm_datalibrary.queries import PostgreSQLQuery
+from sfm_datalibrary.queries.PostgreSQLQuery.callable_functions import download_daily_fairvalues, download_daily_fairvalues_currency
 from user_strategy.fixed_income import memoryFixedIncome
 from user_strategy.utils import memoryPriceProvider
 
@@ -175,13 +175,9 @@ def get_price_for_day_time(ticker, day: date, snipping_time: time, download_eod:
 @memoryPriceProvider.cache(cache_validation_callback=_check_cache_validity_only_today)
 def download_single_data_fx(data, currencies, snipping_time):
     params = DbConnectionParameters
-    query_: QueryTSMarkets = QueryTSMarkets(
-        params.get_timescale_parameter(TimescaleConnectionParameters.HOST),
-        params.get_timescale_parameter(TimescaleConnectionParameters.PORT),
-        params.get_timescale_parameter(TimescaleConnectionParameters.DB_NAME),
-        params.get_timescale_parameter(TimescaleConnectionParameters.USERNAME),
-        params.get_timescale_parameter(TimescaleConnectionParameters.PASSWORD)
-    )
+    ts_conn = PostgreSQLConnection(user=params.get_timescale_parameter(TimescaleConnectionParameters.USERNAME),
+                                   password=params.get_timescale_parameter(TimescaleConnectionParameters.PASSWORD))
+    query_ = PostgreSQLQuery(ts_conn)
     return download_daily_fairvalues_currency(
         array_date=[data],
         array_currency=currencies,
@@ -192,13 +188,9 @@ def download_single_data_fx(data, currencies, snipping_time):
 @memoryPriceProvider.cache(cache_validation_callback=_check_cache_validity_only_today)
 def download_single_data_prices(data, isins, snipping_time, market="EURONEXT"):
     params = DbConnectionParameters
-    query_: QueryTSMarkets = QueryTSMarkets(
-        params.get_timescale_parameter(TimescaleConnectionParameters.HOST),
-        params.get_timescale_parameter(TimescaleConnectionParameters.PORT),
-        params.get_timescale_parameter(TimescaleConnectionParameters.DB_NAME),
-        params.get_timescale_parameter(TimescaleConnectionParameters.USERNAME),
-        params.get_timescale_parameter(TimescaleConnectionParameters.PASSWORD)
-    )
+    ts_conn = PostgreSQLConnection(user=params.get_timescale_parameter(TimescaleConnectionParameters.USERNAME),
+                                   password=params.get_timescale_parameter(TimescaleConnectionParameters.PASSWORD))
+    query_ = PostgreSQLQuery(ts_conn)
     return download_daily_fairvalues(
         array_date=[data],
         market_isin_dictionary={market: isins},
@@ -208,7 +200,6 @@ def download_single_data_prices(data, isins, snipping_time, market="EURONEXT"):
 
 
 def get_time_zone(instrument: str, day_time, start_time_bar: int = 15, end_time_bar: int = 18):
-    import pytz
     utc_time = pytz.timezone("Europe/Rome").localize(day_time)
     start_time, end_time = utc_time.replace(hour=start_time_bar), utc_time.replace(hour=end_time_bar)
     if instrument[:2] in ["FV", "TY", "US", "WN", "TU", "JB", "ES"]:

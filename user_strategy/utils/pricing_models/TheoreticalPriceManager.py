@@ -33,7 +33,7 @@ class TheoreticalPriceManager:
         for name, model in self._models.items():
             all_ret_t = all_returns.T
             try:
-                self._theoretical_pricings[name] = model.get_price_prediction(book=book, all_returns=all_ret_t)
+                self._theoretical_pricings[name] = model.get_price_prediction(prices=book, all_returns=all_ret_t)
             except Exception as e:
                 print(f"exception in model {name}: {e}")
 

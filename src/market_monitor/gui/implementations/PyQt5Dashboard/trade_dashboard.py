@@ -39,6 +39,7 @@ from market_monitor.gui.implementations.PyQt5Dashboard.detached_windows import (
 )
 from market_monitor.gui.implementations.PyQt5Dashboard.widgets.dashboard_state import DashboardState
 from market_monitor.gui.implementations.PyQt5Dashboard.widgets.trade_table import TradeTableWidget
+from market_monitor.gui.implementations.PyQt5Dashboard.widgets.calc_utils import build_calc_namespace
 from market_monitor.gui.implementations.PyQt5Dashboard.widgets.trade_history_window import TradeHistoryWindow
 from market_monitor.gui.threaded_GUI.QueueDataSource import QueueDataSource
 from market_monitor.gui.implementations.PyQt5Dashboard.worker_thread import (
@@ -869,7 +870,8 @@ class TradeDashboard(BasePyQt5Dashboard, TradeDashboardExtensions):
         df = self.all_trades.copy()
         for name, expr in self.calculated_fields.items():
             try:
-                df[name] = df.eval(expr)
+                ns = build_calc_namespace(df)
+                df[name] = eval(expr, {"__builtins__": {}}, ns)  # noqa: S307
             except Exception as e:
                 self.logger.warning(f"[CalcField] '{name}' error: {e}")
         return df

@@ -15,6 +15,7 @@ from datetime import timedelta
 from typing import Optional, Dict, Any, List, Tuple
 
 from market_monitor.gui.implementations.PyQt5Dashboard.widgets.filter import AdvancedFilterDialog, FilterGroup
+from market_monitor.gui.implementations.PyQt5Dashboard.widgets.calc_utils import build_calc_namespace, CALC_OPS_HINT
 
 
 class NumericTableWidgetItem(QTableWidgetItem):
@@ -99,31 +100,41 @@ class AddValueAggDialog(QDialog):
         'range', 'variance', 'first', 'last', 'cv%',
     ]
 
-    def __init__(self, available_columns: List[str], parent=None):
+    def __init__(self, available_columns: List[str], parent=None,
+                 col: str = '', agg: str = '', alias: str = ''):
         super().__init__(parent)
         self.setWindowTitle("Add Value Column")
         self.setModal(True)
-        self.resize(350, 150)
-        self._setup_ui(available_columns)
+        self.resize(350, 180)
+        self._setup_ui(available_columns, col, agg, alias)
 
-    def _setup_ui(self, available_columns: List[str]):
+    def _setup_ui(self, available_columns: List[str], col: str, agg: str, alias: str):
         layout = QFormLayout(self)
 
         self.col_combo = QComboBox()
         self.col_combo.addItems(available_columns)
+        if col in available_columns:
+            self.col_combo.setCurrentText(col)
         layout.addRow("Column:", self.col_combo)
 
         self.agg_combo = QComboBox()
         self.agg_combo.addItems(self.AGG_FUNCTIONS)
+        if agg in self.AGG_FUNCTIONS:
+            self.agg_combo.setCurrentText(agg)
         layout.addRow("Aggregation:", self.agg_combo)
+
+        self.alias_edit = QLineEdit()
+        self.alias_edit.setPlaceholderText("Leave empty to use default (e.g. sum_price)")
+        self.alias_edit.setText(alias)
+        layout.addRow("Alias (optional):", self.alias_edit)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         layout.addRow(buttons)
 
-    def get_pair(self) -> Tuple[str, str]:
-        return self.col_combo.currentText(), self.agg_combo.currentText()
+    def get_pair(self) -> Tuple[str, str, str]:
+        return self.col_combo.currentText(), self.agg_combo.currentText(), self.alias_edit.text().strip()
 
 
 # ---------------------------------------------------------------------------
@@ -233,8 +244,15 @@ class GroupByCalcFieldsDialog(QDialog):
 
         layout.addWidget(QLabel(
             "<b>GroupBy Calculated Fields</b> — Define columns computed from GroupBy result columns.<br>"
-            "Example: <b>ratio = sum_ctv / sum_spread</b>"
+            "Examples: <b>ratio = sum_ctv / sum_spread</b> &nbsp;|&nbsp; "
+            "<b>label = concat('_', ticker, isin)</b> &nbsp;|&nbsp; "
+            "<b>ticker_up = upper(ticker)</b>"
         ))
+
+        ops_label = QLabel(CALC_OPS_HINT)
+        ops_label.setWordWrap(True)
+        ops_label.setStyleSheet("color: #777; font-size: 10px; font-style: italic; padding: 2px;")
+        layout.addWidget(ops_label)
 
         self.table = QTableWidget()
         self.table.setColumnCount(2)
@@ -359,8 +377,8 @@ class GroupByWidget(QWidget):
         self.active_filter: Optional[FilterGroup] = None
         self._pending_config: Optional[Dict[str, Any]] = None
 
-        # Coppie (colonna, funzione_aggregazione)
-        self.value_agg_pairs: List[Tuple[str, str]] = []
+        # Coppie (colonna, funzione_aggregazione, alias)
+        self.value_agg_pairs: List[Tuple[str, str, str]] = []
 
         # Campi calcolati sul risultato GroupBy
         self.groupby_calc_fields: Dict[str, str] = {}
@@ -454,14 +472,16 @@ class GroupByWidget(QWidget):
         config_layout.addWidget(QLabel("Value Columns & Aggregations:"))
 
         self.value_agg_table = QTableWidget()
-        self.value_agg_table.setColumnCount(2)
-        self.value_agg_table.setHorizontalHeaderLabels(["Column", "Aggregation"])
+        self.value_agg_table.setColumnCount(3)
+        self.value_agg_table.setHorizontalHeaderLabels(["Column", "Aggregation", "Alias"])
         self.value_agg_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
         self.value_agg_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        self.value_agg_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
         self.value_agg_table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.value_agg_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.value_agg_table.setEditTriggers(QAbstractItemView.DoubleClicked)
         self.value_agg_table.setMaximumHeight(130)
         self.value_agg_table.setAlternatingRowColors(True)
+        self.value_agg_table.cellChanged.connect(self._on_value_agg_alias_changed)
         config_layout.addWidget(self.value_agg_table)
 
         # Add / Remove buttons for value_agg_pairs
@@ -562,10 +582,28 @@ class GroupByWidget(QWidget):
 
     def _refresh_value_agg_table(self):
         """Sincronizza self.value_agg_pairs → QTableWidget."""
+        self.value_agg_table.blockSignals(True)
         self.value_agg_table.setRowCount(len(self.value_agg_pairs))
-        for row, (col, agg) in enumerate(self.value_agg_pairs):
-            self.value_agg_table.setItem(row, 0, QTableWidgetItem(col))
-            self.value_agg_table.setItem(row, 1, QTableWidgetItem(agg))
+        for row, entry in enumerate(self.value_agg_pairs):
+            col, agg, alias = entry[0], entry[1], entry[2] if len(entry) > 2 else ''
+            # Column and Aggregation: read-only
+            for ci, text in enumerate([col, agg]):
+                item = QTableWidgetItem(text)
+                item.setFlags(item.flags() & ~Qt.ItemIsEditable)
+                self.value_agg_table.setItem(row, ci, item)
+            # Alias: editable
+            alias_item = QTableWidgetItem(alias)
+            alias_item.setToolTip("Double-click to rename this column in the result")
+            self.value_agg_table.setItem(row, 2, alias_item)
+        self.value_agg_table.blockSignals(False)
+
+    def _on_value_agg_alias_changed(self, row: int, col: int):
+        """Aggiorna l'alias quando l'utente lo modifica inline nella tabella."""
+        if col != 2 or row >= len(self.value_agg_pairs):
+            return
+        new_alias = self.value_agg_table.item(row, 2).text().strip()
+        entry = self.value_agg_pairs[row]
+        self.value_agg_pairs[row] = (entry[0], entry[1], new_alias)
 
     def _add_value_agg(self):
         """Apre dialog per aggiungere una coppia (colonna, agg)."""
@@ -573,15 +611,15 @@ class GroupByWidget(QWidget):
             QMessageBox.warning(self, "No Data", "No source data available yet.")
             return
 
-        numeric_cols = list(self.source_data.select_dtypes(include=['number']).columns)
-        if not numeric_cols:
-            QMessageBox.warning(self, "No Columns", "No numeric columns available.")
+        all_cols = list(self.source_data.columns)
+        if not all_cols:
+            QMessageBox.warning(self, "No Columns", "No columns available.")
             return
 
-        dialog = AddValueAggDialog(numeric_cols, self)
+        dialog = AddValueAggDialog(all_cols, self)
         if dialog.exec_() == QDialog.Accepted:
-            col, agg = dialog.get_pair()
-            self.value_agg_pairs.append((col, agg))
+            col, agg, alias = dialog.get_pair()
+            self.value_agg_pairs.append((col, agg, alias))
             self._refresh_value_agg_table()
 
     def _remove_selected_value_agg(self):
@@ -847,7 +885,8 @@ class GroupByWidget(QWidget):
             missing.append(f"  • rows: '{rows_val}'")
 
         pairs = cc.get('value_agg_pairs') or config.get('value_agg_pairs') or []
-        for col, _ in pairs:
+        for entry in pairs:
+            col = entry[0] if entry else None
             if col and col not in available:
                 missing.append(f"  • value column: '{col}'")
 
@@ -883,7 +922,7 @@ class GroupByWidget(QWidget):
                 self.rows_combo.setCurrentIndex(idx)
 
         if 'value_agg_pairs' in config:
-            self.value_agg_pairs = [tuple(p) for p in config['value_agg_pairs']]
+            self.value_agg_pairs = self._normalize_pairs(config['value_agg_pairs'])
             self._refresh_value_agg_table()
 
         if 'quick_time_filter' in config:
@@ -971,22 +1010,23 @@ class GroupByWidget(QWidget):
                 return
 
             # Verifica colonne valore
-            missing = [col for col, _ in pairs if col not in filtered.columns]
+            missing = [entry[0] for entry in pairs if entry[0] not in filtered.columns]
             if missing:
                 self.info_label.setText(f"Columns not found: {missing}")
                 return
 
-            # GroupBy multi-aggregazione
-            # Resolve custom function names to callables
-            agg_dict = {
-                col: CUSTOM_AGG_MAP.get(agg, agg)
-                for col, agg in pairs
-            }
-            result = filtered.groupby(rows).agg(agg_dict).reset_index()
-
-            # Rinomina colonne: col -> agg_col
-            new_cols = [rows] + [f'{agg}_{col}' for col, agg in pairs]
-            result.columns = new_cols
+            # GroupBy multi-aggregazione: colonna per colonna per gestire errori su stringhe
+            grouped = filtered.groupby(rows)
+            result = grouped.size().rename('__n__').reset_index()[[rows]]
+            for entry in pairs:
+                col, agg = entry[0], entry[1]
+                alias = entry[2] if len(entry) > 2 else ''
+                fn = CUSTOM_AGG_MAP.get(agg, agg)
+                col_name = alias if alias else f'{agg}_{col}'
+                try:
+                    result[col_name] = grouped[col].agg(fn).values
+                except Exception:
+                    result[col_name] = 'err'
 
             # Normalizzazione (dopo groupby, prima dei campi calcolati)
             normalize_mode = config.get('normalize', self._get_normalize_mode())
@@ -996,7 +1036,8 @@ class GroupByWidget(QWidget):
             # Applica campi calcolati sul risultato GroupBy
             for calc_name, calc_expr in self.groupby_calc_fields.items():
                 try:
-                    self.result_data[calc_name] = self.result_data.eval(calc_expr)
+                    ns = build_calc_namespace(self.result_data)
+                    self.result_data[calc_name] = eval(calc_expr, {"__builtins__": {}}, ns)  # noqa: S307
                 except Exception as calc_err:
                     print(f"[GroupByCalcField] '{calc_name}' error: {calc_err}")
 
@@ -1005,7 +1046,10 @@ class GroupByWidget(QWidget):
 
             # Info label
             info_parts = []
-            pairs_str = ", ".join(f"{agg}({col})" for col, agg in pairs)
+            pairs_str = ", ".join(
+                (entry[2] if len(entry) > 2 and entry[2] else f"{entry[1]}({entry[0]})")
+                for entry in pairs
+            )
             info_parts.append(f"GroupBy: {rows} | {pairs_str}")
 
             if filtered_count < original_count:
@@ -1153,6 +1197,20 @@ class GroupByWidget(QWidget):
             self._apply_groupby_from_config(self.current_config)
 
     # ------------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _normalize_pairs(raw) -> List[Tuple[str, str, str]]:
+        """Converte coppie (col, agg) o triple (col, agg, alias) → Tuple[str,str,str]."""
+        result = []
+        for p in raw:
+            t = tuple(p)
+            alias = t[2] if len(t) > 2 else ''
+            result.append((t[0], t[1], alias))
+        return result
+
     # Config persistence
     # ------------------------------------------------------------------
 
@@ -1203,7 +1261,7 @@ class GroupByWidget(QWidget):
                     self.rows_combo.setCurrentIndex(idx)
 
             if 'value_agg_pairs' in config:
-                self.value_agg_pairs = [tuple(p) for p in config['value_agg_pairs']]
+                self.value_agg_pairs = self._normalize_pairs(config['value_agg_pairs'])
                 self._refresh_value_agg_table()
 
             if 'quick_time_filter' in config:
@@ -1214,7 +1272,7 @@ class GroupByWidget(QWidget):
             if config.get('current_config'):
                 self.current_config = {
                     'rows': config['current_config']['rows'],
-                    'value_agg_pairs': [tuple(p) for p in config['current_config']['value_agg_pairs']],
+                    'value_agg_pairs': self._normalize_pairs(config['current_config']['value_agg_pairs']),
                 }
                 self._apply_groupby_from_config(self.current_config)
 

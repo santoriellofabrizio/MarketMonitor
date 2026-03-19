@@ -21,10 +21,8 @@ class CreditTradeAnalysis(StrategyUI):
 
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
-
-<<<<<<< .mine        self.book_filter = SpreadEWMA(**kwargs.pop("book_filter_params",{}))
-=======
->>>>>>> .theirs        self.rabbit_trade_dashboard_messaging: RabbitMessaging | None = None
+        self.book_filter = SpreadEWMA(**kwargs.pop("book_filter_params",{}))
+        self.rabbit_trade_dashboard_messaging: RabbitMessaging | None = None
         self.redis_trade_dashboard_messaging: RedisMessaging | None = None
 
         path_str = kwargs.get("instruments_list_path")
@@ -51,9 +49,9 @@ class CreditTradeAnalysis(StrategyUI):
         self.trade_isin_description_mapping = self.instruments_df["description"].to_dict()
         # -------------------------------------- BOOK & PRICE SECTION --------------------------------------------------
         self.book_storage: BookStorage = BookStorage()
-<<<<<<< .mine
-=======        self.book_filter = SpreadEWMA(**kwargs.pop("book_filter_params", {}))
->>>>>>> .theirs        # -------------------------------------- SETTING INSTRUMENTS ---------------------------------------------------
+
+        self.book_filter = SpreadEWMA(**kwargs.pop("book_filter_params", {}))
+        # -------------------------------------- SETTING INSTRUMENTS ---------------------------------------------------
         self.columns_dashboard = kwargs.get("columns_dashboard")
 
         rabbit_cfg = kwargs.get('rabbit_data_export', {})
@@ -126,7 +124,7 @@ class CreditTradeAnalysis(StrategyUI):
                         fields_mapping=fields,
                     )
                     for ev in ("PublicDeal", "Trade"):
-                        self.global_subscription_service.subscribe_kafka(
+                        self.global_subscription_service.subscribe_trades_kafka(
                             id=f"{m}_{s}:{ev}",
                             symbol_filter=s,
                             topic=f"{base}.{ev}",
@@ -144,16 +142,14 @@ class CreditTradeAnalysis(StrategyUI):
 
     def on_trade(self, new_trades):
         new_trades["price_multiplier"] = new_trades["isin"].map(self.trade_isin_multiplier_mapping)
-        processed_new = self.trade_manager.on_trade(new_trades)
-
-        trades_to_publish = self.trade_manager.get_trades_to_publish(processed_new)
+        new_trades["description"] = new_trades["isin"].map(self.trade_isin_description_mapping)
+        self.trade_manager.on_trade(new_trades)
+        trades_to_publish = self.trade_manager.get_trades_to_publish()
         self.publish_trades_on_dashboard(trades_to_publish)
 
     def publish_trades_on_dashboard(self, new_trades):
-        new_trades["description"] = new_trades["isin"].map(self.trade_isin_description_mapping)
-        if self.columns_dashboard:
-            existing_cols = [c for c in self.columns_dashboard if c in new_trades.columns]
-            new_trades = new_trades[existing_cols]
+
+
 
         if self.redis_trade_dashboard_messaging:
             self.redis_trade_dashboard_messaging.export_message(channel=self.redis_exporting_channel,
@@ -183,19 +179,21 @@ class CreditTradeAnalysis(StrategyUI):
 
         mid = valid.mean(axis=1)
 
-        grouped: dict[str, dict[str, list]] = {}
+        grouped = {}
+
         for instrument_id, price in mid.items():
             _, isin = instrument_id.split("_", 1)
-            currency = self.market_data.currency_information.get(instrument_id, "EUR")
-<<<<<<< .mine            grouped.setdefault(isin, {}).setdefault(currency, []).append(price)
-=======            grouped.setdefault(isin, {})[currency] = price
-        return {isin: FairvaluePrice.by_currency(isin, prices) for isin, prices in grouped.items()}
->>>>>>> .theirs
+            ccy = self.market_data.currency_information.get(instrument_id, "EUR")
+
+            if isin not in grouped:
+                grouped[isin] = {}
+
+            grouped[isin][ccy] = price
         for isin, ccy_prices in grouped.items():
             if isin not in self.mid:
                 self.mid[isin] = FairvaluePrice.by_currency(isin, {})
             for currency, prices in ccy_prices.items():
-                self.mid[isin]._prices[currency] = sum(prices) / len(prices)
+                self.mid[isin]._prices[currency] = sum(prices) / len(prices) if isinstance(prices, dict) else prices
 
         self.book_storage.append(dict(self.mid))
 

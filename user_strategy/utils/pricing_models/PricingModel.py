@@ -178,9 +178,10 @@ class DriverPricingModel(MultiPeriodLinearPricingModel):
 
 #------------------------------------------------------------------------------------#
 
-class RatePricingModel:
+class RatePricingModel(PricingModel):
 
     def __init__(self, name: str, target_variables: List[str], variables_proxy: pd.DataFrame):
+        super().__init__()
         self.name = name
         self._target_variables = target_variables
         self._variables_proxy = variables_proxy
@@ -195,10 +196,10 @@ class RatePricingModel:
         pass
 
     def get_price_prediction(self,
-                             book: pd.DataFrame,
+                             prices: pd.DataFrame,
                              all_returns: pd.DataFrame) -> pd.Series:
         self._dates = all_returns.index.tolist()
-        prediction = self._predict_prices(book, all_returns)
+        prediction = self._predict_prices(prices, all_returns)
         self._theoretical_prices.update(prediction)
         return self._theoretical_prices
 
@@ -241,3 +242,27 @@ class CreditFuturesInterestRatePricingModel(RatePricingModel):
     def _predict_prices(self, book: pd.DataFrame, all_returns: pd.DataFrame) -> pd.DataFrame:
         self._calculate_rate(book)
         return self._rate.T
+
+
+#------------------------------------------------------------------------------------#
+
+class NavPricingModel(PricingModel):
+
+    def __init__(self, name: str, target_variables: List[str], irs_data: pd.DataFrame, nav_data: pd.DataFrame):
+        super().__init__()
+        self.name = name
+        self._target_variables = target_variables
+        self._irs_data = irs_data
+        self._nav_data = nav_data
+
+        self._theoretical_prices: pd.Series = pd.Series(dtype=float, index=self._target_variables)
+        self._calculate_theoretical_prices()
+
+    def get_price_prediction(self,
+                             prices: pd.DataFrame,
+                             all_returns: pd.DataFrame) -> pd.Series:
+
+        return self._theoretical_prices
+
+    def _calculate_theoretical_prices(self):
+        pass
