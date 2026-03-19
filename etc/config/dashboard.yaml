@@ -12,6 +12,7 @@ dashboard:
     port: 6379
     db: 0
     channel: trades_test
+    batch_interval: 0.5
 
   rabbit:
     host: rabbitmq.af.tst
@@ -20,6 +21,7 @@ dashboard:
     password: Mqclient-00
     virtual_host: TestCredEQEtf
     exchange: trades_rabbit
+    batch_interval: 0.5
 
   
   metrics:
