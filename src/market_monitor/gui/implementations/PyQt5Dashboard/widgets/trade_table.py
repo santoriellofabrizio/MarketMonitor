@@ -1011,6 +1011,11 @@ class TradeTableWidget(QWidget):
         self.table.installEventFilter(self)
         self.table.viewport().installEventFilter(self)
 
+        # Store default font size (read after table is created so Qt has set it)
+        self._default_font_pt: int = max(self.table.font().pointSize(), 9)
+        # Font scaling starts below this row height (and above for zoom-in)
+        self._FONT_SCALE_THRESHOLD: int = 20
+
         # Apply initial row height
         self._apply_row_height()
 
@@ -1035,11 +1040,21 @@ class TradeTableWidget(QWidget):
     # ==========================================================
 
     def _apply_row_height(self):
-        """Apply current _row_height to the table vertical header."""
+        """Apply current _row_height to the vertical header and scale font if needed."""
         vh = self.table.verticalHeader()
         vh.setDefaultSectionSize(self._row_height)
         vh.setSectionResizeMode(QHeaderView.Fixed)
         self._zoom_label.setText(f"{self._row_height}px")
+
+        # Scale font proportionally to row height (below threshold and above default)
+        if hasattr(self, '_default_font_pt'):
+            scaled_pt = max(6, round(
+                self._default_font_pt * self._row_height / self._FONT_SCALE_THRESHOLD
+            ))
+            scaled_pt = min(scaled_pt, self._default_font_pt * 3)  # cap zoom-in
+            f = self.table.font()
+            f.setPointSize(scaled_pt)
+            self.table.setFont(f)
 
     def _zoom_in(self):
         new_h = min(self._row_height + self._ROW_HEIGHT_STEP, self._ROW_HEIGHT_MAX)
