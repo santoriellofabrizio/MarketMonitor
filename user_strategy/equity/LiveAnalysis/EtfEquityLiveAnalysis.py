@@ -128,7 +128,7 @@ class EtfEquityLiveAnalysis(StrategyUI):
                                                          store='market')
 
         self.quoting_instances = [instances for instances, _bool
-                                  in self.redis_dashboard.get_key('quoting_instances').items() if _bool == 'true']
+                                  in self.redis_dashboard.get_key('quoting_instances').items() if _bool]
 
     def from_kafka_to_bloomberg(self):
 

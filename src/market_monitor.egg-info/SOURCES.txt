@@ -26,6 +26,7 @@ src/market_monitor/gui/implementations/PyQt5Dashboard/detached_windows.py
 src/market_monitor/gui/implementations/PyQt5Dashboard/trade_dashboard.py
 src/market_monitor/gui/implementations/PyQt5Dashboard/worker_thread.py
 src/market_monitor/gui/implementations/PyQt5Dashboard/widgets/__init__.py
+src/market_monitor/gui/implementations/PyQt5Dashboard/widgets/calc_utils.py
 src/market_monitor/gui/implementations/PyQt5Dashboard/widgets/chart_widget.py
 src/market_monitor/gui/implementations/PyQt5Dashboard/widgets/dashboard_state.py
 src/market_monitor/gui/implementations/PyQt5Dashboard/widgets/filter.py

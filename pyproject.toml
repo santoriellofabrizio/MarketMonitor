@@ -62,6 +62,9 @@ find-links = [
 # IMPORTANTE: disabilita l'index di default (PyPI)
 no-index = true
 
+[tool.uv.sources]
+sfm-data-provider = { path = "../SFMDataProvider", editable = true }
+
 
 [dependency-groups]
 dev = [

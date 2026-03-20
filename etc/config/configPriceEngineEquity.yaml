@@ -104,7 +104,7 @@ market_monitor:
   tasks:
     update_HF:
       activate: true
-      frequency: 0.5
+      frequency: 1
     update_LF:
       activate: true
       frequency: 300
@@ -197,9 +197,9 @@ bloomberg_data_distributor:
 
 
 logging:
-  log_level: WARNING
-  log_level_console: INFO
-  log_name: PriceEngineEquityINFO.log
+  log_level: INFO
+  log_level_console: WARNING
+  log_name: PriceEngineEquity.log
 
 
 oracle_connection:

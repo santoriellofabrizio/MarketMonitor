@@ -289,7 +289,6 @@ dependencies = [
     { name = "ruamel-yaml", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "scipy", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "sfm-data-provider", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "sfm-dbconnections", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "sfm-pcf-db-library", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "sfm-return-adjustment-lib", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "sfm-timescaledb-queries", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -325,8 +324,7 @@ requires-dist = [
     { name = "redis", specifier = ">=6.2.0" },
     { name = "ruamel-yaml", specifier = ">=0.18.6" },
     { name = "scipy", specifier = ">=1.16.0" },
-    { name = "sfm-data-provider", specifier = "==1.2.76738" },
-    { name = "sfm-dbconnections", specifier = ">=1.1.75128" },
+    { name = "sfm-data-provider", editable = "../SFMDataProvider" },
     { name = "sfm-pcf-db-library", specifier = ">=1.0.72038" },
     { name = "sfm-return-adjustment-lib", specifier = ">=1.0.75641" },
     { name = "sfm-timescaledb-queries", specifier = ">=1.0.72117" },
@@ -754,8 +752,8 @@ wheels = [
 
 [[package]]
 name = "sfm-data-provider"
-version = "1.2.76738"
-source = { registry = '\\nas1bes\AreaFinanza/SHARE/PROGETTI ML/Python/python3_11/python packages' }
+version = "1.2"
+source = { editable = "../SFMDataProvider" }
 dependencies = [
     { name = "joblib", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "matplotlib", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -764,8 +762,15 @@ dependencies = [
     { name = "sfm-datalibrary", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "tqdm", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
-wheels = [
-    { path = "sfm_data_provider-1.2.76738-py3-none-any.whl" },
+
+[package.metadata]
+requires-dist = [
+    { name = "joblib", specifier = ">=1.4.2" },
+    { name = "matplotlib", specifier = ">=3.9.0" },
+    { name = "pytest-mock" },
+    { name = "ruamel-yaml", specifier = ">=0.18.6" },
+    { name = "sfm-datalibrary", specifier = ">=1.0.76348" },
+    { name = "tqdm", specifier = ">=4.64.0" },
 ]
 
 [[package]]
@@ -821,14 +826,14 @@ wheels = [
 
 [[package]]
 name = "sfm-return-adjustment-lib"
-version = "1.0.75641"
+version = "1.1.77317"
 source = { registry = '\\nas1bes\AreaFinanza/SHARE/PROGETTI ML/Python/python3_11/python packages' }
 dependencies = [
     { name = "sfm-bbgpyqueries", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
-    { name = "sfm-dbconnections", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "sfm-datalibrary", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
 wheels = [
-    { path = "sfm_return_adjustment_lib-1.0.75641-py3-none-any.whl" },
+    { path = "sfm_return_adjustment_lib-1.1.77317-py3-none-any.whl" },
 ]
 
 [[package]]
