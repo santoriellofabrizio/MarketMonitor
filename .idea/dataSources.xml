@@ -9,7 +9,7 @@
       <working-dir>$ProjectFileDir$</working-dir>
       <driver-properties>
         <property name="journal_mode" value="WAL" />
-        <property name="synchronous" value="NORMAL" />
+        <property name="synchronous" value="FULL" />
       </driver-properties>
     </data-source>
     <data-source source="LOCAL" name="markettrades.db" uuid="fdf67e14-96c6-40b0-aa92-0175ad84675b">

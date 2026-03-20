@@ -4,6 +4,7 @@ import sqlite3
 import time as sleep_time
 
 from collections import deque
+from contextlib import contextmanager
 from datetime import datetime, time, date
 import numpy as np
 import pandas as pd
@@ -39,6 +40,7 @@ from user_strategy.utils.bloomberg_subscription_utils.SubscriptionManager import
 logger = logging.getLogger(__name__)
 
 DB_ANAGRPHIC_PATH = r"V:\EquityETF\etf_equity_anagraphic_db.sqlite"
+
 
 
 class EtfEquityPriceEngine(StrategyUI):
@@ -396,35 +398,37 @@ class EtfEquityPriceEngine(StrategyUI):
     # =========================================================================
 
     def update_HF(self):
-        """Aggiornamento ad alta frequenza: prezzi, modelli, export GUI e storage TS."""
         if datetime.today().time() < time(17, 30):
-            self.get_mid()
 
-            predictions = self.models.predict_all(self.mid_eur)
+            with _timer("get_mid", self.logger):
+                self.get_mid()
+
+            with _timer("predict_all", self.logger):
+                predictions = self.models.predict_all(self.mid_eur)
 
             if self.alpha < 1.0:
-                for key in ("cluster", "intraday", "index_cluster"):
-                    pred = predictions.get(key)
-                    if pred is not None:
-                        predictions[key] = self.alpha * pred + (1.0 - self.alpha) * self.mid_eur
+                with _timer("alpha_blend", self.logger):
+                    for key in ("cluster", "intraday", "index_cluster"):
+                        pred = predictions.get(key)
+                        if pred is not None:
+                            predictions[key] = self.alpha * pred + (1.0 - self.alpha) * self.mid_eur
 
-            normalized_prices = {
-                'live_idx': round_series_to_tick(
-                    predictions.get("index_cluster"), self.reference_tick_size),
-                'live_clust': round_series_to_tick(
-                    predictions.get("cluster", pd.Series(dtype=float)).fillna(0),
-                    self.reference_tick_size),
-                'intraday': round_series_to_tick(
-                    predictions.get("intraday", pd.Series(dtype=float)).fillna(0),
-                    self.reference_tick_size),
-                'mid': round_series_to_tick(
-                    self.mid_eur.fillna(0), self.reference_tick_size),
-                'normalized_mid': (self.mid_eur / self.etf_prices.loc[self.etf_prices.index.max()]),
-            }
+            with _timer("round_prices", self.logger):
+                normalized_prices = {
+                    'live_idx': round_series_to_tick(predictions.get("index_cluster"), self.reference_tick_size),
+                    'live_clust': round_series_to_tick(predictions.get("cluster", pd.Series(dtype=float)).fillna(0),
+                                                       self.reference_tick_size),
+                    'intraday': round_series_to_tick(predictions.get("intraday", pd.Series(dtype=float)).fillna(0),
+                                                     self.reference_tick_size),
+                    'mid': round_series_to_tick(self.mid_eur.fillna(0), self.reference_tick_size),
+                    'normalized_mid': (self.mid_eur / self.etf_prices.loc[self.etf_prices.index.max()]),
+                }
 
-            self.publisher.publish_prices_to_gui(normalized_prices)
-            self.publisher.publish_to_timeseries(
-                normalized_prices, datetime.now(), predictions)
+            with _timer("publish_gui", self.logger):
+                self.publisher.publish_prices_to_gui(normalized_prices)
+
+            with _timer("publish_ts", self.logger):
+                self.publisher.publish_to_timeseries(normalized_prices, datetime.now(), predictions)
 
     def update_LF(self):
         """Aggiornamento a bassa frequenza: pubblica i ritorni intraday storici."""
@@ -438,9 +442,6 @@ class EtfEquityPriceEngine(StrategyUI):
     # =========================================================================
 
     def get_mid(self) -> pd.Series:
-        """
-        Legge il mid corrente dal book, filtra outlier e aggiorna i ritorni corretti.
-        """
         last_mid = self.market_data.get_mid()
         self.book_eur = self.market_data.get_data_field(["BID", "ASK"])
 
@@ -456,20 +457,23 @@ class EtfEquityPriceEngine(StrategyUI):
         else:
             self.mid_eur = last_mid
 
-        with self.adjuster.live_update(fx_prices=last_mid[self.currencies], prices=last_mid):
-            self.corrected_return = self.adjuster.get_clean_returns(cumulative=True).T
-            last_return = self.corrected_return.iloc[:, -1]
+        with _timer("get_mid.adjuster_daily", self.logger):
+            with self.adjuster.live_update(fx_prices=last_mid[self.currencies], prices=last_mid):
+                self.corrected_return = self.adjuster.get_clean_returns(cumulative=True).T
+                last_return = self.corrected_return.iloc[:, -1]
 
-        with self.intraday_adjuster.live_update(fx_prices=last_mid[self.currencies], prices=last_mid):
-            self.corrected_return_intraday = self.intraday_adjuster.get_clean_returns(cumulative=True).T
-            last_return_intraday = self.corrected_return_intraday.iloc[:, -1]
+        with _timer("get_mid.adjuster_intraday", self.logger):
+            with self.intraday_adjuster.live_update(fx_prices=last_mid[self.currencies], prices=last_mid):
+                self.corrected_return_intraday = self.intraday_adjuster.get_clean_returns(cumulative=True).T
+                last_return_intraday = self.corrected_return_intraday.iloc[:, -1]
 
-        # Aggiorna i returns source nel registry (i DataFrame sono stati ricreati)
         self.models.set_returns_source("cluster", self.corrected_return)
         self.models.set_returns_source("index_cluster", self.corrected_return)
         self.models.set_returns_source("intraday", self.corrected_return_intraday)
 
-        self.publisher.publish_returns(last_return, last_return_intraday)
+        with _timer("get_mid.publish_returns", self.logger):
+            self.publisher.publish_returns(last_return, last_return_intraday)
+
         self.book_storage.append(last_mid)
         return last_mid
 
@@ -609,4 +613,12 @@ class EtfEquityPriceEngine(StrategyUI):
         cluster_sizes = cluster_betas.gt(cluster_threshold, axis=0).sum(axis=1) + 1
 
         return cluster_sizes.where(cluster_sizes == 1, (cluster_sizes - 1) / cluster_sizes)
+
+@contextmanager
+def _timer(label: str, log: logging.Logger = logger):
+    t0 = sleep_time.perf_counter()
+    yield
+    elapsed_ms = (sleep_time.perf_counter() - t0) * 1000
+    log.info(f"[TIMER] {label}: {elapsed_ms:.1f} ms")
+
 

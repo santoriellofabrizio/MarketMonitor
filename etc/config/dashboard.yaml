@@ -34,7 +34,7 @@ dashboard:
       - my_lagged_spread_pl_marginality
 
 logging:
-  path: "logs/dashboard.log"
+  path: logs/dashboard.log
   level: DEBUG
   log_name: dashboard
 
