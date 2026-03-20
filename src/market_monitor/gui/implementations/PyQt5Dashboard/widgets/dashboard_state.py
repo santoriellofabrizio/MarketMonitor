@@ -135,6 +135,7 @@ class DashboardState:
                 'sort_column': trade_table.table.horizontalHeader().sortIndicatorSection(),
                 'sort_order': int(trade_table.table.horizontalHeader().sortIndicatorOrder()),
                 'row_height': getattr(trade_table, '_row_height', 22),
+                'font_size_pt': getattr(trade_table, '_font_size_pt', 0),
             }
 
             # 🆕 SALVA FILTRI AVANZATI
@@ -412,10 +413,11 @@ class DashboardState:
             if 'sort_column' in config and 'sort_order' in config:
                 trade_table.table.sortItems(config['sort_column'], config['sort_order'])
 
-            # Row height
+            # Row height + font size
             if 'row_height' in config and hasattr(trade_table, '_row_height'):
                 trade_table._row_height = int(config['row_height'])
-                trade_table._apply_row_height()
+                trade_table._font_size_pt = int(config.get('font_size_pt', 0))
+                trade_table._apply_zoom()
 
         except Exception as e:
             self.logger.warning(f"Failed to restore trade table: {e}")

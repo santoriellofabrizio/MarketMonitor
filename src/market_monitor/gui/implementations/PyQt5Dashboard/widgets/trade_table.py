@@ -17,6 +17,7 @@ from PyQt5.QtWidgets import (
     QMenu, QAction, QWidgetAction, QScrollArea, QFrame,
     QDialog, QDialogButtonBox, QListWidget, QListWidgetItem,
     QComboBox, QLineEdit, QColorDialog, QFormLayout, QStackedWidget,
+    QSlider,
 )
 
 from market_monitor.gui.implementations.PyQt5Dashboard.common import safe_concat
@@ -924,6 +925,7 @@ class TradeTableWidget(QWidget):
         self._ROW_HEIGHT_MIN: int = 14
         self._ROW_HEIGHT_MAX: int = 60
         self._ROW_HEIGHT_STEP: int = 2
+        self._font_size_pt: int = 0       # 0 = auto (scales with row height)
 
         self._setup_ui()
 
@@ -959,24 +961,11 @@ class TradeTableWidget(QWidget):
 
         controls_layout.addStretch()
 
-        # ---- Row height zoom controls ----
-        controls_layout.addWidget(QLabel("Rows:"))
-        zoom_out_btn = QPushButton("−")
-        zoom_out_btn.setFixedWidth(24)
-        zoom_out_btn.setToolTip("Decrease row height  (Ctrl+−)")
-        zoom_out_btn.clicked.connect(self._zoom_out)
-        controls_layout.addWidget(zoom_out_btn)
-
-        self._zoom_label = QLabel(f"{self._row_height}px")
-        self._zoom_label.setFixedWidth(38)
-        self._zoom_label.setAlignment(Qt.AlignCenter)
-        controls_layout.addWidget(self._zoom_label)
-
-        zoom_in_btn = QPushButton("+")
-        zoom_in_btn.setFixedWidth(24)
-        zoom_in_btn.setToolTip("Increase row height  (Ctrl++)")
-        zoom_in_btn.clicked.connect(self._zoom_in)
-        controls_layout.addWidget(zoom_in_btn)
+        # ---- Zoom button ----
+        self._zoom_btn = QPushButton("🔍 Zoom")
+        self._zoom_btn.setToolTip("Adjust row height and font size  (Ctrl+wheel to change row height)")
+        self._zoom_btn.clicked.connect(self._show_zoom_menu)
+        controls_layout.addWidget(self._zoom_btn)
 
         self.filter_info_label = QLabel("No filters active")
         controls_layout.addWidget(self.filter_info_label)
@@ -1013,11 +1002,9 @@ class TradeTableWidget(QWidget):
 
         # Store default font size (read after table is created so Qt has set it)
         self._default_font_pt: int = max(self.table.font().pointSize(), 9)
-        # Font scaling starts below this row height (and above for zoom-in)
-        self._FONT_SCALE_THRESHOLD: int = 20
 
-        # Apply initial row height
-        self._apply_row_height()
+        # Apply initial zoom
+        self._apply_zoom()
 
         layout.addWidget(self.table)
 
@@ -1036,37 +1023,151 @@ class TradeTableWidget(QWidget):
         self._refresh_view()
 
     # ==========================================================
-    # ROW HEIGHT ZOOM
+    # ZOOM
     # ==========================================================
 
-    def _apply_row_height(self):
-        """Apply current _row_height to the vertical header and scale font if needed."""
+    def _apply_zoom(self):
+        """Apply _row_height and _font_size_pt to the table."""
+        # Row height
         vh = self.table.verticalHeader()
         vh.setDefaultSectionSize(self._row_height)
         vh.setSectionResizeMode(QHeaderView.Fixed)
-        self._zoom_label.setText(f"{self._row_height}px")
 
-        # Scale font proportionally to row height (below threshold and above default)
-        if hasattr(self, '_default_font_pt'):
-            scaled_pt = max(6, round(
-                self._default_font_pt * self._row_height / self._FONT_SCALE_THRESHOLD
-            ))
-            scaled_pt = min(scaled_pt, self._default_font_pt * 3)  # cap zoom-in
-            f = self.table.font()
-            f.setPointSize(scaled_pt)
-            self.table.setFont(f)
+        # Font: manual override or auto-scale with row height
+        if self._font_size_pt > 0:
+            pt = self._font_size_pt
+        else:
+            # Auto: scale proportionally, threshold = default row height (22)
+            pt = max(6, round(self._default_font_pt * self._row_height / 22))
+            pt = min(pt, self._default_font_pt * 3)
+
+        f = self.table.font()
+        f.setPointSize(pt)
+        self.table.setFont(f)
+
+        self._update_zoom_btn_label()
+
+    # keep old name as alias for dashboard_state compatibility
+    def _apply_row_height(self):
+        self._apply_zoom()
+
+    def _update_zoom_btn_label(self):
+        pt = self._font_size_pt if self._font_size_pt > 0 else self.table.font().pointSize()
+        self._zoom_btn.setText(f"🔍 {self._row_height}px / {pt}pt")
 
     def _zoom_in(self):
         new_h = min(self._row_height + self._ROW_HEIGHT_STEP, self._ROW_HEIGHT_MAX)
         if new_h != self._row_height:
             self._row_height = new_h
-            self._apply_row_height()
+            self._apply_zoom()
 
     def _zoom_out(self):
         new_h = max(self._row_height - self._ROW_HEIGHT_STEP, self._ROW_HEIGHT_MIN)
         if new_h != self._row_height:
             self._row_height = new_h
-            self._apply_row_height()
+            self._apply_zoom()
+
+    def _show_zoom_menu(self):
+        """Show a dropdown menu with row height and font size sliders."""
+        menu = QMenu(self)
+        menu.setMinimumWidth(260)
+
+        def _make_slider_widget(label_text, value, lo, hi, step, on_change, reset_val):
+            w = QWidget()
+            w.setContentsMargins(8, 4, 8, 4)
+            row = QHBoxLayout(w)
+            row.setSpacing(6)
+
+            lbl = QLabel(label_text)
+            lbl.setFixedWidth(68)
+            row.addWidget(lbl)
+
+            slider = QSlider(Qt.Horizontal)
+            slider.setRange(lo, hi)
+            slider.setSingleStep(step)
+            slider.setPageStep(step * 2)
+            slider.setValue(value)
+            slider.setFixedWidth(110)
+            row.addWidget(slider)
+
+            val_lbl = QLabel(str(value))
+            val_lbl.setFixedWidth(28)
+            val_lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            row.addWidget(val_lbl)
+
+            reset_btn = QPushButton("↺")
+            reset_btn.setFixedWidth(22)
+            reset_btn.setToolTip(f"Reset to {reset_val}")
+            row.addWidget(reset_btn)
+
+            def _slider_moved(v):
+                val_lbl.setText(str(v))
+                on_change(v)
+
+            slider.valueChanged.connect(_slider_moved)
+            reset_btn.clicked.connect(lambda: slider.setValue(reset_val))
+
+            return w
+
+        # ── Row Height ────────────────────────────────────────────
+        rh_title = QAction("  Row Height", menu)
+        rh_title.setEnabled(False)
+        menu.addAction(rh_title)
+
+        rh_widget = _make_slider_widget(
+            "Height (px)",
+            self._row_height,
+            self._ROW_HEIGHT_MIN, self._ROW_HEIGHT_MAX, self._ROW_HEIGHT_STEP,
+            lambda v: (setattr(self, '_row_height', v), self._apply_zoom()),
+            22,
+        )
+        rh_action = QWidgetAction(menu)
+        rh_action.setDefaultWidget(rh_widget)
+        menu.addAction(rh_action)
+
+        menu.addSeparator()
+
+        # ── Font Size ─────────────────────────────────────────────
+        fs_title = QAction("  Font Size", menu)
+        fs_title.setEnabled(False)
+        menu.addAction(fs_title)
+
+        cur_font_pt = (self._font_size_pt if self._font_size_pt > 0
+                       else self.table.font().pointSize())
+        fs_widget = _make_slider_widget(
+            "Font (pt)",
+            cur_font_pt,
+            6, 24, 1,
+            lambda v: (setattr(self, '_font_size_pt', v), self._apply_zoom()),
+            0,  # reset → auto
+        )
+        fs_action = QWidgetAction(menu)
+        fs_action.setDefaultWidget(fs_widget)
+        menu.addAction(fs_action)
+
+        # "Auto font" toggle
+        auto_action = QAction("  Auto font (scales with row height)", menu)
+        auto_action.setCheckable(True)
+        auto_action.setChecked(self._font_size_pt == 0)
+        def _toggle_auto(checked):
+            self._font_size_pt = 0 if checked else self.table.font().pointSize()
+            self._apply_zoom()
+        auto_action.triggered.connect(_toggle_auto)
+        menu.addAction(auto_action)
+
+        menu.addSeparator()
+
+        reset_all = QAction("  Reset all", menu)
+        def _reset():
+            self._row_height = 22
+            self._font_size_pt = 0
+            self._apply_zoom()
+        reset_all.triggered.connect(_reset)
+        menu.addAction(reset_all)
+
+        menu.exec_(self._zoom_btn.mapToGlobal(
+            self._zoom_btn.rect().bottomLeft()
+        ))
 
     def eventFilter(self, obj, event):
         if (event.type() == QEvent.Wheel
