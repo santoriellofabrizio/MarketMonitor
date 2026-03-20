@@ -96,7 +96,7 @@ class CBTradeAnalysis(StrategyUI):
         new_trades['price_multiplier'] = 0.01
         processed_new = self.trade_manager.on_trade(new_trades)
         # Invia trades: nuovi parziali + parziali precedenti ora elaborati
-        trades_to_publish = self.trade_manager.get_trades_to_publish(processed_new)
+        trades_to_publish = self.trade_manager.get_trades_to_publish()
         self.publish_trades_on_dashboard(trades_to_publish)
 
 

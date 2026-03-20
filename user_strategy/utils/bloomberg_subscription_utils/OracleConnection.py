@@ -3,12 +3,12 @@ from typing import Tuple, List
 
 import pandas as pd
 from joblib import Memory
-from sfm_dbconnections.OracleConnection import OracleConnection as sfm_OracleConnection
+from sfm_datalibrary.connections.db_connections.OracleConnection import OracleConnection as sfm_oracle_connection
 
 memoryPCF = Memory(".cache/cachePcf", verbose=False)
 # Define the location for caching
 
-class OracleConnection(sfm_OracleConnection):
+class OracleConnection(sfm_oracle_connection):
 
     MAX_MB = 20
     MAX_CACHE_SIZE = MAX_MB * 1024 * 1024

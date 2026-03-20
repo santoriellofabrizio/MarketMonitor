@@ -1,11 +1,12 @@
 import datetime as dt
 import logging
+import math
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
 from time import sleep
-from typing import Literal
 
+import numpy as np
 import pandas as pd
 
 from market_monitor.publishers.rabbit_publisher import RabbitMessaging

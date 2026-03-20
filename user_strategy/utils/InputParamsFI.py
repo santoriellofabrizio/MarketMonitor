@@ -14,7 +14,6 @@ from user_strategy.utils.pricing_models.AggregationFunctions import ForecastAggr
 from user_strategy.utils.SvnDownloader import download_fxdincomedb_from_svn
 
 from user_strategy.utils.InputParams import InputParams
-from sfm_pcf_db_library.PCFDBManager import PCFDBManager
 from sfm_datalibrary.queries import OracleDynamicDataQuery
 from sfm_datalibrary.connections.db_connections import DbConnectionParameters, OracleConnectionParameters, OracleConnection
 
@@ -424,6 +423,8 @@ class InputParamsFI(InputParams):
         self._sql_db_manager = InstrumentDbManager(self.sql_db_fi_file)
 
     def _initialize_pcf_db_manager(self):
+        if not self.Oracle_DB_connection:
+            self.Oracle_DB_connection = self._get_oracle_connection()
         self._pcf_db_manager = OracleDynamicDataQuery(self.Oracle_DB_connection)
 
     @staticmethod

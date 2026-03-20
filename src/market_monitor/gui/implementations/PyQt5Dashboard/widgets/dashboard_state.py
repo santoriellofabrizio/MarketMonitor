@@ -126,6 +126,7 @@ class DashboardState:
             config = {
                 'visible_columns': trade_table.visible_columns,
                 'column_widths': self._get_column_widths(trade_table.table),
+                'column_widths_by_name': dict(getattr(trade_table, '_column_widths', {})),
                 'column_decimals': trade_table.column_decimals.copy(),
                 'autoscroll': trade_table.autoscroll_checkbox.isChecked(),
                 'datetime_format': trade_table.datetime_format,
@@ -161,6 +162,7 @@ class DashboardState:
                     pivot_config = {
                         'window_number': window.window_number,
                         'geometry': self._qbytearray_to_hex(window.saveGeometry()),
+                        'custom_title': getattr(window, '_custom_title', ''),
                     }
 
                     # Salva configurazione pivot completa
@@ -181,6 +183,7 @@ class DashboardState:
                     chart_config = {
                         'window_number': window.window_number,
                         'geometry': self._qbytearray_to_hex(window.saveGeometry()),
+                        'custom_title': getattr(window, '_custom_title', ''),
                     }
 
                     # Salva configurazione chart completa
@@ -201,6 +204,7 @@ class DashboardState:
                     detached['flow_windows'].append({
                         'window_number': window.window_number,
                         'geometry': self._qbytearray_to_hex(window.saveGeometry()),
+                        'custom_title': getattr(window, '_custom_title', ''),
                     })
 
             # GROUPBY WINDOWS
@@ -209,6 +213,7 @@ class DashboardState:
                     gb_config = {
                         'window_number': window.window_number,
                         'geometry': self._qbytearray_to_hex(window.saveGeometry()),
+                        'custom_title': getattr(window, '_custom_title', ''),
                     }
                     if hasattr(window.groupby_widget, 'get_config'):
                         widget_config = window.groupby_widget.get_config()
@@ -394,8 +399,12 @@ class DashboardState:
             if 'dedup_column' in config:
                 trade_table.dedup_column = config['dedup_column']
 
-            # Larghezze colonne
-            if 'column_widths' in config:
+            # Larghezze colonne (per nome, nuovo formato)
+            if 'column_widths_by_name' in config:
+                if hasattr(trade_table, '_column_widths'):
+                    trade_table._column_widths = dict(config['column_widths_by_name'])
+            elif 'column_widths' in config:
+                # Fallback legacy: per indice
                 self._restore_column_widths(trade_table.table, config['column_widths'])
 
             # Sorting
@@ -440,6 +449,10 @@ class DashboardState:
                 window = dashboard._create_detached_pivot_internal()
                 window.restoreGeometry(self._hex_to_qbytearray(config['geometry']))
 
+                # Ripristina titolo personalizzato
+                if config.get('custom_title'):
+                    window.set_custom_title(config['custom_title'])
+
                 # ✅ CARICA DATI STORICI PRIMA DI RESTORE CONFIG
                 if not dashboard.all_trades.empty:
                     window.pivot_widget.set_source_data(dashboard.all_trades)
@@ -467,6 +480,10 @@ class DashboardState:
                 window = dashboard._create_detached_chart_internal()
                 window.restoreGeometry(self._hex_to_qbytearray(config['geometry']))
 
+                # Ripristina titolo personalizzato
+                if config.get('custom_title'):
+                    window.set_custom_title(config['custom_title'])
+
                 # ✅ CARICA DATI STORICI PRIMA DI RESTORE CONFIG
                 if not dashboard.all_trades.empty:
                     window.chart_widget.set_data(dashboard.all_trades)
@@ -493,6 +510,8 @@ class DashboardState:
             for config in detached.get('flow_windows', []):
                 window = dashboard._create_detached_flow_internal()
                 window.restoreGeometry(self._hex_to_qbytearray(config['geometry']))
+                if config.get('custom_title'):
+                    window.set_custom_title(config['custom_title'])
                 window.show()
 
             # GROUPBY WINDOWS
@@ -501,6 +520,8 @@ class DashboardState:
                     continue
                 window = dashboard._create_detached_groupby_internal()
                 window.restoreGeometry(self._hex_to_qbytearray(config['geometry']))
+                if config.get('custom_title'):
+                    window.set_custom_title(config['custom_title'])
 
                 # Carica dati arricchiti
                 if hasattr(dashboard, '_get_enriched_trades'):

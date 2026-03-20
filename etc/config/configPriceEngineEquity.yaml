@@ -181,6 +181,15 @@ control_panel:
       step: 0.05
       description: "α·model_price + (1-α)·mid — blending model price with market mid"
 
+    - label: "Debug ISIN"
+      action: "debug_isin"
+      type: "isin_debug"
+      models:
+        - "cluster"
+        - "intraday"
+        - "index_cluster"
+      description: "Genera Excel di debug (beta, breakdown, ritorni, predizioni) per un ETF"
+
 
 bloomberg_data_distributor:
   activate: true

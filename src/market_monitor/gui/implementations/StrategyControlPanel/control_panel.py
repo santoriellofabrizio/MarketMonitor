@@ -26,7 +26,7 @@ from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QTabWidget, QLabel, QPushButton, QScrollArea,
     QTextEdit, QTableWidget, QTableWidgetItem, QHeaderView,
-    QComboBox, QGroupBox, QDoubleSpinBox,
+    QComboBox, QGroupBox, QDoubleSpinBox, QLineEdit,
     QApplication,
 )
 
@@ -728,6 +728,32 @@ class StrategyControlPanel(QMainWindow):
                     btn.setStyleSheet(_BTN_PRIMARY)
                     btn.clicked.connect(
                         lambda _c, a=action, sp=spinbox, ch=channel: self._send_quick_command(a, {"value": sp.value()}, ch)
+                    )
+                    grp_layout.addWidget(btn)
+                elif cmd_type == "isin_debug":
+                    grp_layout.addWidget(QLabel("ISIN:"))
+                    isin_edit = QLineEdit()
+                    isin_edit.setPlaceholderText("es. IE00B4L5Y983")
+                    isin_edit.setFixedWidth(160)
+                    isin_edit.setFont(QFont("Courier New", 9))
+                    if desc:
+                        isin_edit.setToolTip(desc)
+                    grp_layout.addWidget(isin_edit)
+                    model_combo = QComboBox()
+                    model_combo.setFixedWidth(110)
+                    for m in cmd.get("models", ["cluster", "intraday", "index_cluster"]):
+                        model_combo.addItem(m)
+                    grp_layout.addWidget(model_combo)
+                    btn = QPushButton(label)
+                    btn.setFixedHeight(30)
+                    btn.setStyleSheet(_BTN_PRIMARY)
+                    if desc:
+                        btn.setToolTip(desc)
+                    btn.clicked.connect(
+                        lambda _c, a=action, ie=isin_edit, mc=model_combo, ch=channel: (
+                            self._send_quick_command(a, {"isin": ie.text().strip(), "model": mc.currentText()}, ch)
+                            if ie.text().strip() else None
+                        )
                     )
                     grp_layout.addWidget(btn)
                 else:

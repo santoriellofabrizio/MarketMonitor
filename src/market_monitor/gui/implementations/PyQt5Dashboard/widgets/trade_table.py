@@ -1365,6 +1365,29 @@ class TradeTableWidget(QWidget):
         if df is None or df.empty:
             return
 
+        # Snapshot detection: se i dati in arrivo non hanno duplicati sulla
+        # dedup_column e coprono almeno tutti i trade già presenti in all_data,
+        # sono uno snapshot completo → rimpiazza direttamente senza sort+groupby.
+        # Questo evita la ridondante O(N log N) dedup quando il widget è usato
+        # dentro TradeDashboard (che passa già dati completamente dedupplicati).
+        if (
+            self.dedup_column in df.columns
+            and not df[self.dedup_column].duplicated().any()
+            and (
+                self.all_data.empty
+                or (
+                    self.dedup_column in self.all_data.columns
+                    and len(df) >= len(self.all_data)
+                )
+            )
+        ):
+            self.all_data = df.copy()
+            if not self.visible_columns:
+                self.visible_columns = list(self.all_data.columns)
+            self._apply_filters()
+            return
+
+        # Path originale per update parziali (widget usato standalone)
         if self.all_data.empty:
             self.all_data = df.copy()
         else:

@@ -7,9 +7,8 @@ import sys
 from importlib import util
 from queue import Queue
 from threading import Lock
-
-from sfm_dbconnections.DbConnectionParameters import DbConnectionParameters, OracleConnectionParameters, \
-    TimescaleConnectionParameters
+from sfm_datalibrary.connections.db_connections import DbConnectionParameters, OracleConnectionParameters, \
+    TimescaleConnectionParameters, DbEnvironmentType
 
 from market_monitor.gui.implementations.GUI import GUIDummy
 from market_monitor.gui.threaded_GUI.GUIQueue import GUIQueue
@@ -291,26 +290,18 @@ class Builder:
 
     def _setup_oracle_connection(self):
         db_connection_parameters = DbConnectionParameters
-        db_connection_parameters.set_oracle_parameter(OracleConnectionParameters.ENVIRONMENT,
-                                                      self.config['oracle_connection']['environment'])
-        db_connection_parameters.set_oracle_parameter(OracleConnectionParameters.USERNAME,
-                                                      self.config['oracle_connection']['user'])
-        db_connection_parameters.set_oracle_parameter(OracleConnectionParameters.PASSWORD,
-                                                      self.config['oracle_connection']['password'])
-        db_connection_parameters.set_oracle_parameter(OracleConnectionParameters.SCHEMA,
-                                                      self.config['oracle_connection']['schema'])
-        db_connection_parameters.set_oracle_parameter(OracleConnectionParameters.TNS_NAME,
-                                                      self.config['oracle_connection']['tns_name'])
+        db_connection_parameters.overwrite_oracle_parameter(OracleConnectionParameters.ENVIRONMENT,
+                                                            self.config['oracle_connection']['environment'])
+        db_connection_parameters.overwrite_oracle_parameter(OracleConnectionParameters.USERNAME,
+                                                            self.config['oracle_connection']['user'])
+        db_connection_parameters.overwrite_oracle_parameter(OracleConnectionParameters.PASSWORD,
+                                                            self.config['oracle_connection']['password'])
 
     def _setup_timescale_connection(self):
         db_connection_parameters = DbConnectionParameters
-        db_connection_parameters.set_timescale_parameter(TimescaleConnectionParameters.HOST,
-                                                         self.config['timescale_connection']['host'])
-        db_connection_parameters.set_timescale_parameter(TimescaleConnectionParameters.DB_NAME,
-                                                         self.config['timescale_connection']['database'])
-        db_connection_parameters.set_timescale_parameter(TimescaleConnectionParameters.PORT,
-                                                         int(self.config['timescale_connection']['port']))
-        db_connection_parameters.set_timescale_parameter(TimescaleConnectionParameters.USERNAME,
+        db_connection_parameters.overwrite_timescale_parameter(TimescaleConnectionParameters.ENVIRONMENT,
+                                                            DbEnvironmentType.PROD)
+        db_connection_parameters.overwrite_timescale_parameter(TimescaleConnectionParameters.USERNAME,
                                                          self.config['timescale_connection']['user'])
-        db_connection_parameters.set_timescale_parameter(TimescaleConnectionParameters.PASSWORD,
+        db_connection_parameters.overwrite_timescale_parameter(TimescaleConnectionParameters.PASSWORD,
                                                          self.config['timescale_connection']['password'])

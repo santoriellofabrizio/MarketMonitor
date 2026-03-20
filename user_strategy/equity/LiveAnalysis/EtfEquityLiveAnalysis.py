@@ -57,6 +57,8 @@ class EtfEquityLiveAnalysis(StrategyUI):
         self._init_rabbit_dashboard(**kwargs)
 
         self.trade_manager = TradeManager(self.book_storage, **kwargs.get("trade_manager", {}))
+        self.quoting_instances = [instance for instance, _bool
+                                  in self.redis_dashboard.get_key('quoting_instances').items() if _bool]
 
     def _init_rabbit_dashboard(self, **kwargs):
         rabbit_cfg = kwargs.get('rabbit_data_export', {})
@@ -128,7 +130,6 @@ class EtfEquityLiveAnalysis(StrategyUI):
         self.quoting_instances = [instances for instances, _bool
                                   in self.redis_dashboard.get_key('quoting_instances').items() if _bool]
 
-
     def from_kafka_to_bloomberg(self):
 
         if self.price_source == 'kafka':
@@ -187,10 +188,11 @@ class EtfEquityLiveAnalysis(StrategyUI):
     def update_HF(self):
         if datetime.today().time() < dt.time(17, 29, 40):
             self.get_live_data()
+            self.publish_trades_on_excel()
 
     def on_trade(self, new_trades):
 
-        new_trades['model_price'] = new_trades['model_price'] = new_trades['isin'].map(self.model_price)
+        new_trades = self._enrich_trades(new_trades)
         processed_new = self.trade_manager.on_trade(new_trades)
 
         self.flow_detector.process_trades(processed_new)
@@ -201,6 +203,37 @@ class EtfEquityLiveAnalysis(StrategyUI):
 
         trades_to_publish = self.trade_manager.get_trades_to_publish()
         self.publish_trades_on_dashboard(trades_to_publish)
+
+    def _enrich_trades(self, trades) -> pd.DataFrame:
+        trades['model_price'] = trades['isin'].map(self.model_price)
+        trades['quoting'] = trades.apply(lambda row: f"{row.exchange}-{row.name}" in self.quoting_instances, axis=1)
+        return trades
+
+    def publish_trades_on_excel(self):
+
+        trades_to_publish = self.trade_manager.get_trades(n_seconds=10)
+        if trades_to_publish.empty:
+            pass
+
+        trades_to_publish.drop([c for c in trades_to_publish.columns if "spread" in c],
+                               inplace=True,
+                               errors="ignore",
+                               axis=1)
+
+        trades_to_publish.drop(["is_elaborated",
+                                "model_price",
+                                "price_multiplier",
+                                "description"], axis=1,
+                               inplace=True)
+
+        trades_to_publish["quoting"] = trades_to_publish.apply(lambda row:
+                                                               f"{row.exchange}-{row.name}" in self.quoting_instances,
+                                                               axis=1)
+
+        self.redis_dashboard.export_message(channel=f"{self.channel_redis}_excel",
+                                            value=trades_to_publish,
+                                            date_format='iso',
+                                            orient="records")
 
     def publish_trades_on_dashboard(self, new_trades):
 
