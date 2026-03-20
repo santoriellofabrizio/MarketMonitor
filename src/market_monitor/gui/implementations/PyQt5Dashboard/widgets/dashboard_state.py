@@ -134,6 +134,7 @@ class DashboardState:
                 'dedup_column': trade_table.dedup_column,
                 'sort_column': trade_table.table.horizontalHeader().sortIndicatorSection(),
                 'sort_order': int(trade_table.table.horizontalHeader().sortIndicatorOrder()),
+                'row_height': getattr(trade_table, '_row_height', 22),
             }
 
             # 🆕 SALVA FILTRI AVANZATI
@@ -410,6 +411,11 @@ class DashboardState:
             # Sorting
             if 'sort_column' in config and 'sort_order' in config:
                 trade_table.table.sortItems(config['sort_column'], config['sort_order'])
+
+            # Row height
+            if 'row_height' in config and hasattr(trade_table, '_row_height'):
+                trade_table._row_height = int(config['row_height'])
+                trade_table._apply_row_height()
 
         except Exception as e:
             self.logger.warning(f"Failed to restore trade table: {e}")

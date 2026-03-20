@@ -9,8 +9,8 @@ from pathlib import Path
 from typing import Optional, List
 
 import pandas as pd
-from PyQt5.QtCore import Qt, pyqtSignal, QPoint
-from PyQt5.QtGui import QColor, QCursor
+from PyQt5.QtCore import Qt, pyqtSignal, QPoint, QObject, QEvent
+from PyQt5.QtGui import QColor, QCursor, QFont
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
     QLabel, QPushButton, QGroupBox, QHeaderView, QSpinBox, QCheckBox,
@@ -919,6 +919,12 @@ class TradeTableWidget(QWidget):
         self.rows_per_batch = 100
         self.is_loading = False
 
+        # ---- Row height / zoom ----
+        self._row_height: int = 22        # default px
+        self._ROW_HEIGHT_MIN: int = 14
+        self._ROW_HEIGHT_MAX: int = 60
+        self._ROW_HEIGHT_STEP: int = 2
+
         self._setup_ui()
 
     # ==========================================================
@@ -953,6 +959,25 @@ class TradeTableWidget(QWidget):
 
         controls_layout.addStretch()
 
+        # ---- Row height zoom controls ----
+        controls_layout.addWidget(QLabel("Rows:"))
+        zoom_out_btn = QPushButton("−")
+        zoom_out_btn.setFixedWidth(24)
+        zoom_out_btn.setToolTip("Decrease row height  (Ctrl+−)")
+        zoom_out_btn.clicked.connect(self._zoom_out)
+        controls_layout.addWidget(zoom_out_btn)
+
+        self._zoom_label = QLabel(f"{self._row_height}px")
+        self._zoom_label.setFixedWidth(38)
+        self._zoom_label.setAlignment(Qt.AlignCenter)
+        controls_layout.addWidget(self._zoom_label)
+
+        zoom_in_btn = QPushButton("+")
+        zoom_in_btn.setFixedWidth(24)
+        zoom_in_btn.setToolTip("Increase row height  (Ctrl++)")
+        zoom_in_btn.clicked.connect(self._zoom_in)
+        controls_layout.addWidget(zoom_in_btn)
+
         self.filter_info_label = QLabel("No filters active")
         controls_layout.addWidget(self.filter_info_label)
 
@@ -982,6 +1007,13 @@ class TradeTableWidget(QWidget):
             self._on_scroll
         )
 
+        # Ctrl+wheel → zoom
+        self.table.installEventFilter(self)
+        self.table.viewport().installEventFilter(self)
+
+        # Apply initial row height
+        self._apply_row_height()
+
         layout.addWidget(self.table)
 
     # ==========================================================
@@ -997,6 +1029,40 @@ class TradeTableWidget(QWidget):
         ]
         self.visible_columns = new_order
         self._refresh_view()
+
+    # ==========================================================
+    # ROW HEIGHT ZOOM
+    # ==========================================================
+
+    def _apply_row_height(self):
+        """Apply current _row_height to the table vertical header."""
+        vh = self.table.verticalHeader()
+        vh.setDefaultSectionSize(self._row_height)
+        vh.setSectionResizeMode(QHeaderView.Fixed)
+        self._zoom_label.setText(f"{self._row_height}px")
+
+    def _zoom_in(self):
+        new_h = min(self._row_height + self._ROW_HEIGHT_STEP, self._ROW_HEIGHT_MAX)
+        if new_h != self._row_height:
+            self._row_height = new_h
+            self._apply_row_height()
+
+    def _zoom_out(self):
+        new_h = max(self._row_height - self._ROW_HEIGHT_STEP, self._ROW_HEIGHT_MIN)
+        if new_h != self._row_height:
+            self._row_height = new_h
+            self._apply_row_height()
+
+    def eventFilter(self, obj, event):
+        if (event.type() == QEvent.Wheel
+                and event.modifiers() & Qt.ControlModifier):
+            delta = event.angleDelta().y()
+            if delta > 0:
+                self._zoom_in()
+            elif delta < 0:
+                self._zoom_out()
+            return True          # consume event
+        return super().eventFilter(obj, event)
 
     # ==========================================================
     # HEADER CONTEXT MENU
