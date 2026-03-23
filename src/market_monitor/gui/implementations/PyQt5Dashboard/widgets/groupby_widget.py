@@ -376,6 +376,7 @@ class GroupByWidget(QWidget):
         self.column_decimals: Dict[str, int] = {}
         self.active_filter: Optional[FilterGroup] = None
         self._pending_config: Optional[Dict[str, Any]] = None
+        self._last_data_sig: tuple = ()   # (nrows, max_trade_index_or_max_ts)
 
         # Coppie (colonna, funzione_aggregazione, alias)
         self.value_agg_pairs: List[Tuple[str, str, str]] = []
@@ -817,22 +818,22 @@ class GroupByWidget(QWidget):
             return df
 
         result = df.copy()
-        # Skip the first column (group key); normalize only value columns
         numeric_cols = [c for c in result.columns[1:] if pd.api.types.is_numeric_dtype(result[c])]
         if not numeric_cols:
             return df
 
+        vals = result[numeric_cols]
+
         if mode == 'index':
-            for idx in result.index:
-                row_sum = result.loc[idx, numeric_cols].sum()
-                if row_sum != 0:
-                    result.loc[idx, numeric_cols] = result.loc[idx, numeric_cols] / row_sum * 100
-                else:
-                    result.loc[idx, numeric_cols] = 0
+            row_sums = vals.sum(axis=1)
+            safe = row_sums.replace(0, 1)
+            result[numeric_cols] = vals.div(safe, axis=0) * 100
+            result.loc[row_sums == 0, numeric_cols] = 0
         elif mode == 'columns':
-            for col in numeric_cols:
-                col_sum = result[col].sum()
-                result[col] = result[col] / col_sum * 100 if col_sum != 0 else 0
+            col_sums = vals.sum(axis=0)
+            safe = col_sums.replace(0, 1)
+            result[numeric_cols] = vals.div(safe, axis=1) * 100
+            result.loc[:, col_sums[col_sums == 0].index] = 0
 
         return result
 
@@ -840,8 +841,24 @@ class GroupByWidget(QWidget):
     # Source data
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _data_signature(df: pd.DataFrame) -> tuple:
+        """Cheap fingerprint: (nrows, max_trade_index or max_timestamp)."""
+        if df.empty:
+            return (0,)
+        n = len(df)
+        if 'trade_index' in df.columns:
+            return (n, int(df['trade_index'].max()))
+        if 'timestamp' in df.columns:
+            return (n, str(df['timestamp'].max()))
+        return (n,)
+
     def set_source_data(self, df: pd.DataFrame):
         """Imposta dati sorgente (già arricchiti con campi calcolati dal dashboard)."""
+        new_sig = self._data_signature(df)
+        data_changed = new_sig != self._last_data_sig
+        self._last_data_sig = new_sig
+
         self.source_data = df
 
         if df.empty:
@@ -865,7 +882,7 @@ class GroupByWidget(QWidget):
         if self._pending_config:
             self._apply_pending_config()
             self._pending_config = None
-        elif self.current_config:
+        elif self.current_config and data_changed:
             self._apply_groupby_from_config(self.current_config)
 
     def _check_config_compatibility(self, config: dict) -> bool:

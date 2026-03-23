@@ -229,6 +229,7 @@ class PivotTableWidget(QWidget):
 
         # Configurazione pending per restore dopo set_source_data
         self._pending_config: Optional[Dict[str, Any]] = None
+        self._last_data_sig: tuple = ()   # (nrows, max_trade_index_or_max_ts)
 
         self._setup_ui()
 
@@ -709,8 +710,24 @@ class PivotTableWidget(QWidget):
                 if checkbox != changed_checkbox:
                     checkbox.setChecked(False)
 
+    @staticmethod
+    def _data_signature(df: pd.DataFrame) -> tuple:
+        """Cheap fingerprint: (nrows, max_trade_index or max_timestamp)."""
+        if df.empty:
+            return (0,)
+        n = len(df)
+        if 'trade_index' in df.columns:
+            return (n, int(df['trade_index'].max()))
+        if 'timestamp' in df.columns:
+            return (n, str(df['timestamp'].max()))
+        return (n,)
+
     def set_source_data(self, df: pd.DataFrame):
         """Imposta i dati sorgente per il pivot"""
+        new_sig = self._data_signature(df)
+        data_changed = new_sig != self._last_data_sig
+        self._last_data_sig = new_sig
+
         self.source_data = df
 
         if df.empty:
@@ -758,8 +775,8 @@ class PivotTableWidget(QWidget):
         if self._pending_config:
             self._apply_pending_config()
             self._pending_config = None
-        # Altrimenti ri-applica pivot se configurato
-        elif self.current_config:
+        # Altrimenti ri-applica pivot solo se i dati sono cambiati
+        elif self.current_config and data_changed:
             self._apply_pivot_from_config(self.current_config)
 
     def _check_config_compatibility(self, config: dict) -> bool:
@@ -1001,50 +1018,33 @@ class PivotTableWidget(QWidget):
             self.current_config = None
 
     def _apply_normalization(self, df: pd.DataFrame, normalize: str) -> pd.DataFrame:
-        """Applica normalizzazione al pivot"""
+        """Applica normalizzazione al pivot (vettorizzata)."""
         if df.empty:
             return df
 
         result = df.copy()
-
-        # Identifica colonne numeriche
-        numeric_cols = []
-        for col in result.columns[1:]:
-            if pd.api.types.is_numeric_dtype(result[col]):
-                numeric_cols.append(col)
-
+        numeric_cols = [c for c in result.columns[1:]
+                        if pd.api.types.is_numeric_dtype(result[c])]
         if not numeric_cols:
             return df
 
+        vals = result[numeric_cols]
+
         if normalize == 'index':
-            # Normalize by rows
-            for idx in result.index:
-                row_sum = result.loc[idx, numeric_cols].sum()
-                if row_sum != 0:
-                    for col in numeric_cols:
-                        result.loc[idx, col] = (result.loc[idx, col] / row_sum) * 100
-                else:
-                    for col in numeric_cols:
-                        result.loc[idx, col] = 0
+            row_sums = vals.sum(axis=1)
+            safe = row_sums.replace(0, 1)
+            result[numeric_cols] = vals.div(safe, axis=0) * 100
+            result.loc[row_sums == 0, numeric_cols] = 0
 
         elif normalize == 'columns':
-            # Normalize by columns
-            for col in numeric_cols:
-                col_sum = result[col].sum()
-                if col_sum != 0:
-                    result[col] = (result[col] / col_sum) * 100
-                else:
-                    result[col] = 0
+            col_sums = vals.sum(axis=0)
+            safe = col_sums.replace(0, 1)
+            result[numeric_cols] = vals.div(safe, axis=1) * 100
+            result.loc[:, col_sums[col_sums == 0].index] = 0
 
         elif normalize == 'all':
-            # Normalize by total
-            total = result[numeric_cols].sum().sum()
-            if total != 0:
-                for col in numeric_cols:
-                    result[col] = (result[col] / total) * 100
-            else:
-                for col in numeric_cols:
-                    result[col] = 0
+            total = vals.values.sum()
+            result[numeric_cols] = vals / total * 100 if total != 0 else 0
 
         return result
 

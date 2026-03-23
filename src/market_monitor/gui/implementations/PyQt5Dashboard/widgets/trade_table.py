@@ -1463,42 +1463,16 @@ class TradeTableWidget(QWidget):
     # DATA UPDATE
     # ==========================================================
     def update_data(self, df: pd.DataFrame):
+        """Replace the displayed dataset.
+
+        The dashboard always passes the fully-deduplicated, pre-sorted
+        ``all_trades`` snapshot, so there is no need to concat+sort+dedup
+        here — that was O(3 × N log N) redundant work on every tick.
+        """
         if df is None or df.empty:
             return
 
-        if self.all_data.empty:
-            self.all_data = df.copy()
-        else:
-            self.all_data = safe_concat(
-                [self.all_data, df], ignore_index=True
-            )
-
-            if self.dedup_column in self.all_data.columns:
-                sort_cols = (
-                    ['timestamp', self.dedup_column]
-                    if 'timestamp' in self.all_data.columns
-                    else [self.dedup_column]
-                )
-                try:
-                    self.all_data = self.all_data.sort_values(
-                        by=sort_cols, ascending=True, na_position='first'
-                    )
-                except Exception:
-                    pass
-                self.all_data = (
-                    self.all_data
-                    .groupby(self.dedup_column, sort=False)
-                    .last()
-                    .reset_index()
-                )
-
-                # Re-sort descending so newest trades appear at top
-                try:
-                    self.all_data = self.all_data.sort_values(
-                        by=sort_cols, ascending=False, na_position='last'
-                    )
-                except Exception:
-                    pass
+        self.all_data = df.copy()
 
         if not self.visible_columns:
             self.visible_columns = list(self.all_data.columns)
