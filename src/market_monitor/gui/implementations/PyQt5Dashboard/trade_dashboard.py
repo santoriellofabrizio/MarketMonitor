@@ -222,7 +222,7 @@ class MetricDefinitionDialog(QDialog):
 # Columns the dashboard accesses by name internally.
 # Any that are absent from the incoming feed are silently added as all-None
 # so that all downstream code degrades gracefully instead of crashing.
-_EXPECTED_COLUMNS = ("timestamp", "trade_index", "own_trade", "ticker")
+_EXPECTED_COLUMNS = ("timestamp", "trade_index", "own_trade", "ticker", "side")
 
 
 class TradeDashboard(BasePyQt5Dashboard, TradeDashboardExtensions):

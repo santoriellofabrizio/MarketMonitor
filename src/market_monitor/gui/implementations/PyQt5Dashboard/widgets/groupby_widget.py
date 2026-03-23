@@ -848,7 +848,9 @@ class GroupByWidget(QWidget):
             return (0,)
         n = len(df)
         if 'trade_index' in df.columns:
-            return (n, int(df['trade_index'].max()))
+            max_ti = df['trade_index'].max()
+            if pd.notna(max_ti):
+                return (n, int(max_ti))
         if 'timestamp' in df.columns:
             return (n, str(df['timestamp'].max()))
         return (n,)
