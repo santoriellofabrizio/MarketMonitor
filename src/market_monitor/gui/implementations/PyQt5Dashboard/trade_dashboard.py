@@ -498,6 +498,7 @@ class TradeDashboard(BasePyQt5Dashboard, TradeDashboardExtensions):
         # Per ogni trade: se trade_index esiste, aggiorna solo i campi non-NaN
         # (preserva i valori horizon PL da update precedenti, come faceva groupby.last())
         if 'trade_index' in df.columns:
+            new_trades_added = False
             for _, row in df.iterrows():
                 tid = row['trade_index']
                 if tid in self._trades_index:
@@ -507,11 +508,13 @@ class TradeDashboard(BasePyQt5Dashboard, TradeDashboardExtensions):
                             existing[col] = val
                 else:
                     self._trades_index[tid] = row.to_dict()
+                    new_trades_added = True
 
             self.all_trades = pd.DataFrame(list(self._trades_index.values()))
 
-            # Sort descending per display (timestamp desc, trade_index desc)
-            if 'timestamp' in self.all_trades.columns:
+            # Only sort when new trade_indexes appear; field-only updates don't
+            # change order so we skip the O(N log N) sort entirely.
+            if new_trades_added and 'timestamp' in self.all_trades.columns:
                 try:
                     self.all_trades = self.all_trades.sort_values(
                         by=["timestamp", "trade_index"],

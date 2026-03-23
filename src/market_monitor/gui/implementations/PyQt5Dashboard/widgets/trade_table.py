@@ -1548,6 +1548,14 @@ class TradeTableWidget(QWidget):
         # i riferimenti a colonne nelle regole CF
         full_col_list = self.filtered_data.columns.tolist()
 
+        # Pre-compute all row dicts at once (vectorized) instead of calling
+        # .iloc[i].to_dict() inside the loop — O(slice) instead of O(N*cols).
+        precomputed_row_dicts = (
+            self.filtered_data.iloc[start:end].to_dict(orient='records')
+            if self._cf_rules
+            else None
+        )
+
         for i, row in enumerate(df.iloc[start:end].itertuples(index=False), start):
             row_color = None
             is_own = False
@@ -1557,7 +1565,11 @@ class TradeTableWidget(QWidget):
 
             # ---- Bug fix: row_dict usa TUTTE le colonne, non solo le visibili ----
             # Questo permette alle regole CF di fare riferimento a colonne nascoste
-            row_dict = self.filtered_data.iloc[i].to_dict()
+            row_dict = (
+                precomputed_row_dicts[i - start]
+                if precomputed_row_dicts is not None
+                else {}
+            )
 
             # ---- Pre-calcola la regola "apply_to_row" per questa riga ----
             # Prima regola con apply_to_row=True che fa match → formato per tutta la riga
