@@ -51,15 +51,15 @@ bloomberg_data_distributor:
 
 
 kafka_data_distributor:
-  activate: false
+  activate: true
   kafka_params:
-    bootstrap_servers: "aftstserver51.af.tst:9092,aftstserver52.af.tst:9092,aftstserver53.af.tst:9092"
-    schema_registry_url: "http://aftstserver51.af.tst:8081"
+    bootstrap_servers: "aftstserver51.af.pre:9092,aftstserver52.af.pre:9092,aftstserver53.af.pre:9092"
+    schema_registry_url: "http://aftstserver51.af.pre:8081"
     start_mode: "latest"  # oppure "earliest"
 
 
 trade_distributor:
-  activate: true
+  activate: false
 #  path: C:\AFMachineLearning\Libraries\MarketMonitor\etc\marketrades.db
   path: "C:\\Users\\gbs09316\\Documents\\marketTradeFolder\\markettrades.db"
 

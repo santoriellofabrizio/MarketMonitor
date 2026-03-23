@@ -101,7 +101,7 @@ class EventHandler(ABC):
         _id, data = self.process_market_data_events(msg)
         if msg.hasElement(self.IS_DELAYED_STREAM, excludeNullElements=True):
             self.subscription_status[_id].update({"delayed": msg.getElement(self.IS_DELAYED_STREAM)}, )
-        logging.debug(f"Market data event processed for ID: {_id}")
+        # logging.debug(f"Market data event processed for ID: {_id}")
         self.on_market_data_update(_id, data)
 
     def on_initial_summary(self, msg: blpapi.Message):

@@ -709,6 +709,6 @@ def _timer(label: str, log: logging.Logger = logger):
     t0 = sleep_time.perf_counter()
     yield
     elapsed_ms = (sleep_time.perf_counter() - t0) * 1000
-    log.info(f"[TIMER] {label}: {elapsed_ms:.1f} ms")
+    log.debug(f"[TIMER] {label}: {elapsed_ms:.1f} ms")
 
 

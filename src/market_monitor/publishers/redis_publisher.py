@@ -192,7 +192,7 @@ class DataSerializer:
             # --- DEBUG SIZE CHECK ---
             val_len = len(serialized_value)
             if val_len > EXCEL_RTD_LIMIT:
-                logger.warning(
+                logger.info(
                     f"CRITICAL SIZE WARNING: L'update ({val_len} chars) supera il limite "
                     f"di Excel RTD ({EXCEL_RTD_LIMIT}). Il dato verrà troncato o causerà errori in VBA."
                 )

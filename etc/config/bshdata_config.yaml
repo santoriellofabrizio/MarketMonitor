@@ -19,9 +19,9 @@ client:
   activate_bloomberg: True
 
 api:
-  log_level: INFO
+  log_level:
   log_file: logs/bshapi.log
-  log_level_file: INFO
+  log_level_file: DEBUG
   autocomplete: True
   cache: True
   cache_path: cache
