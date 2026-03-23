@@ -281,7 +281,6 @@ class DashboardState:
             'paused': dashboard.paused,
             'mode': dashboard.mode,
             'columns': dashboard.columns,
-            'column_map': dict(getattr(dashboard, '_column_map', {})),
         }
 
     def _save_metrics_state(self, dashboard) -> Dict[str, Any]:
@@ -430,9 +429,6 @@ class DashboardState:
                 dashboard.pause()
                 if hasattr(dashboard, 'pause_btn'):
                     dashboard.pause_btn.setText("▶️ Resume")
-
-            if 'column_map' in prefs and hasattr(dashboard, '_column_map'):
-                dashboard._column_map = dict(prefs['column_map'])
 
         except Exception as e:
             self.logger.warning(f"Failed to restore preferences: {e}")

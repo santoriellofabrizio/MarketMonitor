@@ -219,120 +219,10 @@ class MetricDefinitionDialog(QDialog):
         return items
 
 
-# ==============================================================================
-# ColumnMappingDialog — mappa nomi colonna sorgente → nomi interni attesi
-# ==============================================================================
-
-# Colonne "speciali" riconosciute internamente dalla dashboard con il loro ruolo
-_INTERNAL_COLUMNS = [
-    ("timestamp",   "Timestamp — used for datetime normalisation and sorting"),
-    ("trade_index", "Trade Index — unique trade ID used for deduplication"),
-    ("own_trade",   "Own Trade — boolean flag for own-trade highlighting"),
-]
-
-
-class ColumnMappingDialog(QDialog):
-    """
-    Lets the user map their source column names to the internal names the
-    dashboard expects.  Leave a field empty to keep the source name unchanged.
-
-    Example: if the feed publishes 'time' instead of 'timestamp', set
-        timestamp  ←  time
-    """
-
-    def __init__(self, column_map: dict, known_columns: list, parent=None):
-        """
-        column_map   : current mapping {source_col: internal_col}
-        known_columns: columns seen in the last data batch (used as suggestions)
-        """
-        super().__init__(parent)
-        self.setWindowTitle("Column Mapping")
-        self.setMinimumWidth(500)
-
-        # Invert for display: internal → source
-        self._inv: dict[str, str] = {v: k for k, v in column_map.items()}
-
-        root = QVBoxLayout(self)
-        root.addWidget(QLabel(
-            "Map your feed column names to the names expected by the dashboard.\n"
-            "Leave blank to use the column as-is."
-        ))
-
-        form = QFormLayout()
-        form.setLabelAlignment(Qt.AlignRight)
-        self._combos: dict[str, QComboBox] = {}
-
-        for internal, description in _INTERNAL_COLUMNS:
-            combo = QComboBox()
-            combo.setEditable(True)
-            combo.addItem("")                          # blank = no mapping
-            combo.addItems(known_columns)
-            current_src = self._inv.get(internal, "")
-            combo.setCurrentText(current_src)
-            combo.setToolTip(description)
-            label_txt = f"<b>{internal}</b>"
-            lbl = QLabel(label_txt)
-            lbl.setToolTip(description)
-            form.addRow(lbl, combo)
-            self._combos[internal] = combo
-
-        # Extra / custom mappings section
-        form.addRow(QLabel(""))
-        form.addRow(QLabel("<b>Custom mappings</b> (source → internal):"))
-
-        # Show any extra entries that are not in _INTERNAL_COLUMNS
-        internal_names = {n for n, _ in _INTERNAL_COLUMNS}
-        extra_map = {
-            k: v for k, v in column_map.items()
-            if v not in internal_names
-        }
-
-        self._extra_rows: list[tuple[QLineEdit, QLineEdit]] = []
-        self._extra_layout = QVBoxLayout()
-
-        for src, tgt in extra_map.items():
-            self._add_extra_row(src, tgt)
-
-        form.addRow(self._extra_layout)
-
-        add_btn = QPushButton("+ Add custom mapping")
-        add_btn.clicked.connect(lambda: self._add_extra_row("", ""))
-        form.addRow(add_btn)
-
-        root.addLayout(form)
-
-        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        root.addWidget(buttons)
-
-    def _add_extra_row(self, src: str, tgt: str):
-        row_widget = QWidget()
-        h = QHBoxLayout(row_widget)
-        h.setContentsMargins(0, 0, 0, 0)
-        src_edit = QLineEdit(src)
-        src_edit.setPlaceholderText("source column name")
-        tgt_edit = QLineEdit(tgt)
-        tgt_edit.setPlaceholderText("internal column name")
-        h.addWidget(src_edit)
-        h.addWidget(QLabel("→"))
-        h.addWidget(tgt_edit)
-        self._extra_rows.append((src_edit, tgt_edit))
-        self._extra_layout.addWidget(row_widget)
-
-    def get_column_map(self) -> dict:
-        """Returns {source_col: internal_col} mapping."""
-        result = {}
-        for internal, combo in self._combos.items():
-            src = combo.currentText().strip()
-            if src and src != internal:
-                result[src] = internal
-        for src_edit, tgt_edit in self._extra_rows:
-            src = src_edit.text().strip()
-            tgt = tgt_edit.text().strip()
-            if src and tgt and src != tgt:
-                result[src] = tgt
-        return result
+# Columns the dashboard accesses by name internally.
+# Any that are absent from the incoming feed are silently added as all-None
+# so that all downstream code degrades gracefully instead of crashing.
+_EXPECTED_COLUMNS = ("timestamp", "trade_index", "own_trade", "ticker")
 
 
 class TradeDashboard(BasePyQt5Dashboard, TradeDashboardExtensions):
@@ -377,10 +267,6 @@ class TradeDashboard(BasePyQt5Dashboard, TradeDashboardExtensions):
         # Avoids O(N log N) sort+groupby+sort sull'intero dataset ad ogni update
         self._trades_index: dict = {}
 
-        # Column mapping: {source_col_name: internal_col_name}
-        # Applied via df.rename() before any column-specific processing.
-        self._column_map: dict = {}
-        self._last_seen_columns: list = []   # populated on first data batch
 
         self.dashboard_state = DashboardState()
         self.worker_thread = None
@@ -503,14 +389,6 @@ class TradeDashboard(BasePyQt5Dashboard, TradeDashboardExtensions):
         columns_btn.clicked.connect(self._show_column_chooser)
         layout.addWidget(columns_btn)
 
-        col_map_btn = QPushButton("🔀 Column Map")
-        col_map_btn.setToolTip(
-            "Map your feed column names to the internal names expected by the dashboard\n"
-            "(e.g. 'time' → 'timestamp', 'id' → 'trade_index')"
-        )
-        col_map_btn.clicked.connect(self._show_column_mapping_dialog)
-        layout.addWidget(col_map_btn)
-
         detach_pivot_btn = QPushButton("🪟 New Pivot Window")
         detach_pivot_btn.clicked.connect(self._create_detached_pivot)
         layout.addWidget(detach_pivot_btn)
@@ -606,12 +484,13 @@ class TradeDashboard(BasePyQt5Dashboard, TradeDashboardExtensions):
             self.logger.debug("_on_data_received: empty or None DataFrame, skipping")
             return
 
-        # Remember column names for the mapping dialog (best-effort; no lock needed)
-        if not self._last_seen_columns:
-            self._last_seen_columns = list(df.columns)
-
-        # Apply column mapping (user-configured source → internal renames)
-        df = self._apply_column_map(df)
+        # Pad any missing expected columns with None so all downstream code
+        # degrades gracefully instead of raising KeyError.
+        missing = [c for c in _EXPECTED_COLUMNS if c not in df.columns]
+        if missing:
+            df = df.copy()
+            for col in missing:
+                df[col] = None
 
         self.logger.debug(
             f"_on_data_received: {len(df)} rows, cols={list(df.columns)}, "
@@ -830,31 +709,6 @@ class TradeDashboard(BasePyQt5Dashboard, TradeDashboardExtensions):
                 if lbl and isinstance(metric_def, dict):
                     lbl.setText(f"{metric_def.get('label', '—')}: —")
                     lbl.setStyleSheet("font-size: 13px; font-weight: bold; padding: 5px;")
-
-    # ------------------------------------------------------------------
-    # Column mapping
-    # ------------------------------------------------------------------
-
-    def _apply_column_map(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Rename incoming columns according to the user-defined mapping."""
-        if not self._column_map:
-            return df
-        rename = {src: tgt for src, tgt in self._column_map.items() if src in df.columns}
-        return df.rename(columns=rename) if rename else df
-
-    def _show_column_mapping_dialog(self):
-        dlg = ColumnMappingDialog(
-            column_map=dict(self._column_map),
-            known_columns=list(self._last_seen_columns),
-            parent=self,
-        )
-        if dlg.exec_() == QDialog.Accepted:
-            self._column_map = dlg.get_column_map()
-            self.logger.info(f"Column map updated: {self._column_map}")
-
-    # ------------------------------------------------------------------
-    # Column chooser
-    # ------------------------------------------------------------------
 
     def _show_column_chooser(self):
         """Mostra dialog per la selezione colonne."""
