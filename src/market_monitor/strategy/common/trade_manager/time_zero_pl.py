@@ -132,7 +132,7 @@ class TimeZeroPLManager(threading.Thread):
             )
         else:
             setattr(trade, col, None)
-            logger.warning(
+            logger.info(
                 f"[LAG_{int(lag)}s] Mid price non disponibile | "
                 f"trade_id={trade.trade_index} | isin={trade.isin}"
             )

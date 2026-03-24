@@ -62,7 +62,7 @@ class StrategyUIAsync(ABC):
 
     def start(self):
         """ Starts the strategy"""
-        logger.debug("Entering start method.")
+        logger.warning("Entering start method.")
         asyncio.run(self._async_run())
 
     def _schedule_tasks(self) -> list[Coroutine[Any, Any, None]] | None:
@@ -106,7 +106,7 @@ class StrategyUIAsync(ABC):
 
         logger.debug("Entering _async_run method.")
         if await self._wait_for_book_initialization():
-            logger.info("[LIFECYCLE] started")
+            logger.warning("[LIFECYCLE] started")
             tasks = self._schedule_tasks()
             self._on_other_thread_start()
             await asyncio.gather(*tasks, return_exceptions=True)
@@ -210,7 +210,6 @@ class StrategyUIAsync(ABC):
             try:
                 self.update_HF()
                 elapsed = time() - start
-                logger.debug(f"Update HF calculation {elapsed:.4f}s")
                 logger.info(f"[STATS] hf_update={elapsed:.4f}s")
 
             except Exception as e:
@@ -323,8 +322,8 @@ class StrategyUIAsync(ABC):
         logger.debug("Entering _wait_for_book_initialization method.")
         while not self.wait_for_book_initialization():
             await asyncio.sleep(3)
-            logger.info("[LIFECYCLE] waiting_for_book")
-        logger.info("[LIFECYCLE] book_initialized")
+            logger.warning("[LIFECYCLE] waiting_for_book")
+        logger.warning("[LIFECYCLE] book_initialized")
         self.on_book_initialized()
         self._publish_lifecycle_event("on_book_initialized")
         return True
@@ -449,7 +448,7 @@ class StrategyUIAsync(ABC):
 
     def stop(self):
         """Stop non bloccante."""
-        logger.info("[LIFECYCLE] stopped")
+        logger.warning("[LIFECYCLE] stopped")
         self.on_stop()
         self._publish_lifecycle_event("on_stop")
         logger.debug("Entering stop method.")
