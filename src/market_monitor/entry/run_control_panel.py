@@ -18,8 +18,32 @@ Uso programmatico:
     launch_control_panel(host="localhost", port=6379)
 """
 import argparse
+import logging
 import signal
 import sys
+from pathlib import Path
+
+_LOG_PATH = Path.home() / ".marketmonitor" / "control_panel.log"
+
+
+def _setup_logging() -> None:
+    """Write all panel logs to a persistent file so they survive the panel disappearing."""
+    _LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    root = logging.getLogger()
+    if not root.handlers:
+        root.setLevel(logging.DEBUG)
+    fh = logging.FileHandler(_LOG_PATH, encoding="utf-8")
+    fh.setLevel(logging.DEBUG)
+    fh.setFormatter(logging.Formatter(
+        "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    ))
+    root.addHandler(fh)
+    # Also keep console output
+    ch = logging.StreamHandler(sys.stderr)
+    ch.setLevel(logging.INFO)
+    ch.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
+    root.addHandler(ch)
+    logging.getLogger(__name__).info(f"Logging to {_LOG_PATH}")
 
 
 def _parse_args(argv=None):
@@ -78,6 +102,8 @@ def launch_control_panel(
         initial_config: Config pre-selezionato nel dropdown (opzionale)
         title: Titolo della finestra
     """
+    _setup_logging()
+
     from PyQt5.QtWidgets import QApplication
     from market_monitor.gui.implementations.StrategyControlPanel import StrategyControlPanel
 
