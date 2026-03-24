@@ -1,4 +1,5 @@
 import logging
+import sqlite3
 from time import time, sleep
 from datetime import datetime
 import datetime as dt
@@ -59,6 +60,28 @@ class EtfEquityLiveAnalysis(StrategyUI):
         self.trade_manager = TradeManager(self.book_storage, **kwargs.get("trade_manager", {}))
         self.quoting_instances = [instance for instance, _bool
                                   in self.redis_dashboard.get_key('quoting_instances').items() if _bool]
+        self.isin_cluster_mapping: dict = self.get_clusters(path=kwargs.get('path_db'),
+                                                            cluster_layer=kwargs.get('cluster_layer',
+                                                                                     'FINAL_CLUSTER'))
+
+    @staticmethod
+    def get_clusters(path: str, cluster_layer: str = 'FINAL_CLUSTER') -> dict:
+        if not path:
+            return {}
+        with sqlite3.connect(path) as conn:
+            isin_cluster_mapping = pd.read_sql(
+                f"""
+                              SELECT isin, cluster_value
+                              FROM isin_clusters
+                              WHERE (isin, last_updated) IN (
+                                  SELECT isin, MAX(last_updated)
+                                  FROM isin_clusters
+                                  GROUP BY isin
+                              ) AND cluster_layer = '{cluster_layer}'
+                              """, conn
+            ).set_index('isin')['cluster_value'].to_dict()
+
+        return isin_cluster_mapping
 
     def _init_rabbit_dashboard(self, **kwargs):
         rabbit_cfg = kwargs.get('rabbit_data_export', {})
@@ -207,6 +230,8 @@ class EtfEquityLiveAnalysis(StrategyUI):
     def _enrich_trades(self, trades) -> pd.DataFrame:
         trades['model_price'] = trades['isin'].map(self.model_price)
         trades['quoting'] = trades.apply(lambda row: f"{row.exchange}-{row.name}" in self.quoting_instances, axis=1)
+        if self.isin_cluster_mapping:
+            trades['cluster'] = trades['isin'].map(self.isin_cluster_mapping)
         return trades
 
     def publish_trades_on_excel(self):

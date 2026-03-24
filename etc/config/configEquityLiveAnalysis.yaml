@@ -6,7 +6,7 @@ load_strategy_info:
 
 market_monitor:
 
-  path_db: etc/input/EtfEquityDB.db
+  path_db: Z:\etf_equity_anagraphic_db.sqlite
   bloomberg_subscription_config_path: C:\AFMachineLearning\Libraries\MarketMonitor\etc\config\bbg_subscription\config_bloomberg_subscription.yaml
   price_source: "kafka"
 

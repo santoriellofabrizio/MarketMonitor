@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Optional, List
 
 import pandas as pd
-from PyQt5.QtCore import Qt, pyqtSignal, QPoint, QObject, QEvent
+from PyQt5.QtCore import Qt, pyqtSignal, QPoint, QObject, QEvent, QTimer
 from PyQt5.QtGui import QColor, QCursor, QFont
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
@@ -914,6 +914,13 @@ class TradeTableWidget(QWidget):
         self.active_filter: Optional[FilterGroup] = None
         # Filtri per valori colonna: {col_name: set di valori esclusi}
         self._column_value_filters: dict[str, set] = {}
+        # Quick filter bar
+        self._quick_filter_text: str = ""
+        self._quick_filter_col: str = ""   # "" = any column
+        self._quick_filter_timer = QTimer(self)
+        self._quick_filter_timer.setSingleShot(True)
+        self._quick_filter_timer.setInterval(250)
+        self._quick_filter_timer.timeout.connect(self._apply_filters)
 
         # ---- Infinite scroll ----
         self.displayed_rows = 0
@@ -975,6 +982,29 @@ class TradeTableWidget(QWidget):
 
         controls.setLayout(controls_layout)
         layout.addWidget(controls)
+
+        # ---------- QUICK FILTER BAR ----------
+        qf_bar = QWidget()
+        qf_layout = QHBoxLayout(qf_bar)
+        qf_layout.setContentsMargins(4, 2, 4, 2)
+        qf_layout.setSpacing(4)
+
+        qf_layout.addWidget(QLabel("Search:"))
+
+        self._qf_col_combo = QComboBox()
+        self._qf_col_combo.setFixedWidth(140)
+        self._qf_col_combo.setToolTip("Column to search in (or 'Any column')")
+        self._qf_col_combo.addItem("Any column")
+        self._qf_col_combo.currentTextChanged.connect(self._on_quick_filter_col_changed)
+        qf_layout.addWidget(self._qf_col_combo)
+
+        self._qf_edit = QLineEdit()
+        self._qf_edit.setPlaceholderText("type to filter…  (e.g. AAPL, or partial match)")
+        self._qf_edit.setClearButtonEnabled(True)
+        self._qf_edit.textChanged.connect(self._on_quick_filter_text_changed)
+        qf_layout.addWidget(self._qf_edit, 1)
+
+        layout.addWidget(qf_bar)
 
         # ---------- TABLE ----------
         self.table = QTableWidget()
@@ -1407,8 +1437,34 @@ class TradeTableWidget(QWidget):
     def _clear_all_filters(self):
         self.active_filter = None
         self._column_value_filters.clear()
+        self._qf_edit.clear()          # also clears quick filter
         self._apply_filters()
         self._update_filter_info()
+
+    # ------------------------------------------------------------------
+    # Quick filter handlers
+    # ------------------------------------------------------------------
+    def _on_quick_filter_text_changed(self, text: str):
+        self._quick_filter_text = text.strip()
+        self._quick_filter_timer.start()   # debounced
+
+    def _on_quick_filter_col_changed(self, col_text: str):
+        self._quick_filter_col = "" if col_text == "Any column" else col_text
+        if self._quick_filter_text:
+            self._apply_filters()
+
+    def _update_quick_filter_columns(self):
+        """Rebuild column combo to match current dataset columns."""
+        current = self._qf_col_combo.currentText()
+        self._qf_col_combo.blockSignals(True)
+        self._qf_col_combo.clear()
+        self._qf_col_combo.addItem("Any column")
+        if not self.all_data.empty:
+            self._qf_col_combo.addItems(list(self.all_data.columns))
+        # Restore previous selection if still available
+        idx = self._qf_col_combo.findText(current)
+        self._qf_col_combo.setCurrentIndex(max(idx, 0))
+        self._qf_col_combo.blockSignals(False)
 
     def _apply_filters(self):
         if self.all_data.empty:
@@ -1455,6 +1511,28 @@ class TradeTableWidget(QWidget):
                         ~self.filtered_data[col_name].isin(excluded_values)
                     ]
 
+        # 3. Quick filter (search bar) — case-insensitive substring match
+        qf_text = self._quick_filter_text
+        if qf_text and not self.filtered_data.empty:
+            qf_col = self._quick_filter_col
+            if qf_col and qf_col in self.filtered_data.columns:
+                # Search in a single column
+                mask = (
+                    self.filtered_data[qf_col]
+                    .astype(str)
+                    .str.contains(qf_text, case=False, na=False, regex=False)
+                )
+            else:
+                # Search across all columns (any match)
+                mask = pd.Series(False, index=self.filtered_data.index)
+                for col in self.filtered_data.columns:
+                    mask |= (
+                        self.filtered_data[col]
+                        .astype(str)
+                        .str.contains(qf_text, case=False, na=False, regex=False)
+                    )
+            self.filtered_data = self.filtered_data[mask]
+
         self.displayed_rows = 0
         self._refresh_view()
         self.filtered_data_changed.emit(self.filtered_data)
@@ -1463,45 +1541,24 @@ class TradeTableWidget(QWidget):
     # DATA UPDATE
     # ==========================================================
     def update_data(self, df: pd.DataFrame):
+        """Replace the displayed dataset.
+
+        The dashboard always passes the fully-deduplicated, pre-sorted
+        ``all_trades`` snapshot, so there is no need to concat+sort+dedup
+        here — that was O(3 × N log N) redundant work on every tick.
+        """
         if df is None or df.empty:
             return
 
-        if self.all_data.empty:
-            self.all_data = df.copy()
-        else:
-            self.all_data = safe_concat(
-                [self.all_data, df], ignore_index=True
-            )
-
-            if self.dedup_column in self.all_data.columns:
-                sort_cols = (
-                    ['timestamp', self.dedup_column]
-                    if 'timestamp' in self.all_data.columns
-                    else [self.dedup_column]
-                )
-                try:
-                    self.all_data = self.all_data.sort_values(
-                        by=sort_cols, ascending=True, na_position='first'
-                    )
-                except Exception:
-                    pass
-                self.all_data = (
-                    self.all_data
-                    .groupby(self.dedup_column, sort=False)
-                    .last()
-                    .reset_index()
-                )
-
-                # Re-sort descending so newest trades appear at top
-                try:
-                    self.all_data = self.all_data.sort_values(
-                        by=sort_cols, ascending=False, na_position='last'
-                    )
-                except Exception:
-                    pass
+        prev_cols = list(self.all_data.columns)
+        self.all_data = df.copy()
 
         if not self.visible_columns:
             self.visible_columns = list(self.all_data.columns)
+
+        # Refresh quick-filter column combo only when schema changes
+        if list(self.all_data.columns) != prev_cols:
+            self._update_quick_filter_columns()
 
         self._apply_filters()
 
@@ -1526,7 +1583,13 @@ class TradeTableWidget(QWidget):
         if self.is_loading or self.filtered_data.empty:
             return
 
-        df = self.filtered_data[self.visible_columns]
+        # Keep only visible columns that exist; pad the rest with None
+        existing = [c for c in self.visible_columns if c in self.filtered_data.columns]
+        missing  = [c for c in self.visible_columns if c not in self.filtered_data.columns]
+        df = self.filtered_data[existing].copy()
+        for col in missing:
+            df[col] = None
+        df = df[self.visible_columns]  # restore requested order
         if self.displayed_rows >= len(df):
             return
 
@@ -1574,6 +1637,14 @@ class TradeTableWidget(QWidget):
         # i riferimenti a colonne nelle regole CF
         full_col_list = self.filtered_data.columns.tolist()
 
+        # Pre-compute all row dicts at once (vectorized) instead of calling
+        # .iloc[i].to_dict() inside the loop — O(slice) instead of O(N*cols).
+        precomputed_row_dicts = (
+            self.filtered_data.iloc[start:end].to_dict(orient='records')
+            if self._cf_rules
+            else None
+        )
+
         for i, row in enumerate(df.iloc[start:end].itertuples(index=False), start):
             row_color = None
             is_own = False
@@ -1583,7 +1654,11 @@ class TradeTableWidget(QWidget):
 
             # ---- Bug fix: row_dict usa TUTTE le colonne, non solo le visibili ----
             # Questo permette alle regole CF di fare riferimento a colonne nascoste
-            row_dict = self.filtered_data.iloc[i].to_dict()
+            row_dict = (
+                precomputed_row_dicts[i - start]
+                if precomputed_row_dicts is not None
+                else {}
+            )
 
             # ---- Pre-calcola la regola "apply_to_row" per questa riga ----
             # Prima regola con apply_to_row=True che fa match → formato per tutta la riga

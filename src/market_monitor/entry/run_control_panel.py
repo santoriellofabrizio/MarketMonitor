@@ -18,6 +18,7 @@ Uso programmatico:
     launch_control_panel(host="localhost", port=6379)
 """
 import argparse
+import signal
 import sys
 
 
@@ -84,6 +85,9 @@ def launch_control_panel(
 
     app = QApplication.instance() or QApplication(sys.argv)
     app.setStyle("Fusion")
+
+    # Ensure SIGTERM causes a clean Qt shutdown (triggers closeEvent → atexit)
+    signal.signal(signal.SIGTERM, lambda *_: app.quit())
 
     panel = StrategyControlPanel(
         redis_config={"host": host, "port": port, "db": db},

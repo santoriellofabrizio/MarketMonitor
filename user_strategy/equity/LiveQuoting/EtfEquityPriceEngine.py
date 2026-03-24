@@ -281,10 +281,10 @@ class EtfEquityPriceEngine(StrategyUI):
             redis-cli PUBLISH engine:commands '{"action": "update_forecaster", "model": "all", "type": "trimmed_mean", "params": {"perc_outlier": 0.1}}'
         """
         if action == "reload_beta":
-            logger.info("Beta reload triggered via command channel")
+            logger.warning("Beta reload triggered via command channel")
             self._reload_beta_matrices()
             self.models.predict_all(self.mid_eur)
-            logger.info("Beta reload completed successfully")
+            logger.warning("Beta reload completed successfully")
 
         elif action == "update_forecaster":
             self._handle_update_forecaster(payload)
@@ -293,7 +293,7 @@ class EtfEquityPriceEngine(StrategyUI):
             try:
                 val = float(payload.get("value", 1.0))
                 self.alpha = max(0.0, min(1.0, val))
-                logger.info(f"Alpha updated to {self.alpha:.2f}")
+                logger.warning(f"Alpha updated to {self.alpha:.2f}")
             except (TypeError, ValueError) as e:
                 logger.error(f"Invalid alpha value: {e}")
 
@@ -320,6 +320,7 @@ class EtfEquityPriceEngine(StrategyUI):
 
         try:
             forecaster = forecast_aggregation[forecaster_type](**params)
+            logger.warning(F"Forecaster type '{forecaster_type}' UPDATED!")
         except TypeError as e:
             logger.error(f"Invalid params for '{forecaster_type}': {e}")
             return
@@ -332,7 +333,7 @@ class EtfEquityPriceEngine(StrategyUI):
                 continue
             self.models.update_forecaster(name, forecaster)
 
-        logger.info(
+        logger.warning(
             f"Forecaster updated → type={forecaster_type}, "
             f"params={params}, models={target_models}"
         )

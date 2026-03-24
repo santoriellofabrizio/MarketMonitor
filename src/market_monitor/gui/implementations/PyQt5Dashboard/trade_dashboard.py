@@ -219,6 +219,12 @@ class MetricDefinitionDialog(QDialog):
         return items
 
 
+# Columns the dashboard accesses by name internally.
+# Any that are absent from the incoming feed are silently added as all-None
+# so that all downstream code degrades gracefully instead of crashing.
+_EXPECTED_COLUMNS = ("timestamp", "trade_index", "own_trade", "ticker", "side")
+
+
 class TradeDashboard(BasePyQt5Dashboard, TradeDashboardExtensions):
     """
     Dashboard principale per la visualizzazione dei trade.
@@ -257,8 +263,10 @@ class TradeDashboard(BasePyQt5Dashboard, TradeDashboardExtensions):
 
         self.all_trades = pd.DataFrame()
         self.current_filtered_data = pd.DataFrame()
-        # Set dei trade_index già visti: separa nuovi trade da update
-        self._trades_index: set = set()
+        # Dict-based incremental dedup: {trade_index -> row_dict}
+        # Avoids O(N log N) sort+groupby+sort sull'intero dataset ad ogni update
+        self._trades_index: dict = {}
+
 
         self.dashboard_state = DashboardState()
         self.worker_thread = None
@@ -476,6 +484,14 @@ class TradeDashboard(BasePyQt5Dashboard, TradeDashboardExtensions):
             self.logger.debug("_on_data_received: empty or None DataFrame, skipping")
             return
 
+        # Pad any missing expected columns with None so all downstream code
+        # degrades gracefully instead of raising KeyError.
+        missing = [c for c in _EXPECTED_COLUMNS if c not in df.columns]
+        if missing:
+            df = df.copy()
+            for col in missing:
+                df[col] = None
+
         self.logger.debug(
             f"_on_data_received: {len(df)} rows, cols={list(df.columns)}, "
             f"all_trades_shape={self.all_trades.shape}"
@@ -492,65 +508,37 @@ class TradeDashboard(BasePyQt5Dashboard, TradeDashboardExtensions):
 
         _t1 = time.perf_counter()
 
-        # DEDUP INCREMENTALE VETTORIZZATO
-        # - nuovi trade_index → pd.concat (append)
-        # - trade_index esistenti → DataFrame.update() che è NaN-safe per default:
-        #   aggiorna solo le celle dove il nuovo valore è non-NaN, preservando i
-        #   valori horizon PL già presenti (equivalente a groupby.last()).
-        # Evita la ricostruzione O(N_total) del DataFrame ad ogni ciclo.
+        # DEDUP INCREMENTALE: aggiorna solo le righe nuove nel dict,
+        # evitando il ciclo sort+groupby+sort O(N log N) sull'intero storico.
+        # Per ogni trade: se trade_index esiste, aggiorna solo i campi non-NaN
+        # (preserva i valori horizon PL da update precedenti, come faceva groupby.last())
         if 'trade_index' in df.columns:
-            # Dedup dentro il batch in arrivo (più aggiornamenti dello stesso trade
-            # nello stesso batch: teniamo solo l'ultimo per timestamp)
-            if df['trade_index'].duplicated().any():
-                sort_cols = (
-                    ['timestamp', 'trade_index']
-                    if 'timestamp' in df.columns else ['trade_index']
-                )
-                try:
-                    df = (
-                        df.sort_values(sort_cols, ascending=True, na_position='first')
-                        .groupby('trade_index', sort=False).last()
-                        .reset_index()
-                    )
-                except Exception:
-                    pass
+            new_trades_added = False
+            for _, row in df.iterrows():
+                tid = row['trade_index']
+                if tid in self._trades_index:
+                    existing = self._trades_index[tid]
+                    for col, val in row.items():
+                        if pd.notna(val):
+                            existing[col] = val
+                else:
+                    self._trades_index[tid] = row.to_dict()
+                    new_trades_added = True
 
-            df_indexed = df.set_index('trade_index')
+            self.all_trades = pd.DataFrame(list(self._trades_index.values()))
 
-            if self.all_trades.empty:
-                self.all_trades = df_indexed.copy()
-                self._trades_index = set(df_indexed.index.tolist())
-            else:
-                # Porta all_trades su indice trade_index per il confronto vettorizzato.
-                # Questo è necessario ad ogni ciclo perché reset_index() alla fine
-                # lo riporta su RangeIndex. Ricostruisce anche _trades_index in caso
-                # all_trades sia stato ripopolato esternamente (es. load_dashboard).
-                if 'trade_index' in self.all_trades.columns:
-                    self.all_trades = self.all_trades.set_index('trade_index')
-                self._trades_index = set(self.all_trades.index.tolist())
-
-                is_existing = df['trade_index'].isin(self._trades_index)
-                updates = df_indexed[is_existing.values]
-                new_rows = df_indexed[~is_existing.values]
-
-                # update() aggiorna in-place solo dove il nuovo valore è non-NaN
-                if not updates.empty:
-                    self.all_trades.update(updates)
-
-                if not new_rows.empty:
-                    self.all_trades = pd.concat([self.all_trades, new_rows])
-                    self._trades_index.update(new_rows.index.tolist())
-
-            # Sort discendente per display (solo colonna timestamp, più veloce)
-            if 'timestamp' in self.all_trades.columns:
+            # Only sort when new trade_indexes appear; field-only updates don't
+            # change order so we skip the O(N log N) sort entirely.
+            if new_trades_added and 'timestamp' in self.all_trades.columns:
                 try:
                     self.all_trades = self.all_trades.sort_values(
-                        'timestamp', ascending=False
+                        by=["timestamp", "trade_index"],
+                        ascending=False
                     )
                 except Exception as e:
                     self.logger.error(f"Failed to sort trades: {e}")
-
-            self.all_trades = self.all_trades.reset_index()
+                    ts_types = self.all_trades['timestamp'].apply(type).value_counts()
+                    self.logger.error(f"Timestamp types: {ts_types.to_dict()}")
         else:
             # Fallback senza trade_index: concat senza dedup
             if self.all_trades.empty:
