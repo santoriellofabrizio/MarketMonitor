@@ -23,16 +23,21 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import redis
-from PyQt5.QtCore import Qt, QEvent, pyqtSignal, QObject, QProcess, QTimer
-from PyQt5.QtGui import QFont, QColor, QTextCursor, QPalette, QIcon, QPixmap, QPainter
+from PyQt5.QtCore import Qt, QEvent, pyqtSignal, QObject, QProcess, QTimer, QUrl
+from PyQt5.QtGui import (
+    QFont, QColor, QTextCursor, QPalette, QIcon, QPixmap, QPainter,
+    QSyntaxHighlighter, QTextCharFormat,
+)
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QTabWidget, QLabel, QPushButton, QScrollArea,
     QTextEdit, QTableWidget, QTableWidgetItem, QHeaderView,
     QComboBox, QGroupBox, QDoubleSpinBox, QLineEdit,
     QApplication, QSystemTrayIcon, QMenu, QAction,
-    QFileDialog, QCheckBox,
+    QFileDialog, QCheckBox, QSplitter, QListWidget, QListWidgetItem,
+    QMessageBox,
 )
+from PyQt5.QtGui import QDesktopServices
 
 from market_monitor.gui.implementations.StrategyControlPanel.redis_status_thread import RedisStatusThread
 
@@ -98,6 +103,61 @@ def _fmt_uptime(seconds: float) -> str:
         return f"{m}m {s % 60}s"
     h = m // 60
     return f"{h}h {m % 60}m"
+
+
+# ---------------------------------------------------------------------------
+# _YamlHighlighter — minimal YAML syntax colouring for the config editor
+# ---------------------------------------------------------------------------
+
+class _YamlHighlighter(QSyntaxHighlighter):
+    """Light YAML syntax highlighter: keys, values, comments, booleans, numbers."""
+
+    def __init__(self, document):
+        super().__init__(document)
+
+        def _fmt(hex_color: str, italic: bool = False, bold: bool = False) -> QTextCharFormat:
+            f = QTextCharFormat()
+            f.setForeground(QColor(hex_color))
+            if italic:
+                f.setFontItalic(True)
+            if bold:
+                f.setFontWeight(QFont.Bold)
+            return f
+
+        self._comment = _fmt("#7f8c8d", italic=True)
+        self._key     = _fmt("#7ec8e3", bold=True)
+        self._string  = _fmt("#98c379")
+        self._keyword = _fmt("#e5c07b")   # true/false/null/yes/no
+        self._number  = _fmt("#d19a66")
+        self._anchor  = _fmt("#c678dd")   # &anchor / *ref / --- / ...
+
+        self._rules = [
+            # inline comment (after content)
+            (re.compile(r"(?<!['\"])\s#.*$"), self._comment),
+            # quoted strings
+            (re.compile(r'"[^"\\]*(?:\\.[^"\\]*)*"'), self._string),
+            (re.compile(r"'[^']*'"),                   self._string),
+            # YAML keywords
+            (re.compile(r"\b(true|false|null|yes|no|on|off)\b", re.IGNORECASE), self._keyword),
+            # numbers (int, float, negative)
+            (re.compile(r"(?<![:\w])-?\b\d+\.?\d*\b"), self._number),
+            # anchors/aliases/directives
+            (re.compile(r"[&*][A-Za-z_]\w*|^---$|^\.\.\.$"), self._anchor),
+        ]
+
+    def highlightBlock(self, text: str) -> None:
+        # Full-line comment
+        if re.match(r"^\s*#", text):
+            self.setFormat(0, len(text), self._comment)
+            return
+        # Top-level or nested key  (word chars before the first colon)
+        m = re.match(r"^(\s*)([A-Za-z_][A-Za-z0-9_.]*)\s*:", text)
+        if m:
+            self.setFormat(m.start(2), len(m.group(2)), self._key)
+        # Other rules
+        for pattern, fmt in self._rules:
+            for mo in pattern.finditer(text):
+                self.setFormat(mo.start(), mo.end() - mo.start(), fmt)
 
 
 # ---------------------------------------------------------------------------
@@ -541,6 +601,7 @@ class StrategyControlPanel(QMainWindow):
         self._tabs.addTab(self._build_control_tab(initial_config), "Control")
         self._tabs.addTab(self._build_commands_tab(),               "Commands")
         self._tabs.addTab(self._build_logs_tab(),                   "Logs")
+        self._tabs.addTab(self._build_config_tab(),                 "⚙ Config")
 
         # Status bar
         self._strategy_status_lbl = QLabel("")
@@ -1349,3 +1410,269 @@ class StrategyControlPanel(QMainWindow):
             self._cmd_error_label.setText(f"Redis: {error}")
         if hasattr(self, "_send_btn"):
             self._send_btn.setEnabled(False)
+
+    # ==================================================================
+    # Config tab — YAML editor
+    # ==================================================================
+
+    def _build_config_tab(self) -> QWidget:
+        w = QWidget()
+        root = QVBoxLayout(w)
+        root.setContentsMargins(6, 6, 6, 6)
+        root.setSpacing(6)
+
+        # ── top toolbar ──────────────────────────────────────────────
+        toolbar = QHBoxLayout()
+        toolbar.addWidget(QLabel("Strategy config:"))
+
+        self._cfg_combo = QComboBox()
+        self._cfg_combo.setMinimumWidth(280)
+        self._cfg_combo.setEditable(True)
+        self._cfg_combo.addItems(self._all_configs)
+        self._cfg_combo.currentTextChanged.connect(self._on_cfg_combo_changed)
+        toolbar.addWidget(self._cfg_combo)
+
+        reload_btn = QPushButton("↺ Reload")
+        reload_btn.setFixedWidth(80)
+        reload_btn.setStyleSheet(_BTN_NEUTRAL)
+        reload_btn.setToolTip("Discard unsaved changes and reload from disk")
+        reload_btn.clicked.connect(self._reload_cfg_file)
+        toolbar.addWidget(reload_btn)
+
+        open_btn = QPushButton("📂 Open folder")
+        open_btn.setFixedWidth(110)
+        open_btn.setStyleSheet(_BTN_NEUTRAL)
+        open_btn.setToolTip("Open the config folder in the file manager")
+        open_btn.clicked.connect(self._open_cfg_folder)
+        toolbar.addWidget(open_btn)
+
+        toolbar.addStretch()
+        root.addLayout(toolbar)
+
+        # ── splitter: section list | editor ──────────────────────────
+        splitter = QSplitter(Qt.Horizontal)
+
+        # Left — section navigation
+        left = QWidget()
+        left_layout = QVBoxLayout(left)
+        left_layout.setContentsMargins(0, 0, 4, 0)
+        left_layout.setSpacing(4)
+        nav_lbl = QLabel("Sections")
+        nav_lbl.setStyleSheet("color:#9090b0; font-size:11px; font-weight:bold;")
+        left_layout.addWidget(nav_lbl)
+        self._cfg_section_list = QListWidget()
+        self._cfg_section_list.setStyleSheet(
+            "QListWidget{background:#1e1e2e; border:1px solid #3a3a5c; border-radius:4px;}"
+            "QListWidget::item{padding:4px 8px; color:#c0c0d8;}"
+            "QListWidget::item:selected{background:#3a3a6e; color:#ffffff;}"
+            "QListWidget::item:hover:!selected{background:#2a2a4e;}"
+        )
+        self._cfg_section_list.itemClicked.connect(self._on_cfg_section_clicked)
+        left_layout.addWidget(self._cfg_section_list)
+        left.setMinimumWidth(160)
+        left.setMaximumWidth(240)
+        splitter.addWidget(left)
+
+        # Right — YAML text editor
+        right = QWidget()
+        right_layout = QVBoxLayout(right)
+        right_layout.setContentsMargins(4, 0, 0, 0)
+        right_layout.setSpacing(0)
+
+        self._yaml_editor = QTextEdit()
+        self._yaml_editor.setFont(QFont("Courier New", 10))
+        self._yaml_editor.setTabStopDistance(20)  # 2-space visual tab
+        self._yaml_editor.setStyleSheet(
+            "QTextEdit{background:#12121e; color:#d0d0d0;"
+            "border:1px solid #3a3a5c; border-radius:4px;}"
+        )
+        self._yaml_highlighter = _YamlHighlighter(self._yaml_editor.document())
+        self._yaml_editor.textChanged.connect(self._on_yaml_text_changed)
+        right_layout.addWidget(self._yaml_editor)
+        splitter.addWidget(right)
+
+        splitter.setStretchFactor(0, 0)
+        splitter.setStretchFactor(1, 1)
+        root.addWidget(splitter, stretch=1)
+
+        # ── bottom bar: save / validate / status ─────────────────────
+        bottom = QHBoxLayout()
+        self._cfg_save_btn = QPushButton("💾 Save")
+        self._cfg_save_btn.setStyleSheet(_BTN_SUCCESS)
+        self._cfg_save_btn.setFixedWidth(90)
+        self._cfg_save_btn.setEnabled(False)
+        self._cfg_save_btn.clicked.connect(self._save_cfg_file)
+        bottom.addWidget(self._cfg_save_btn)
+
+        validate_btn = QPushButton("✔ Validate")
+        validate_btn.setStyleSheet(_BTN_NEUTRAL)
+        validate_btn.setFixedWidth(90)
+        validate_btn.setToolTip("Check YAML syntax without saving")
+        validate_btn.clicked.connect(self._validate_cfg_yaml)
+        bottom.addWidget(validate_btn)
+
+        self._cfg_status_lbl = QLabel("")
+        self._cfg_status_lbl.setStyleSheet("font-size:11px; padding-left:8px;")
+        bottom.addWidget(self._cfg_status_lbl)
+        bottom.addStretch()
+
+        self._cfg_path_lbl = QLabel("")
+        self._cfg_path_lbl.setStyleSheet("color:#555577; font-size:10px;")
+        bottom.addWidget(self._cfg_path_lbl)
+        root.addLayout(bottom)
+
+        # internal state
+        self._cfg_path: Optional[Path] = None
+        self._cfg_dirty: bool = False
+        self._cfg_section_lines: Dict[str, int] = {}
+        # debounce timer for section-list refresh
+        self._cfg_update_timer = QTimer(self)
+        self._cfg_update_timer.setSingleShot(True)
+        self._cfg_update_timer.setInterval(300)
+        self._cfg_update_timer.timeout.connect(self._refresh_cfg_sections)
+
+        # Pre-load first config if available
+        if self._all_configs:
+            self._cfg_combo.setCurrentText(self._all_configs[0])
+            self._load_cfg_file(self._all_configs[0])
+
+        return w
+
+    # ── config tab helpers ─────────────────────────────────────────────
+
+    def _on_cfg_combo_changed(self, name: str) -> None:
+        if self._cfg_dirty:
+            ans = QMessageBox.question(
+                self, "Unsaved changes",
+                f"Discard unsaved changes to {self._cfg_path.name if self._cfg_path else 'current file'}?",
+                QMessageBox.Discard | QMessageBox.Cancel,
+            )
+            if ans != QMessageBox.Discard:
+                # Restore the combo to the current file name
+                if self._cfg_path:
+                    self._cfg_combo.blockSignals(True)
+                    self._cfg_combo.setCurrentText(self._cfg_path.stem)
+                    self._cfg_combo.blockSignals(False)
+                return
+        self._load_cfg_file(name)
+
+    def _load_cfg_file(self, config_name: str) -> None:
+        """Resolve path, read text, populate editor and section list."""
+        if not config_name.strip():
+            return
+        try:
+            from market_monitor.utils.config_helpers import find_config
+            path = find_config(config_name)
+        except Exception as e:
+            self._cfg_set_status(f"Config not found: {e}", error=True)
+            return
+
+        try:
+            text = path.read_text(encoding="utf-8")
+        except Exception as e:
+            self._cfg_set_status(f"Cannot read file: {e}", error=True)
+            return
+
+        self._cfg_path = path
+        self._cfg_dirty = False
+        self._yaml_editor.blockSignals(True)
+        self._yaml_editor.setPlainText(text)
+        self._yaml_editor.blockSignals(False)
+        self._cfg_save_btn.setEnabled(False)
+        self._cfg_path_lbl.setText(str(path))
+        self._cfg_set_status("Loaded.", error=False)
+        self._refresh_cfg_sections()
+
+    def _reload_cfg_file(self) -> None:
+        name = self._cfg_combo.currentText().strip()
+        if name:
+            self._cfg_dirty = False  # bypass unsaved-changes check
+            self._load_cfg_file(name)
+
+    def _refresh_cfg_sections(self) -> None:
+        """Parse top-level YAML keys and populate the section list."""
+        self._cfg_section_lines.clear()
+        self._cfg_section_list.clear()
+        text = self._yaml_editor.toPlainText()
+        for lineno, line in enumerate(text.splitlines()):
+            m = re.match(r"^([A-Za-z_][A-Za-z0-9_]*)\s*:", line)
+            if m:
+                key = m.group(1)
+                self._cfg_section_lines[key] = lineno
+                item = QListWidgetItem(key)
+                self._cfg_section_list.addItem(item)
+
+    def _on_cfg_section_clicked(self, item: QListWidgetItem) -> None:
+        """Scroll editor to the clicked section."""
+        key = item.text()
+        lineno = self._cfg_section_lines.get(key, 0)
+        doc = self._yaml_editor.document()
+        block = doc.findBlockByLineNumber(lineno)
+        cursor = QTextCursor(block)
+        self._yaml_editor.setTextCursor(cursor)
+        self._yaml_editor.ensureCursorVisible()
+        self._yaml_editor.setFocus()
+
+    def _on_yaml_text_changed(self) -> None:
+        if not self._cfg_dirty:
+            self._cfg_dirty = True
+            self._cfg_save_btn.setEnabled(True)
+            self._cfg_set_status("Unsaved changes", error=False, warning=True)
+        self._cfg_update_timer.start()  # debounced section refresh
+
+    def _validate_cfg_yaml(self) -> bool:
+        """Validate YAML syntax. Returns True if valid."""
+        try:
+            import yaml
+            yaml.safe_load(self._yaml_editor.toPlainText())
+            self._cfg_set_status("✔ Valid YAML", error=False)
+            return True
+        except Exception as e:
+            # Try to pinpoint the line number
+            msg = str(e)
+            self._cfg_set_status(f"⚠ YAML error: {msg}", error=True)
+            # Try to jump to the error line
+            m = re.search(r"line (\d+)", msg)
+            if m:
+                lineno = int(m.group(1)) - 1
+                block = self._yaml_editor.document().findBlockByLineNumber(lineno)
+                cursor = QTextCursor(block)
+                self._yaml_editor.setTextCursor(cursor)
+                self._yaml_editor.ensureCursorVisible()
+            return False
+
+    def _save_cfg_file(self) -> None:
+        if self._cfg_path is None:
+            return
+        if not self._validate_cfg_yaml():
+            ans = QMessageBox.question(
+                self, "Invalid YAML",
+                "The file contains YAML errors. Save anyway?",
+                QMessageBox.Save | QMessageBox.Cancel,
+            )
+            if ans != QMessageBox.Save:
+                return
+        try:
+            self._cfg_path.write_text(
+                self._yaml_editor.toPlainText(), encoding="utf-8"
+            )
+            self._cfg_dirty = False
+            self._cfg_save_btn.setEnabled(False)
+            self._cfg_set_status(f"Saved → {self._cfg_path.name}", error=False)
+        except Exception as e:
+            self._cfg_set_status(f"Save error: {e}", error=True)
+
+    def _open_cfg_folder(self) -> None:
+        folder = self._cfg_path.parent if self._cfg_path else None
+        if folder and folder.exists():
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))
+
+    def _cfg_set_status(self, msg: str, *, error: bool, warning: bool = False) -> None:
+        if error:
+            style = "color:#e74c3c; font-size:11px; padding-left:8px;"
+        elif warning:
+            style = "color:#e67e22; font-size:11px; padding-left:8px;"
+        else:
+            style = "color:#27ae60; font-size:11px; padding-left:8px;"
+        self._cfg_status_lbl.setStyleSheet(style)
+        self._cfg_status_lbl.setText(msg)
