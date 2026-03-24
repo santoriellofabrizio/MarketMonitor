@@ -1583,7 +1583,13 @@ class TradeTableWidget(QWidget):
         if self.is_loading or self.filtered_data.empty:
             return
 
-        df = self.filtered_data[self.visible_columns]
+        # Keep only visible columns that exist; pad the rest with None
+        existing = [c for c in self.visible_columns if c in self.filtered_data.columns]
+        missing  = [c for c in self.visible_columns if c not in self.filtered_data.columns]
+        df = self.filtered_data[existing].copy()
+        for col in missing:
+            df[col] = None
+        df = df[self.visible_columns]  # restore requested order
         if self.displayed_rows >= len(df):
             return
 
