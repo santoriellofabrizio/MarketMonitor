@@ -1032,23 +1032,23 @@ class PivotTableWidget(QWidget):
         if not numeric_cols:
             return df
 
-        vals = result[numeric_cols]
+        # Work with a plain numpy array to avoid all index-alignment issues
+        import numpy as np
+        vals = result[numeric_cols].to_numpy(dtype=float, na_value=0.0)
 
         if normalize == 'index':
-            row_sums = vals.sum(axis=1)
-            safe = row_sums.replace(0, 1)
-            result[numeric_cols] = vals.div(safe, axis=0) * 100
-            result.loc[row_sums == 0, numeric_cols] = 0
+            row_sums = vals.sum(axis=1, keepdims=True)
+            safe = np.where(row_sums == 0, 1.0, row_sums)
+            result[numeric_cols] = np.where(row_sums == 0, 0.0, vals / safe * 100)
 
         elif normalize == 'columns':
-            col_sums = vals.sum(axis=0)
-            safe = col_sums.replace(0, 1)
-            result[numeric_cols] = vals.div(safe, axis=1) * 100
-            result.loc[:, col_sums[col_sums == 0].index] = 0
+            col_sums = vals.sum(axis=0, keepdims=True)
+            safe = np.where(col_sums == 0, 1.0, col_sums)
+            result[numeric_cols] = np.where(col_sums == 0, 0.0, vals / safe * 100)
 
         elif normalize == 'all':
-            total = vals.values.sum()
-            result[numeric_cols] = vals / total * 100 if total != 0 else 0
+            total = vals.sum()
+            result[numeric_cols] = vals / total * 100 if total != 0 else 0.0
 
         return result
 
