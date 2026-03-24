@@ -106,7 +106,7 @@ class StrategyUIAsync(ABC):
 
         logger.debug("Entering _async_run method.")
         if await self._wait_for_book_initialization():
-            print("started!")
+            logger.info("[LIFECYCLE] started")
             tasks = self._schedule_tasks()
             self._on_other_thread_start()
             await asyncio.gather(*tasks, return_exceptions=True)
@@ -209,7 +209,9 @@ class StrategyUIAsync(ABC):
             start = time()
             try:
                 self.update_HF()
-                logger.debug(f"Update HF calculation {time() - start:.4f}s")
+                elapsed = time() - start
+                logger.debug(f"Update HF calculation {elapsed:.4f}s")
+                logger.info(f"[STATS] hf_update={elapsed:.4f}s")
 
             except Exception as e:
                 logger.info(f"Error in update HF: {e}")
@@ -246,7 +248,9 @@ class StrategyUIAsync(ABC):
             trade_type, item = await self.q_trade.get()
             start = time()
             self._on_trade(trade_type, item)
-            logger.debug(f"trade elaborated {time() - start:.4f}s")
+            elapsed = time() - start
+            logger.debug(f"trade elaborated {elapsed:.4f}s")
+            logger.info(f"[STATS] trade_elaborated={elapsed:.4f}s")
 
     async def _check_trade_queue_on_time(self, frequency, *args, **kwargs):
         """
@@ -319,7 +323,8 @@ class StrategyUIAsync(ABC):
         logger.debug("Entering _wait_for_book_initialization method.")
         while not self.wait_for_book_initialization():
             await asyncio.sleep(3)
-            logger.info("Waiting for _real_time_data initialization...")
+            logger.info("[LIFECYCLE] waiting_for_book")
+        logger.info("[LIFECYCLE] book_initialized")
         self.on_book_initialized()
         self._publish_lifecycle_event("on_book_initialized")
         return True
@@ -348,6 +353,7 @@ class StrategyUIAsync(ABC):
             await asyncio.gather(*tasks, return_exceptions=True)
 
             logger.info("Shutdown completo.")
+            logger.info("[LIFECYCLE] shutdown_complete")
 
         except Exception as e:
             logger.error(f"Errore nello shutdown: {e}", exc_info=True)
@@ -376,6 +382,7 @@ class StrategyUIAsync(ABC):
             logger.debug("Entering _on_trade method.")
             if trade_type == TradeType.MARKET:
                 self.on_trade(trade)
+                logger.info(f"[LIFECYCLE] market_trade count={len(trade)}")
                 self._publish_lifecycle_event("on_trade", len(trade))
             elif trade_type == TradeType.OWN:
                 self._on_my_trade(trade)
@@ -387,8 +394,8 @@ class StrategyUIAsync(ABC):
         return
 
     def _on_my_trade(self, trade: pd.DataFrame):
-        logger.info("Entering on_my_trade method.")
         self.on_my_trade(trade)
+        logger.info(f"[LIFECYCLE] own_trade count={len(trade)}")
         self._publish_lifecycle_event("on_my_trade", len(trade))
 
     def _on_market_data_setting(self):
@@ -442,6 +449,7 @@ class StrategyUIAsync(ABC):
 
     def stop(self):
         """Stop non bloccante."""
+        logger.info("[LIFECYCLE] stopped")
         self.on_stop()
         self._publish_lifecycle_event("on_stop")
         logger.debug("Entering stop method.")

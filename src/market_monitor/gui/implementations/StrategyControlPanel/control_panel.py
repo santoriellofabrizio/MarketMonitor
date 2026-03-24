@@ -13,21 +13,25 @@ Or connect to already-running strategies:
 """
 from __future__ import annotations
 
+import atexit
 import json
 import logging
 import re
+import time
+import weakref
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import redis
-from PyQt5.QtCore import Qt, pyqtSignal, QObject, QProcess, QTimer
-from PyQt5.QtGui import QFont, QColor, QTextCursor, QPalette
+from PyQt5.QtCore import Qt, QEvent, pyqtSignal, QObject, QProcess, QTimer
+from PyQt5.QtGui import QFont, QColor, QTextCursor, QPalette, QIcon, QPixmap, QPainter
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QTabWidget, QLabel, QPushButton, QScrollArea,
     QTextEdit, QTableWidget, QTableWidgetItem, QHeaderView,
     QComboBox, QGroupBox, QDoubleSpinBox, QLineEdit,
-    QApplication,
+    QApplication, QSystemTrayIcon, QMenu, QAction,
+    QFileDialog, QCheckBox,
 )
 
 from market_monitor.gui.implementations.StrategyControlPanel.redis_status_thread import RedisStatusThread
@@ -73,6 +77,28 @@ _BTN_NEUTRAL = (
     "QPushButton:hover{background:#4a4a6c;}"
 )
 
+# Row background colours for strategy status
+_ROW_BG = {
+    "RUNNING":    QColor("#1a3a1a"),
+    "ERROR":      QColor("#3a1a1a"),
+    "RESTARTING": QColor("#3a2a0a"),
+}
+
+# Lifecycle / stats log parsers
+_LC_RE    = re.compile(r"\[LIFECYCLE\]\s+(\S+)(?:\s+count=(\d+))?")
+_STATS_RE = re.compile(r"\[STATS\]\s+(\w+)=([\d.]+)s")
+
+def _fmt_uptime(seconds: float) -> str:
+    """Format elapsed seconds as '2h 15m' / '45s'."""
+    s = int(seconds)
+    if s < 60:
+        return f"{s}s"
+    m = s // 60
+    if m < 60:
+        return f"{m}m {s % 60}s"
+    h = m // 60
+    return f"{h}h {m % 60}m"
+
 
 # ---------------------------------------------------------------------------
 # StrategyInstance — manages a single strategy subprocess
@@ -101,6 +127,9 @@ class StrategyInstance(QObject):
         self.panel_config: dict = panel_config or {}
         self.status = "STOPPED"
         self.pid: Optional[int] = None
+        self.auto_restart: bool = False
+        self.restart_count: int = 0
+        self.started_at: Optional[float] = None   # set by panel when [LIFECYCLE] started arrives
 
         self._process = QProcess(self)
         self._process.setProcessChannelMode(QProcess.MergedChannels)
@@ -144,9 +173,16 @@ class StrategyInstance(QObject):
 
     def _on_finished(self, exit_code: int, _exit_status) -> None:
         self.pid = None
-        self.status = "STOPPED"
-        self.status_changed.emit(self, "STOPPED")
+        self.started_at = None
         self.output_received.emit(self, f"\n[Process exited with code {exit_code}]\n")
+        if self.auto_restart and exit_code != 0:
+            self.restart_count += 1
+            self.status = "RESTARTING"
+            self.status_changed.emit(self, "RESTARTING")
+            QTimer.singleShot(3000, self.start)
+        else:
+            self.status = "STOPPED"
+            self.status_changed.emit(self, "STOPPED")
 
 
 # ---------------------------------------------------------------------------
@@ -192,9 +228,22 @@ class StrategyControlPanel(QMainWindow):
         self._log_buffers: Dict[str, List[Tuple[str, str]]] = {"_all": []}
         self._log_tabs: Dict[str, QTextEdit] = {}
         self._log_filters: Dict[str, QComboBox] = {}
+        self._log_searches: Dict[str, QLineEdit] = {}
+
+        # Per-instance lifecycle statistics (populated by log parsing)
+        self._lifecycle_stats: Dict[str, dict] = {}
 
         # Load persisted settings
         self._settings = self._load_settings()
+
+        # Register atexit cleanup so child processes are killed even on crash
+        _self_ref = weakref.ref(self)
+        def _atexit_cleanup():
+            panel = _self_ref()
+            if panel is not None:
+                for inst in list(panel._instances):
+                    inst.terminate()
+        atexit.register(_atexit_cleanup)
 
         self._build_redis_client(redis_config or {})
         self._setup_ui(initial_config)
@@ -220,6 +269,8 @@ class StrategyControlPanel(QMainWindow):
 
     def closeEvent(self, event) -> None:
         self._save_settings()
+        if hasattr(self, "_tray"):
+            self._tray.hide()
         for thread in self._status_threads.values():
             if thread.isRunning():
                 thread.stop()
@@ -227,6 +278,45 @@ class StrategyControlPanel(QMainWindow):
         for inst in self._instances:
             inst.terminate()
         super().closeEvent(event)
+
+    def changeEvent(self, event) -> None:
+        if (event.type() == QEvent.WindowStateChange
+                and self.windowState() & Qt.WindowMinimized
+                and hasattr(self, "_tray_toggle")
+                and self._tray_toggle.isChecked()):
+            QTimer.singleShot(0, self.hide)
+        super().changeEvent(event)
+
+    def _restore_from_tray(self) -> None:
+        self.showNormal()
+        self.activateWindow()
+        self.raise_()
+
+    def _on_tray_activated(self, reason) -> None:
+        if reason == QSystemTrayIcon.DoubleClick:
+            self._restore_from_tray()
+
+    @staticmethod
+    def _make_tray_icon(running: bool) -> QIcon:
+        """Generate a simple colored circle icon for the tray."""
+        px = QPixmap(16, 16)
+        px.fill(Qt.transparent)
+        p = QPainter(px)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.setBrush(QColor("#27ae60") if running else QColor("#555577"))
+        p.setPen(Qt.NoPen)
+        p.drawEllipse(1, 1, 14, 14)
+        p.end()
+        return QIcon(px)
+
+    def _update_tray_icon(self) -> None:
+        running = any(i.status == "RUNNING" for i in self._instances)
+        if hasattr(self, "_tray"):
+            self._tray.setIcon(self._make_tray_icon(running))
+            count = sum(1 for i in self._instances if i.status == "RUNNING")
+            self._tray.setToolTip(
+                f"Strategy Control Panel — {count} running" if count else "Strategy Control Panel"
+            )
 
     # ------------------------------------------------------------------
     # Settings persistence
@@ -255,6 +345,10 @@ class StrategyControlPanel(QMainWindow):
                 },
                 "configs": [inst.config_name for inst in self._instances],
                 "log_levels": log_levels,
+                "minimize_to_tray": (
+                    self._tray_toggle.isChecked()
+                    if hasattr(self, "_tray_toggle") else True
+                ),
             }
             _SETTINGS_PATH.write_text(json.dumps(data, indent=2))
         except Exception as e:
@@ -429,8 +523,13 @@ class StrategyControlPanel(QMainWindow):
         save_btn.setFixedWidth(110)
         save_btn.setStyleSheet(_BTN_NEUTRAL)
         save_btn.clicked.connect(self._save_settings)
+        self._tray_toggle = QCheckBox("Minimize to tray")
+        self._tray_toggle.setChecked(self._settings.get("minimize_to_tray", True))
+        self._tray_toggle.setStyleSheet("color:#9090b0; font-size:11px;")
         header.addWidget(title_lbl)
         header.addStretch()
+        header.addWidget(self._tray_toggle)
+        header.addSpacing(12)
         header.addWidget(self._redis_status_lbl)
         header.addSpacing(12)
         header.addWidget(save_btn)
@@ -447,6 +546,28 @@ class StrategyControlPanel(QMainWindow):
         self._strategy_status_lbl = QLabel("")
         self.statusBar().addPermanentWidget(self._strategy_status_lbl)
         self._update_redis_indicator()
+
+        # System tray icon
+        self._tray = QSystemTrayIcon(self)
+        self._tray.setIcon(self._make_tray_icon(running=False))
+        tray_menu = QMenu()
+        show_action = QAction("Show Panel", self)
+        show_action.triggered.connect(self._restore_from_tray)
+        tray_menu.addAction(show_action)
+        tray_menu.addSeparator()
+        quit_action = QAction("Quit", self)
+        quit_action.triggered.connect(QApplication.quit)
+        tray_menu.addAction(quit_action)
+        self._tray.setContextMenu(tray_menu)
+        self._tray.activated.connect(self._on_tray_activated)
+        self._tray.setToolTip("Strategy Control Panel")
+        self._tray.show()
+
+        # Uptime refresh timer
+        self._uptime_timer = QTimer(self)
+        self._uptime_timer.setInterval(10_000)
+        self._uptime_timer.timeout.connect(self._refresh_uptimes)
+        self._uptime_timer.start()
 
     # --- Control tab ---
 
@@ -479,20 +600,35 @@ class StrategyControlPanel(QMainWindow):
         toolbar.addWidget(remove_btn)
         layout.addLayout(toolbar)
 
-        self._strategy_table = QTableWidget(0, 5)
-        self._strategy_table.setHorizontalHeaderLabels(
-            ["Config", "Status", "PID", "Start", "Stop"]
+        # Auto-restart toolbar
+        ar_row = QHBoxLayout()
+        ar_row.addWidget(QLabel("Selected strategy:"))
+        self._auto_restart_check = QCheckBox("Auto-restart on crash")
+        self._auto_restart_check.setToolTip(
+            "If checked, the selected strategy restarts automatically after 3 s when it exits with a non-zero code."
         )
-        self._strategy_table.setAlternatingRowColors(True)
+        self._auto_restart_check.setStyleSheet("color:#9090b0;")
+        self._auto_restart_check.stateChanged.connect(self._on_auto_restart_toggled)
+        ar_row.addWidget(self._auto_restart_check)
+        ar_row.addStretch()
+        layout.addLayout(ar_row)
+
+        # Col indices: 0=Config 1=Status 2=Uptime 3=Trades 4=HF ms 5=Start 6=Stop
+        self._strategy_table = QTableWidget(0, 7)
+        self._strategy_table.setHorizontalHeaderLabels(
+            ["Config", "Status", "Uptime", "Trades", "HF ms", "Start", "Stop"]
+        )
+        self._strategy_table.setAlternatingRowColors(False)
         hdr = self._strategy_table.horizontalHeader()
         hdr.setSectionResizeMode(0, QHeaderView.Stretch)
-        for col, w_px in [(1, 90), (2, 80), (3, 80), (4, 80)]:
+        for col, w_px in [(1, 115), (2, 75), (3, 65), (4, 60), (5, 65), (6, 65)]:
             hdr.setSectionResizeMode(col, QHeaderView.Fixed)
             self._strategy_table.setColumnWidth(col, w_px)
         self._strategy_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self._strategy_table.setSelectionBehavior(QTableWidget.SelectRows)
         self._strategy_table.verticalHeader().setVisible(False)
         self._strategy_table.setShowGrid(False)
+        self._strategy_table.itemSelectionChanged.connect(self._on_table_selection_changed)
         layout.addWidget(self._strategy_table)
 
         if initial_config:
@@ -544,22 +680,29 @@ class StrategyControlPanel(QMainWindow):
         self._ensure_status_thread(channels["status_channel"])
         self._instances.append(inst)
 
+        self._lifecycle_stats[config_name] = {
+            "market_trades": 0,
+            "own_trades": 0,
+            "last_hf_ms": None,
+        }
+
         row = self._strategy_table.rowCount()
         self._strategy_table.insertRow(row)
         self._strategy_table.setItem(row, 0, QTableWidgetItem(config_name))
-        status_item = QTableWidgetItem("STOPPED")
-        status_item.setForeground(QColor("#c0392b"))
-        self._strategy_table.setItem(row, 1, status_item)
+        self._strategy_table.setItem(row, 1, self._make_status_item("STOPPED"))
         self._strategy_table.setItem(row, 2, QTableWidgetItem("—"))
+        self._strategy_table.setItem(row, 3, QTableWidgetItem("—"))
+        self._strategy_table.setItem(row, 4, QTableWidgetItem("—"))
 
-        start_btn = QPushButton("Start")
+        start_btn = QPushButton("▶ Start")
         start_btn.setStyleSheet(_BTN_SUCCESS)
         start_btn.clicked.connect(lambda _checked, i=inst: i.start())
-        stop_btn = QPushButton("Stop")
+        stop_btn = QPushButton("■ Stop")
         stop_btn.setStyleSheet(_BTN_DANGER)
+        stop_btn.setEnabled(False)
         stop_btn.clicked.connect(lambda _checked, i=inst: i.stop(self._redis_client))
-        self._strategy_table.setCellWidget(row, 3, start_btn)
-        self._strategy_table.setCellWidget(row, 4, stop_btn)
+        self._strategy_table.setCellWidget(row, 5, start_btn)
+        self._strategy_table.setCellWidget(row, 6, stop_btn)
 
         self._update_target_combo()
         self._rebuild_quick_commands()
@@ -588,12 +731,87 @@ class StrategyControlPanel(QMainWindow):
         row = self._instances.index(inst) if inst in self._instances else -1
         if row < 0:
             return
-        colour = {"RUNNING": "#27ae60", "ERROR": "#e67e22"}.get(status, "#c0392b")
-        status_item = QTableWidgetItem(status)
-        status_item.setForeground(QColor(colour))
-        self._strategy_table.setItem(row, 1, status_item)
-        self._strategy_table.setItem(row, 2, QTableWidgetItem(str(inst.pid) if inst.pid else "—"))
+        self._strategy_table.setItem(row, 1, self._make_status_item(status))
+        # Row background
+        bg = _ROW_BG.get(status)
+        for col in range(self._strategy_table.columnCount()):
+            item = self._strategy_table.item(row, col)
+            if item:
+                if bg:
+                    item.setBackground(bg)
+                else:
+                    item.setBackground(QColor(0, 0, 0, 0))
+        # Start/Stop button states
+        start_btn = self._strategy_table.cellWidget(row, 5)
+        stop_btn  = self._strategy_table.cellWidget(row, 6)
+        if start_btn:
+            start_btn.setEnabled(status not in ("RUNNING", "RESTARTING"))
+        if stop_btn:
+            stop_btn.setEnabled(status == "RUNNING")
+        # Update tray + status bar
         self._update_status_bar()
+        self._update_tray_icon()
+        # Toast notification
+        msg_map = {
+            "RUNNING":    f"Strategy {inst.config_name} started",
+            "STOPPED":    f"Strategy {inst.config_name} stopped",
+            "ERROR":      f"Strategy {inst.config_name}: ERROR",
+            "RESTARTING": f"Strategy {inst.config_name}: restarting…",
+        }
+        if status in msg_map and hasattr(self, "_tray"):
+            self._tray.showMessage("Strategy Control Panel", msg_map[status],
+                                   QSystemTrayIcon.Information, 3000)
+
+    @staticmethod
+    def _make_status_item(status: str) -> QTableWidgetItem:
+        icon  = {"RUNNING": "●", "STOPPED": "○", "ERROR": "⚠", "RESTARTING": "↻"}.get(status, "○")
+        color = {"RUNNING": "#27ae60", "ERROR": "#e74c3c", "RESTARTING": "#e67e22"}.get(status, "#888888")
+        item = QTableWidgetItem(f"{icon} {status}")
+        item.setForeground(QColor(color))
+        bg = _ROW_BG.get(status)
+        if bg:
+            item.setBackground(bg)
+        return item
+
+    def _on_table_selection_changed(self) -> None:
+        rows = self._strategy_table.selectionModel().selectedRows()
+        if rows and rows[0].row() < len(self._instances):
+            inst = self._instances[rows[0].row()]
+            if hasattr(self, "_auto_restart_check"):
+                self._auto_restart_check.blockSignals(True)
+                self._auto_restart_check.setChecked(inst.auto_restart)
+                self._auto_restart_check.blockSignals(False)
+
+    def _on_auto_restart_toggled(self, state: int) -> None:
+        rows = self._strategy_table.selectionModel().selectedRows()
+        if rows and rows[0].row() < len(self._instances):
+            inst = self._instances[rows[0].row()]
+            inst.auto_restart = bool(state)
+
+    def _refresh_uptimes(self) -> None:
+        now = time.time()
+        for row, inst in enumerate(self._instances):
+            if inst.started_at is not None:
+                uptime = _fmt_uptime(now - inst.started_at)
+            else:
+                uptime = "—"
+            item = self._strategy_table.item(row, 2)
+            if item:
+                item.setText(uptime)
+
+    def _refresh_stats_row(self, inst: StrategyInstance) -> None:
+        row = self._instances.index(inst) if inst in self._instances else -1
+        if row < 0:
+            return
+        stats = self._lifecycle_stats.get(inst.config_name, {})
+        total_trades = stats.get("market_trades", 0) + stats.get("own_trades", 0)
+        trades_txt = f"{total_trades:,}" if total_trades else "—"
+        hf_ms = stats.get("last_hf_ms")
+        hf_txt = f"{hf_ms:.0f}" if hf_ms is not None else "—"
+        for col, txt in [(3, trades_txt), (4, hf_txt)]:
+            item = self._strategy_table.item(row, col)
+            if item:
+                item.setText(txt)
 
     # --- Commands tab ---
 
@@ -835,9 +1053,22 @@ class StrategyControlPanel(QMainWindow):
             combo.addItem(lvl)
         self._log_filters[key] = combo
 
+        search_edit = QLineEdit()
+        search_edit.setPlaceholderText("Search logs…")
+        search_edit.setFixedWidth(180)
+        search_edit.setStyleSheet(
+            "QLineEdit{background:#1e1e2e;color:#d0d0d0;border:1px solid #3a3a5c;"
+            "border-radius:4px;padding:2px 6px;}"
+        )
+        self._log_searches[key] = search_edit
+
         clear_btn = QPushButton("Clear")
-        clear_btn.setFixedWidth(70)
+        clear_btn.setFixedWidth(60)
         clear_btn.setStyleSheet(_BTN_NEUTRAL)
+
+        export_btn = QPushButton("Export…")
+        export_btn.setFixedWidth(70)
+        export_btn.setStyleSheet(_BTN_NEUTRAL)
 
         edit = QTextEdit()
         edit.setReadOnly(True)
@@ -847,11 +1078,19 @@ class StrategyControlPanel(QMainWindow):
         combo.currentIndexChanged.connect(
             lambda _idx, k=key, c=combo, e=edit: self._on_log_filter_changed(k, c, e)
         )
+        search_edit.textChanged.connect(
+            lambda txt, k=key, e=edit: self._on_log_search_changed(k, e, txt)
+        )
         clear_btn.clicked.connect(lambda: (edit.clear(), self._log_buffers.__setitem__(key, [])))
+        export_btn.clicked.connect(lambda: self._export_log(key))
 
         ctrl.addWidget(combo)
-        ctrl.addSpacing(10)
+        ctrl.addSpacing(8)
+        ctrl.addWidget(search_edit)
+        ctrl.addSpacing(8)
         ctrl.addWidget(clear_btn)
+        ctrl.addSpacing(4)
+        ctrl.addWidget(export_btn)
         ctrl.addStretch()
         tab_layout.addLayout(ctrl)
         tab_layout.addWidget(edit)
@@ -902,6 +1141,14 @@ class StrategyControlPanel(QMainWindow):
         edit.ensureCursorVisible()
 
     def _on_log_filter_changed(self, key: str, combo: QComboBox, edit: QTextEdit) -> None:
+        search = (self._log_searches.get(key, QLineEdit()).text() or "").lower()
+        self._rebuild_log_view(key, combo, edit, search)
+
+    def _on_log_search_changed(self, key: str, edit: QTextEdit, search_txt: str) -> None:
+        combo = self._log_filters.get(key, QComboBox())
+        self._rebuild_log_view(key, combo, edit, search_txt.lower())
+
+    def _rebuild_log_view(self, key: str, combo: QComboBox, edit: QTextEdit, search: str) -> None:
         min_rank = _LEVEL_RANK.get(combo.currentText(), 0)
         edit.clear()
         buf = self._log_buffers.get(key, [])
@@ -909,15 +1156,38 @@ class StrategyControlPanel(QMainWindow):
         cursor = edit.textCursor()
         cursor.movePosition(QTextCursor.End)
         for level, line in buf:
-            if _LEVEL_RANK.get(level, 0) >= min_rank:
-                html = self._format_log_html(level, line)
-                if first:
-                    cursor.insertHtml(html)
-                    first = False
-                else:
-                    cursor.insertHtml("<br>" + html)
+            if _LEVEL_RANK.get(level, 0) < min_rank:
+                continue
+            if search and search not in line.lower():
+                continue
+            html = self._format_log_html(level, line)
+            if first:
+                cursor.insertHtml(html)
+                first = False
+            else:
+                cursor.insertHtml("<br>" + html)
         edit.setTextCursor(cursor)
         edit.ensureCursorVisible()
+
+    def _export_log(self, key: str) -> None:
+        combo = self._log_filters.get(key, QComboBox())
+        search = (self._log_searches.get(key, QLineEdit()).text() or "").lower()
+        min_rank = _LEVEL_RANK.get(combo.currentText(), 0)
+        lines = [
+            line for level, line in self._log_buffers.get(key, [])
+            if _LEVEL_RANK.get(level, 0) >= min_rank
+            and (not search or search in line.lower())
+        ]
+        if not lines:
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export Log", f"{key}_log.txt", "Text files (*.txt)"
+        )
+        if path:
+            try:
+                Path(path).write_text("\n".join(lines), encoding="utf-8")
+            except Exception as e:
+                logger.warning(f"Log export failed: {e}")
 
     def _on_instance_output(self, inst: StrategyInstance, text: str) -> None:
         for line in text.splitlines():
@@ -930,23 +1200,56 @@ class StrategyControlPanel(QMainWindow):
             self._log_buffers.setdefault(inst.config_name, []).append((level, f"[{inst.config_name}] {line}"))
             self._log_buffers["_all"].append((level, prefixed))
 
-            # Check filters and append to visible edits
-            min_rank_inst = _LEVEL_RANK.get(
-                self._log_filters.get(inst.config_name, QComboBox()).currentText() if inst.config_name in self._log_filters else "DEBUG", 0
-            )
-            min_rank_all = _LEVEL_RANK.get(
-                self._log_filters.get("_all", QComboBox()).currentText() if "_all" in self._log_filters else "DEBUG", 0
-            )
-            if _LEVEL_RANK.get(level, 0) >= min_rank_inst and inst.config_name in self._log_tabs:
+            # Parse lifecycle / stats markers
+            self._parse_lifecycle_line(inst, line)
+
+            # Check filters / search and append to visible edits
+            inst_combo  = self._log_filters.get(inst.config_name, QComboBox())
+            all_combo   = self._log_filters.get("_all", QComboBox())
+            inst_search = (self._log_searches.get(inst.config_name, QLineEdit()).text() or "").lower()
+            all_search  = (self._log_searches.get("_all", QLineEdit()).text() or "").lower()
+            min_rank_inst = _LEVEL_RANK.get(inst_combo.currentText(), 0)
+            min_rank_all  = _LEVEL_RANK.get(all_combo.currentText(), 0)
+            line_lc = line.lower()
+            if (_LEVEL_RANK.get(level, 0) >= min_rank_inst
+                    and inst.config_name in self._log_tabs
+                    and (not inst_search or inst_search in line_lc)):
                 self._appendhtml_line(
                     self._log_tabs[inst.config_name],
                     self._format_log_html(level, f"[{inst.config_name}] {line}"),
                 )
-            if _LEVEL_RANK.get(level, 0) >= min_rank_all:
+            if (_LEVEL_RANK.get(level, 0) >= min_rank_all
+                    and (not all_search or all_search in prefixed.lower())):
                 self._appendhtml_line(
                     self._log_all,
                     self._format_log_html(level, prefixed),
                 )
+
+    def _parse_lifecycle_line(self, inst: StrategyInstance, line: str) -> None:
+        """Update live stats and trigger UI refresh when lifecycle/stats markers are found."""
+        stats = self._lifecycle_stats.setdefault(inst.config_name, {
+            "market_trades": 0, "own_trades": 0, "last_hf_ms": None,
+        })
+
+        lc_m = _LC_RE.search(line)
+        if lc_m:
+            event = lc_m.group(1)
+            count = int(lc_m.group(2)) if lc_m.group(2) else 0
+            if event == "started":
+                inst.started_at = time.time()
+            elif event == "market_trade":
+                stats["market_trades"] = stats.get("market_trades", 0) + count
+            elif event == "own_trade":
+                stats["own_trades"] = stats.get("own_trades", 0) + count
+            self._refresh_stats_row(inst)
+            return
+
+        st_m = _STATS_RE.search(line)
+        if st_m:
+            metric, val = st_m.group(1), float(st_m.group(2))
+            if metric == "hf_update":
+                stats["last_hf_ms"] = val * 1000
+            self._refresh_stats_row(inst)
 
     # ------------------------------------------------------------------
     # Status bar
