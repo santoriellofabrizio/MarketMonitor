@@ -328,6 +328,10 @@ class StrategyControlPanel(QMainWindow):
     # ------------------------------------------------------------------
 
     def closeEvent(self, event) -> None:
+        logger.info(
+            f"closeEvent — windowState=0x{int(self.windowState()):02x} "
+            f"isVisible={self.isVisible()}"
+        )
         self._save_settings()
         if hasattr(self, "_tray"):
             self._tray.hide()
@@ -340,19 +344,28 @@ class StrategyControlPanel(QMainWindow):
         super().closeEvent(event)
 
     def changeEvent(self, event) -> None:
-        if (event.type() == QEvent.WindowStateChange
-                and self.windowState() & Qt.WindowMinimized
-                and hasattr(self, "_tray_toggle")
-                and self._tray_toggle.isChecked()):
-            QTimer.singleShot(0, self.hide)
+        if event.type() == QEvent.WindowStateChange:
+            state = int(self.windowState())
+            minimized    = bool(self.windowState() & Qt.WindowMinimized)
+            tray_enabled = hasattr(self, "_tray_toggle") and self._tray_toggle.isChecked()
+            tray_visible = hasattr(self, "_tray") and self._tray.isVisible()
+            logger.info(
+                f"WindowStateChange — state=0x{state:02x} minimized={minimized} "
+                f"minimize_to_tray={tray_enabled} tray_visible={tray_visible}"
+            )
+            if minimized and tray_enabled:
+                logger.info("Hiding window to system tray")
+                QTimer.singleShot(0, self.hide)
         super().changeEvent(event)
 
     def _restore_from_tray(self) -> None:
+        logger.info("_restore_from_tray called")
         self.showNormal()
         self.activateWindow()
         self.raise_()
 
     def _on_tray_activated(self, reason) -> None:
+        logger.info(f"Tray icon activated — reason={reason}")
         if reason == QSystemTrayIcon.DoubleClick:
             self._restore_from_tray()
 
@@ -623,6 +636,11 @@ class StrategyControlPanel(QMainWindow):
         self._tray.activated.connect(self._on_tray_activated)
         self._tray.setToolTip("Strategy Control Panel")
         self._tray.show()
+        tray_available = QSystemTrayIcon.isSystemTrayAvailable()
+        logger.info(
+            f"System tray — available={tray_available} "
+            f"tray.isVisible()={self._tray.isVisible()}"
+        )
 
         # Uptime refresh timer
         self._uptime_timer = QTimer(self)
