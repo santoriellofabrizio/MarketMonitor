@@ -345,17 +345,28 @@ class StrategyControlPanel(QMainWindow):
 
     def changeEvent(self, event) -> None:
         if event.type() == QEvent.WindowStateChange:
-            state = int(self.windowState())
+            state        = int(self.windowState())
             minimized    = bool(self.windowState() & Qt.WindowMinimized)
             tray_enabled = hasattr(self, "_tray_toggle") and self._tray_toggle.isChecked()
+            tray_available = QSystemTrayIcon.isSystemTrayAvailable()
             tray_visible = hasattr(self, "_tray") and self._tray.isVisible()
             logger.info(
                 f"WindowStateChange — state=0x{state:02x} minimized={minimized} "
-                f"minimize_to_tray={tray_enabled} tray_visible={tray_visible}"
+                f"minimize_to_tray={tray_enabled} tray_available={tray_available} "
+                f"tray_visible={tray_visible}"
             )
-            if minimized and tray_enabled:
+            # Only hide if the user explicitly enabled it AND the tray actually works.
+            # If any guard fails, the window stays minimized (normal taskbar behaviour)
+            # so the user can always restore it.
+            if minimized and tray_enabled and tray_available and tray_visible:
                 logger.info("Hiding window to system tray")
                 QTimer.singleShot(0, self.hide)
+            elif minimized and tray_enabled and not (tray_available and tray_visible):
+                logger.warning(
+                    "minimize_to_tray is on but system tray is not usable "
+                    f"(available={tray_available} visible={tray_visible}) — "
+                    "leaving window minimized in taskbar instead"
+                )
         super().changeEvent(event)
 
     def _restore_from_tray(self) -> None:
@@ -597,7 +608,7 @@ class StrategyControlPanel(QMainWindow):
         save_btn.setStyleSheet(_BTN_NEUTRAL)
         save_btn.clicked.connect(self._save_settings)
         self._tray_toggle = QCheckBox("Minimize to tray")
-        self._tray_toggle.setChecked(self._settings.get("minimize_to_tray", True))
+        self._tray_toggle.setChecked(self._settings.get("minimize_to_tray", False))
         self._tray_toggle.setStyleSheet("color:#9090b0; font-size:11px;")
         header.addWidget(title_lbl)
         header.addStretch()

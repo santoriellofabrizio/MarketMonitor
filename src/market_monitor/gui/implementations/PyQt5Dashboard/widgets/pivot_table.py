@@ -218,6 +218,7 @@ class PivotTableWidget(QWidget):
         self.source_data = pd.DataFrame()
         self.pivot_data = pd.DataFrame()
         self.current_config = None
+        self._active_normalize: str | None = None
         self.settings_visible = True
 
         # Filtri avanzati e decimali
@@ -982,6 +983,7 @@ class PivotTableWidget(QWidget):
                     self.pivot_data = pd.DataFrame({rows: groups, f'{agg}({values})': 'err'})
 
             # Normalizzazione
+            self._active_normalize = normalize if normalize else None
             if normalize:
                 self.pivot_data = self._apply_normalization(self.pivot_data, normalize)
 
@@ -1030,23 +1032,23 @@ class PivotTableWidget(QWidget):
         if not numeric_cols:
             return df
 
-        vals = result[numeric_cols]
+        # Work with a plain numpy array to avoid all index-alignment issues
+        import numpy as np
+        vals = result[numeric_cols].to_numpy(dtype=float, na_value=0.0)
 
         if normalize == 'index':
-            row_sums = vals.sum(axis=1)
-            safe = row_sums.replace(0, 1)
-            result[numeric_cols] = vals.div(safe, axis=0) * 100
-            result.loc[row_sums == 0, numeric_cols] = 0
+            row_sums = vals.sum(axis=1, keepdims=True)
+            safe = np.where(row_sums == 0, 1.0, row_sums)
+            result[numeric_cols] = np.where(row_sums == 0, 0.0, vals / safe * 100)
 
         elif normalize == 'columns':
-            col_sums = vals.sum(axis=0)
-            safe = col_sums.replace(0, 1)
-            result[numeric_cols] = vals.div(safe, axis=1) * 100
-            result.loc[:, col_sums[col_sums == 0].index] = 0
+            col_sums = vals.sum(axis=0, keepdims=True)
+            safe = np.where(col_sums == 0, 1.0, col_sums)
+            result[numeric_cols] = np.where(col_sums == 0, 0.0, vals / safe * 100)
 
         elif normalize == 'all':
-            total = vals.values.sum()
-            result[numeric_cols] = vals / total * 100 if total != 0 else 0
+            total = vals.sum()
+            result[numeric_cols] = vals / total * 100 if total != 0 else 0.0
 
         return result
 
@@ -1073,10 +1075,9 @@ class PivotTableWidget(QWidget):
         self.table.setColumnCount(len(self.pivot_data.columns))
         self.table.setHorizontalHeaderLabels([str(col) for col in self.pivot_data.columns])
 
-        # Determina se percentuali
-        is_percentage = (self.normalize_rows_radio.isChecked() or
-                         self.normalize_cols_radio.isChecked() or
-                         self.normalize_all_radio.isChecked())
+        # Determina se percentuali — usa lo stato reale dell'ultima normalizzazione applicata,
+        # non i radio button (che potrebbero non riflettere il config auto-refreshato)
+        is_percentage = self._active_normalize in ('index', 'columns', 'all')
 
         # Min/max per gradiente
         numeric_data = []
