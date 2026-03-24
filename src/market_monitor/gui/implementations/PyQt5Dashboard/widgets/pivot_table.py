@@ -218,6 +218,7 @@ class PivotTableWidget(QWidget):
         self.source_data = pd.DataFrame()
         self.pivot_data = pd.DataFrame()
         self.current_config = None
+        self._active_normalize: str | None = None
         self.settings_visible = True
 
         # Filtri avanzati e decimali
@@ -982,6 +983,7 @@ class PivotTableWidget(QWidget):
                     self.pivot_data = pd.DataFrame({rows: groups, f'{agg}({values})': 'err'})
 
             # Normalizzazione
+            self._active_normalize = normalize if normalize else None
             if normalize:
                 self.pivot_data = self._apply_normalization(self.pivot_data, normalize)
 
@@ -1073,10 +1075,9 @@ class PivotTableWidget(QWidget):
         self.table.setColumnCount(len(self.pivot_data.columns))
         self.table.setHorizontalHeaderLabels([str(col) for col in self.pivot_data.columns])
 
-        # Determina se percentuali
-        is_percentage = (self.normalize_rows_radio.isChecked() or
-                         self.normalize_cols_radio.isChecked() or
-                         self.normalize_all_radio.isChecked())
+        # Determina se percentuali — usa lo stato reale dell'ultima normalizzazione applicata,
+        # non i radio button (che potrebbero non riflettere il config auto-refreshato)
+        is_percentage = self._active_normalize in ('index', 'columns', 'all')
 
         # Min/max per gradiente
         numeric_data = []
