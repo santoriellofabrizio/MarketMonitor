@@ -112,7 +112,6 @@ market_monitor:
       activate: false
       synchronous: false
       frequency: 1
-
     command_listener:
       activate: true
       frequency: 1
