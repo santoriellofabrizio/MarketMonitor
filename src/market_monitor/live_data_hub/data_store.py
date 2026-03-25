@@ -572,3 +572,64 @@ class BlobStore:
         """Get number of blobs"""
         with self._lock:
             return len(self._blobs)
+
+
+class OrderStore:
+    """
+    Thread-safe storage for active orders received from Kafka.
+
+    Orders are keyed by mktOrderId. When an order arrives with status
+    ACTIVE it is stored (or updated). When it arrives with status
+    EXPIRED or CANCELLED it is removed from the store so that only
+    active orders remain in memory at all times.
+    """
+
+    def __init__(self, locker: Lock):
+        self._lock = locker
+        self._orders: Dict[str, Any] = {}  # mktOrderId -> Order
+
+    def update(self, order: Any) -> None:
+        """
+        Upsert or remove an order based on its status.
+
+        ACTIVE   -> store/replace under mktOrderId
+        EXPIRED / CANCELLED -> remove if present
+        """
+        with self._lock:
+            try:
+                if order.is_active:
+                    self._orders[order.mktOrderId] = order
+                else:
+                    self._orders.pop(order.mktOrderId, None)
+            except Exception as e:
+                logger.error(f"Error updating order {getattr(order, 'mktOrderId', '?')}: {e}")
+
+    def get_all(self) -> List[Any]:
+        """Return a list of all active orders (copy)."""
+        with self._lock:
+            return list(self._orders.values())
+
+    def get_by_isin(self, isin: str) -> List[Any]:
+        """Return active orders whose instrument ISIN matches."""
+        with self._lock:
+            return [o for o in self._orders.values() if o.isin == isin]
+
+    def get_by_symbol(self, symbol: str) -> List[Any]:
+        """Return active orders whose instrument symbol matches."""
+        with self._lock:
+            return [o for o in self._orders.values() if o.symbol == symbol]
+
+    def remove(self, mkt_order_id: str) -> None:
+        """Explicitly remove an order by mktOrderId."""
+        with self._lock:
+            self._orders.pop(mkt_order_id, None)
+
+    def clear(self) -> None:
+        """Remove all orders."""
+        with self._lock:
+            self._orders.clear()
+
+    def count(self) -> int:
+        """Return the number of active orders."""
+        with self._lock:
+            return len(self._orders)

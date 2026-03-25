@@ -228,6 +228,50 @@ class SubscriptionService:
         self._logger.info(f"Kafka subscription added: {kafka_sub}")
         return kafka_sub
 
+    def subscribe_orders_kafka(
+            self,
+            id: str,
+            topic: str,
+            symbol_filter: Optional[str] = None,
+            symbol_field: str = "instrument.isin",
+            fields_mapping: Optional[Dict[str, str]] = None,
+            group: Optional[str] = None,
+    ) -> KafkaSubscription:
+        """
+        Subscribe to a Kafka topic for real-time order stream data.
+
+        Each incoming message is parsed into an Order dataclass and routed to
+        the OrderStore inside RTData. Only ACTIVE orders are retained;
+        EXPIRED / CANCELLED orders are automatically removed.
+
+        Args:
+            id: Unique identifier for this subscription (e.g. "ORDERS_DUMA")
+            topic: Kafka topic carrying order messages
+            symbol_filter: Optional value to filter messages client-side (e.g. ISIN)
+            symbol_field: Path in the message used for client-side filtering
+                          (default: "instrument.isin")
+            fields_mapping: Optional mapping of target field -> source path.
+                            When omitted the full raw message is passed to
+                            Order.from_dict for parsing.
+            group: Optional subscription group name
+
+        Returns:
+            KafkaSubscription instance with store="orders" and
+            subscription_type="order"
+        """
+        kafka_sub = KafkaSubscription(
+            id=id,
+            topic=topic,
+            symbol_filter=symbol_filter,
+            symbol_field=symbol_field,
+            store="orders",
+            fields_mapping=fields_mapping or {},
+            subscription_type="order",
+        )
+        self._manager.add_subscription(kafka_sub, group=group)
+        self._logger.info(f"Kafka order subscription added: {kafka_sub}")
+        return kafka_sub
+
     def unsubscribe(self, id: str, source: str) -> bool:
         return self._manager.mark_for_unsubscribe(id, source)
 

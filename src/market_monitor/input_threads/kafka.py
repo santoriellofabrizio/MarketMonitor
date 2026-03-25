@@ -324,6 +324,14 @@ class KafkaStreamingThread(threading.Thread):
         elif store == "blob":
             real_time_data._blob_store.store(id_, value)
 
+        elif store == "orders":
+            from market_monitor.live_data_hub.order import Order
+            # If a fields_mapping is defined, extract only those fields first;
+            # otherwise pass the full raw message to Order.from_dict.
+            source = sub.extract_fields(value) if sub.fields_mapping else value
+            order = Order.from_dict(source)
+            real_time_data.update_order(order)
+
     @staticmethod
     def _extract_default_market_fields(value: Dict[str, Any]) -> Dict[str, Any]:
         """

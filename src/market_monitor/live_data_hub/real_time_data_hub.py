@@ -24,8 +24,10 @@ from market_monitor.live_data_hub.data_store import (
     MarketStore,
     StateStore,
     EventStore,
-    BlobStore
+    BlobStore,
+    OrderStore,
 )
+from market_monitor.live_data_hub.order import Order
 from market_monitor.live_data_hub.live_subscription import (
     SubscriptionGroup,
     LiveSubscription,
@@ -111,6 +113,7 @@ class RTData:
         self._state_store = StateStore(locker)
         self._event_store = EventStore(locker, default_maxlen=1000)
         self._blob_store = BlobStore(locker)
+        self._order_store = OrderStore(locker)
 
         # Subscription service
         self._subscription_service = subscription_service
@@ -476,6 +479,44 @@ class RTData:
                 "events": list(self._event_store.get_all().keys()),
                 "blob": self._blob_store.list_keys()
             }
+
+    # ========================================================================
+    # ORDER MANAGEMENT
+    # ========================================================================
+
+    def update_order(self, order: Order) -> None:
+        """
+        Route an order to the OrderStore.
+
+        ACTIVE orders are stored/updated; EXPIRED and CANCELLED orders are
+        removed so that only active orders remain in memory.
+
+        Args:
+            order: Order instance parsed from a Kafka order message
+        """
+        self._order_store.update(order)
+
+    def get_orders(
+        self,
+        isin: Optional[str] = None,
+        symbol: Optional[str] = None,
+    ) -> List[Order]:
+        """
+        Return active orders, with optional filtering.
+
+        Args:
+            isin: If provided, return only orders whose instrument ISIN matches
+            symbol: If provided, return only orders whose instrument symbol matches
+                    (ignored when isin is also provided)
+
+        Returns:
+            List of active Order objects (copy, thread-safe)
+        """
+        if isin is not None:
+            return self._order_store.get_by_isin(isin)
+        if symbol is not None:
+            return self._order_store.get_by_symbol(symbol)
+        return self._order_store.get_all()
 
     # ========================================================================
     # CURRENCY MANAGEMENT
