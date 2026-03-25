@@ -156,9 +156,6 @@ FECX:
 FEHY:
   subscription: AHWA Index
   currency: EUR
-FEHY202606:
-  subscription: AHWA Index
-  currency: EUR
 
 FUIG:
   subscription: BBEA Index
@@ -172,10 +169,12 @@ FUEM:
 FGBC:
   subscription: XZRA Index
   currency: GBP
+FEHY202606:
+  subscription: AHWA Index
+  currency: EUR
 FECX202606:
   subscription: LXYM6 Index
   currency: EUR
-
 FUIG202606:
   subscription: BBEM6 Index
   currency: USD
@@ -188,23 +187,23 @@ FUEM202606:
 FGBC202606:
   subscription: XZRM6 Index
   currency: GBP
-FECX202603:
-  subscription: LXYH6 Index
+FECX202609:
+  subscription: LXYU6 Index
   currency: EUR
-FEHY202603:
-  subscription: AHWH6 Index
+FEHY202609:
+  subscription: AHWU6 Index
   currency: EUR
-FUIG202603:
-  subscription: BBEH6 Index
+FUIG202609:
+  subscription: BBEU6 Index
   currency: USD
-FUHY202603:
-  subscription: BBLH6 Index
+FUHY202609:
+  subscription: BBLU6 Index
   currency: USD
-FUEM202603:
-  subscription: XZSH6 Index
+FUEM202609:
+  subscription: XZSU6 Index
   currency: USD
-FGBC202603:
-  subscription: XZRH6 Index
+FGBC202609:
+  subscription: XZRU6 Index
   currency: GBP
 FR001400SQV3:
   subscription: ISCH FP Equity

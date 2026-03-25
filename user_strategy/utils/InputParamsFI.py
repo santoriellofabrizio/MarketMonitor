@@ -522,7 +522,7 @@ class InputParamsFI(InputParams):
         next_rolling_date = self._get_rolling_date_candidate(year=year + 1, month=3, special_rolling=special_rolling)
         for month in rolling_months:
             candidate = self._get_rolling_date_candidate(year=year, month=month, special_rolling=special_rolling)
-            if day <= candidate:
+            if day < candidate:
                 next_rolling_date = candidate
                 break
 
@@ -534,9 +534,9 @@ class InputParamsFI(InputParams):
             cal = calendar.monthcalendar(year, month)
 
             if cal[0][calendar.FRIDAY] != 0:
-                day = cal[2][calendar.FRIDAY]  # terza settimana
+                day = cal[3][calendar.MONDAY]  # terza settimana
             else:
-                day = cal[3][calendar.FRIDAY]  # quarta settimana
+                day = cal[4][calendar.MONDAY]  # quarta settimana
 
             return dt.date(year, month, day)
         else:

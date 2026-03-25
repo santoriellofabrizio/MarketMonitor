@@ -189,11 +189,11 @@ class EtfEquityLiveAnalysis(StrategyUI):
 
         for isin in self.all_isins:
             for mkt in ["ETFP", "XPAR", "XAMS"]:
-                self.global_subscription_service.subscribe_kafka(id=f"{isin}:{mkt}:PublicDeal",
+                self.global_subscription_service.subscribe_trades_kafka(id=f"{isin}:{mkt}:PublicDeal",
                                                                  symbol_filter=isin,
                                                                  topic=f"COALESCENT_DUMA.{mkt}.PublicDeal")
 
-                self.global_subscription_service.subscribe_kafka(id=f"{isin}:{mkt}:Trade",
+                self.global_subscription_service.subscribe_trades_kafka(id=f"{isin}:{mkt}:Trade",
                                                                  symbol_filter=isin,
                                                                  topic=f"COALESCENT_DUMA.{mkt}.Trade")
 

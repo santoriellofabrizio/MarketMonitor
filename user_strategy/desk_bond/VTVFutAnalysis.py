@@ -18,7 +18,7 @@ class VTVFutAnalysis(StrategyUI):
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
 
-        self.all_isins = ["DE000F2Y2EW5", "DE000F2Y2EX3"]
+        self.all_isins = ["DE000F2Y2EW5","DE000F2Y2EX3"]
 
         self.book_storage: BookStorage = BookStorage()
 
@@ -29,13 +29,13 @@ class VTVFutAnalysis(StrategyUI):
         self._init_redis_dashboard(**kwargs)
         self._init_rabbit_dashboard(**kwargs)
 
-        self._trade_manager_dict: Dict[int, TradeManager] = {}
         time_zero_lag_list = kwargs["trade_manager"]["time_zero_lag"]
-        for time_zero_lag in time_zero_lag_list:
-            time_zero_lag = int(time_zero_lag)
-            self._trade_manager_dict[time_zero_lag] = TradeManager(self.book_storage, time_zero_lag=time_zero_lag)
+        self._trade_manager: TradeManager = TradeManager(self.book_storage, time_zero_lags=time_zero_lag_list)
 
-        self._columns_to_filter: List[str] = []
+        self._max_seconds: int = max(time_zero_lag_list)
+        self._output_columns: List[str] = ['trade_index', 'timestamp', 'market', 'ticker', 'portfolio', 'side',
+                                           'quantity', 'price', 'spread_pl'] + [f"spread_pl_{tzl}s"
+                                                                                for tzl in time_zero_lag_list]
 
     def _init_rabbit_dashboard(self, **kwargs):
         rabbit_cfg = kwargs.get('rabbit_data_export', {})
@@ -59,7 +59,7 @@ class VTVFutAnalysis(StrategyUI):
 
     def wait_for_book_initialization(self):
 
-        while datetime.today().time() < dt.time(9, 5):
+        while datetime.today().time() < dt.time(8, 50):
             return False
 
         self.on_start_strategy()
@@ -88,44 +88,33 @@ class VTVFutAnalysis(StrategyUI):
                                                                  symbol_filter=isin,
                                                                  topic=f"COALESCENT_DUMA.SFMQ.Trade",
                                                                  fields_mapping=fields)
+                self.global_subscription_service.subscribe_kafka(id=f"{isin}:XEUR:Trade",
+                                                                 symbol_filter=isin,
+                                                                 topic=f"COALESCENT_DUMA.XEUR.Trade",
+                                                                 fields_mapping=fields)
 
     def update_LF(self) -> None:
         try:
-            trades_to_publish = None
-            for time_lag, trade_manager in self._trade_manager_dict.items():
-                processed_trades = trade_manager.get_trades()
-                if processed_trades.empty:
-                    continue
-                if trades_to_publish is None:
-                    trades_to_publish = processed_trades
-                    trades_to_publish.rename(columns={"lagged_spread_pl": f"self.lagged_spread_pl_{time_lag}"},
-                                             inplace=True)
-                else:
-                    trades_to_publish[f"lagged_spread_pl_{time_lag}"] = processed_trades['lagged_spread_pl']
-            if trades_to_publish is not None:
-                self.publish_trades_on_dashboard(trades_to_publish)
+            self.publish_trades_on_dashboard(self._trade_manager.get_horizon_updates())
         except Exception as e:
             logging.error(e)
 
     def update_HF(self):
-        if datetime.today().time() < dt.time(17, 29, 40):
+        if datetime.today().time() < dt.time(17, 50, 00):
             self.get_live_data()
 
-    def on_trade(self, new_trades):
+    def on_my_trade(self, new_trades):
         # remove all trades with vtvfut as portfolio
-        portfolios_trades = new_trades[new_trades["portfolio"] != "VTVFUT"]
-
-        trades_to_publish = None
-        for time_lag, trade_manager in self._trade_manager_dict.items():
-            processed_new = trade_manager.on_trade(portfolios_trades)
-            processed_trades = trade_manager.get_trades_to_publish(processed_new)
-            if trades_to_publish is None:
-                trades_to_publish = processed_trades
-                trades_to_publish.rename(columns={"lagged_spread_pl": f"lagged_spread_pl_{time_lag}"}, inplace=True)
-            else:
-                trades_to_publish[f"lagged_spread_pl_{time_lag}"] = processed_trades['lagged_spread_pl']
+        portfolios_trades = new_trades[((new_trades["portfolio"] == "VTVFUT") & (new_trades["market"] != "SFMQ")) |
+                                       ((new_trades["portfolio"] != "VTVFUT") & (new_trades["market"] == "SFMQ"))].copy()
+        if portfolios_trades.empty:
+            return
+        portfolios_trades['price_multiplier'] = 1_000
+        self._trade_manager.on_trade(portfolios_trades)
+        trades_to_publish = self._trade_manager.get_trades_to_publish()
         if not trades_to_publish.empty:
             self.publish_trades_on_dashboard(trades_to_publish)
+
 
     def publish_trades_on_dashboard(self, new_trades):
         if self.redis_dashboard:
@@ -147,5 +136,5 @@ class VTVFutAnalysis(StrategyUI):
         self.book_storage.append(snapshot)
 
     def on_stop(self):
-        for trade_manager in self._trade_manager_dict.values():
+        for trade_manager in self._trade_manager.values():
             trade_manager.close()

@@ -69,20 +69,6 @@ class SpreadEWMA(BookFilter):
 
         # strumenti senza EWMA (nuovi) passano sempre il filtro
         mask = current_spread <= max_mult * valid_ewma.fillna(float("inf"))
-
-        _isin = "ETFP_IE000YZIVX22"
-        if _isin in book_raw.index:
-            _spread = current_spread.loc[_isin]
-            _ewma = valid_ewma.loc[_isin]
-            _mult = max_mult.loc[_isin]
-            _pass = mask.loc[_isin]
-            print(
-                f"FILTER: CATHEM spread={_spread * 100:.2f}% | "
-                f"ewma={_ewma * 100:.2f}% | "
-                f"threshold={_mult * _ewma * 100:.2f}% ({_mult}x) | "
-                f"{'PASS ✓' if _pass else 'FILTERED ✗'}"
-            )
-
         return book_raw[mask]
 
 class PriceEWMA(BookFilter):

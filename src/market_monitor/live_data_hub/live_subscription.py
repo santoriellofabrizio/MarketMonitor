@@ -1,6 +1,6 @@
 import logging
 from datetime import datetime
-from typing import Any, Union, List, Dict, Optional
+from typing import Any, Union, List, Dict, Optional, Literal
 from dataclasses import dataclass, field as dataclass_field
 from enum import Enum
 
@@ -194,6 +194,7 @@ class KafkaSubscription(LiveSubscription):
     symbol_field: str = "instrument.isin"  # Path nel messaggio per il match
     store: str = "market"
     fields_mapping: Dict[str, str] = dataclass_field(default_factory=dict)
+    subscription_type: Literal['data', 'event'] = 'data'
     
     def __post_init__(self):
         self.source = "kafka"
@@ -346,7 +347,9 @@ class LiveSubscriptionManager:
         self._instrument_status: Dict[str, str] = {}
         self._logger = logging.getLogger(__name__)
 
-        self._pending_subscriptions: Dict[str, Dict[str, LiveSubscription]] = {}
+        self._pending_subscriptions: Dict[str, Dict[str, LiveSubscription]] =  {
+            source: {} for source in [v.lower() for v in ["bloomberg", "redis", "kafka"]]
+        }
         self._to_unsubscribe: Dict[str, Dict[str, LiveSubscription]] = {}
 
     # SOSTITUISCI il metodo add_subscription esistente con questo:

@@ -168,6 +168,61 @@ class SubscriptionService:
             symbol_field=symbol_field,
             store=store,
             fields_mapping=fields_mapping or {},
+            subscription_type='data'
+        )
+        self._manager.add_subscription(kafka_sub, group=group)
+        self._logger.info(f"Kafka subscription added: {kafka_sub}")
+        return kafka_sub
+
+    def subscribe_trades_kafka(
+            self,
+            id: str,
+            topic: str,
+            symbol_filter: Optional[str] = None,
+            symbol_field: str = "instrument.isin",
+            store: str = "market",
+            fields_mapping: Optional[Dict[str, str]] = None,
+            group: Optional[str] = None,
+    ) -> KafkaSubscription:
+        """
+        Subscribe to Kafka topic for real-time market data (DUMA, Binance, etc.).
+
+        I messaggi Kafka contengono dati per TUTTI gli strumenti del topic.
+        Il filtraggio avviene client-side tramite symbol_filter.
+
+        Args:
+            id: Identificatore univoco (es. ticker "IWDA" o ISIN)
+            topic: Topic Kafka (es. "COALESCENT_DUMA.ETFP.BookBest")
+            symbol_filter: Valore per filtrare i messaggi (es. ISIN "IE00B4L5Y983")
+            symbol_field: Path del campo nel messaggio per il filtro (default: "instrument.isin")
+            store: Target store - "market", "state", "events", "blob" (default: "market")
+            fields_mapping: Mapping target_field -> source_path (supporta nested paths)
+            group: Optional group name
+
+        Returns:
+            KafkaSubscription instance
+
+        Example:
+            >>> svc.subscribe_kafka(
+            ...     id="IWDA",
+            ...     topic="COALESCENT_DUMA.ETFP.BookBest",
+            ...     symbol_filter="IE00B4L5Y983",
+            ...     fields_mapping={
+            ...         "BID": "bidBestLevel.price",
+            ...         "ASK": "askBestLevel.price",
+            ...         "BID_SIZE": "bidBestLevel.quantity",
+            ...         "ASK_SIZE": "askBestLevel.quantity"
+            ...     }
+            ... )
+        """
+        kafka_sub = KafkaSubscription(
+            id=id,
+            topic=topic,
+            symbol_filter=symbol_filter,
+            symbol_field=symbol_field,
+            store=store,
+            fields_mapping=fields_mapping or {},
+            subscription_type='event'
         )
         self._manager.add_subscription(kafka_sub, group=group)
         self._logger.info(f"Kafka subscription added: {kafka_sub}")

@@ -78,8 +78,8 @@ class KafkaStreamingThread(threading.Thread):
     """
 
     # Default configuration (cluster test Sella)
-    DEFAULT_BOOTSTRAP_SERVERS = "aftstserver51.af.tst:9092,aftstserver52.af.tst:9092,aftstserver53.af.tst:9092"
-    DEFAULT_SCHEMA_REGISTRY = "http://aftstserver51.af.tst:8081,http://aftstserver52.af.tst:8081,http://aftstserver53.af.tst:8081"
+    DEFAULT_BOOTSTRAP_SERVERS = "aftstserver51.af.pre:9092,aftstserver52.af.pre:9092,aftstserver53.af.pre:9092"
+    DEFAULT_SCHEMA_REGISTRY = "http://aftstserver51.af.pre:8081,http://aftstserver52.af.pre:8081,http://aftstserver53.af.pre:8081"
 
     def __init__(self,
                  real_time_data: RTData,
@@ -742,64 +742,48 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
 
     isin_to_subscribe = [
-        "IE00BKM4GZ66", "IE00B4L5YC18", "IE00BP3QZ601", "LU0950668870", "IE00B0M63516",
-        "LU1900068914", "LU0659579733", "LU1781541252", "IE00B469F816", "LU0779800910",
-        "IE00BP3QZ825", "IE00B4L5YX21", "IE00B5L8K969", "IE00B02KXH56", "IE00BZCQB185",
-        "FR0010429068", "LU0514695690", "IE00B4K48X80", "LU0950674175", "LU0480132876",
-        "IE00099GAJC6", "LU0846194776", "IE00B6R52259", "LU0147308422", "LU1900066207",
-        "LU1900067940", "DE000A0Q4R85", "IE000Y77LGG9", "FR0014003IY1", "IE00BMY76136",
-        "LU0274209740", "FR0010245514", "LU1681043599", "IE00BHZPJ783", "LU2573967036",
-        "IE00BCHWNQ94", "IE00B0M63177", "FR0010361683", "IE00B44Z5B48", "IE00BHZRR147",
-        "LU2376679564", "IE00BP3QZB59", "FR0010315770", "IE00BFNM3J75", "LU1681044480",
-        "IE00B60SX394", "IE00BKX55T58", "IE00BTJRMP35", "LU0274209237", "IE000UQND7H4",
-        "IE00B945VV12", "LU2573966905", "IE00BZ02LR44",
+        "FEHY JUN26"
     ]
 
     # ------------------------------------------------------------------
     # Book thread: KafkaStreamingThread subscribes to BookBest topics
     # ------------------------------------------------------------------
     book_rtdata = RTData(locker=Lock(), fields=["BID", "ASK", "BID_SIZE", "ASK_SIZE"])
-    book_svc = book_rtdata.get_subscription_manager()
+    book_svc = SubscriptionService()
 
     for isin in isin_to_subscribe:
         book_svc.subscribe_kafka(
             id=isin,
-            topic="COALESCENT_DUMA.ETFP.BookBest",
+            topic="COALESCENT_DUMA.XEUR.Order",
             symbol_filter=isin,
-            symbol_field="instrument.isin",
-            store="market",
-            fields_mapping={
-                "BID": "bidBestLevel.price",
-                "ASK": "askBestLevel.price",
-                "BID_SIZE": "bidBestLevel.quantity",
-                "ASK_SIZE": "askBestLevel.quantity",
-            }
+            symbol_field="instrument.symbol",
+            store="market"
         )
 
-    book_thread = KafkaStreamingThread(book_rtdata)
+    book_thread = KafkaStreamingThread(book_rtdata, subscription_service=book_svc)
     book_thread.start()
 
     # ------------------------------------------------------------------
     # Trade thread: KafkaTradeStreamingThread — standalone, no RTData
     # Usa lo stesso SubscriptionService di RTData: filtra *.PublicDeal / *.Trade
     # ------------------------------------------------------------------
-    trade_sub_service = book_rtdata.get_subscription_manager()
-
-    for isin in isin_to_subscribe:
-        for topic in ["COALESCENT_DUMA.ETFP.PublicDeal", "COALESCENT_DUMA.ETFP.Trade"]:
-            trade_sub_service.subscribe_kafka(
-                id=f"{isin}_{topic.split('.')[-1]}",
-                topic=topic,
-                symbol_filter=isin,
-            )
-
-    trade_queue: Queue = Queue()
-    trade_thread = KafkaTradeStreamingThread(
-        queue=trade_queue,
-        subscription_service=trade_sub_service,
-        buffer_sec=10.0,
-    )
-    trade_thread.start()
+    # trade_sub_service = book_rtdata.get_subscription_manager()
+    #
+    # for isin in isin_to_subscribe:
+    #     for topic in ["COALESCENT_DUMA.ETFP.PublicDeal", "COALESCENT_DUMA.ETFP.Trade"]:
+    #         trade_sub_service.subscribe_kafka(
+    #             id=f"{isin}_{topic.split('.')[-1]}",
+    #             topic=topic,
+    #             symbol_filter=isin,
+    #         )
+    #
+    # trade_queue: Queue = Queue()
+    # trade_thread = KafkaTradeStreamingThread(
+    #     queue=trade_queue,
+    #     subscription_service=trade_sub_service,
+    #     buffer_sec=10.0,
+    # )
+    # trade_thread.start()
 
     # ------------------------------------------------------------------
     # Monitor both streams
@@ -814,15 +798,10 @@ if __name__ == "__main__":
             if not book_data.empty:
                 print(book_data)
 
-            print("\n=== Trades ===")
-            while not trade_queue.empty():
-                trade_type, df = trade_queue.get_nowait()
-                print(f"[{trade_type.name}]")
-                print(df.to_string(index=False))
 
     except KeyboardInterrupt:
         book_thread.stop()
-        trade_thread.stop()
+
         book_thread.join(timeout=5)
-        trade_thread.join(timeout=5)
+
         print("Stopped")
