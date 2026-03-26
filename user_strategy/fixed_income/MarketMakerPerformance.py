@@ -48,7 +48,9 @@ class MarketMakerPerformance(StrategyUI):
             'XAMS': {'BID': {}, 'ASK': {}},
             'XPAR': {'BID': {}, 'ASK': {}},
         }
-        self._isin_market_mapping: dict[str, Literal['ETFP', 'XEUR', 'XAMS', 'XPAR']] = {"DE000F21VFM0": "XEUR"}
+        self._isin_market_mapping: dict[str, Literal['ETFP', 'XEUR', 'XAMS', 'XPAR']] =\
+            kwargs.get('instrument_market_mapping', {})
+        self._isins = list(self._isin_market_mapping.keys())
         self._performance: dict[str, QuotePerformance] = {}  # key: f"{isin}:{market}"
         self.global_subscription_service = SubscriptionService()
 
@@ -75,7 +77,7 @@ class MarketMakerPerformance(StrategyUI):
     def subscribe_best_book(self):
         for isin, market in self._isin_market_mapping.items():
             self.global_subscription_service.subscribe_kafka(
-                id=f"{isin}:{market}:",
+                id=f"{isin}:{market}:Book",
                 symbol_filter=isin,
                 topic=f"COALESCENT_DUMA.{market}.BookBest",
                 fields_mapping={
@@ -97,10 +99,8 @@ class MarketMakerPerformance(StrategyUI):
 
     def update_HF(self):
         best_level = self.market_data.get_data_field(["BID", "ASK"])
-        for el, val in best_level.items():
+        for el, (bid, ask) in best_level.iterrows():
             isin, market, _ = el.split(":")
-            bid = val.get("BID")
-            ask = val.get("ASK")
             if bid is not None:
                 self._best_level[market]["BID"][isin] = bid
             if ask is not None:
@@ -127,7 +127,7 @@ class MarketMakerPerformance(StrategyUI):
             if not self._is_active(order):
                 continue
 
-            key = f"{order.isin}:{order.market}"
+            key = f"{order.isin}:{order.instrument['market']}"
             side = order.side.upper()  # "BUY" / "SELL"
 
             if key not in active_quotes:
@@ -169,7 +169,7 @@ class MarketMakerPerformance(StrategyUI):
     @staticmethod
     def _is_active(order: Order) -> bool:
         """Filtra solo ordini in stato attivo (adatta a seconda dell'enum di Order)."""
-        return getattr(order, "status", None) in ("ACTIVE", "PARTIALLY_FILLED", "NEW")
+        return order.orderStatus == "ACTIVE"
 
     @staticmethod
     def _is_at_best(our_price: Optional[float],
