@@ -270,12 +270,13 @@ class RedisPubSubThread(BaseDashboardThread):
         self.pubsub = None
 
     def run(self):
-        """Main loop — Redis PubSub listener with automatic reconnection."""
+        """Main loop - RedisPublisher Pub/Sub listener with batching."""
         try:
             import redis
-            from redis.exceptions import ConnectionError as RedisConnectionError, TimeoutError as RedisTimeoutError
         except ImportError:
-            self.error_occurred.emit("Redis not installed. Run: pip install redis")
+            self.error_occurred.emit(
+                "RedisPublisher not installed. Run: pip install redis"
+            )
             return
 
         self.running = True
@@ -283,80 +284,86 @@ class RedisPubSubThread(BaseDashboardThread):
         port = self.redis_config.get('port', 6379)
         db = self.redis_config.get('db', 0)
         channel = self.redis_config.get('channel', 'trades_df')
+        logger.info(f"[RedisPubSub] Thread started — host={host}:{port} db={db} channel={channel}")
 
-        max_retries = self.redis_config.get('max_retries', 10)  # 0 = unlimited
-        retry_delay = self.redis_config.get('retry_delay', 2.0)  # initial sleep (s)
-        max_delay = self.redis_config.get('max_retry_delay', 30.0)
-        attempt = 0
-
-        logger.info(f"[RedisPubSub] Thread started — {host}:{port} db={db} channel={channel}")
+        retry_delay = 2  # seconds; doubles on each failure up to max_retry_delay
+        max_retry_delay = 60
 
         while self.running:
             try:
-                # ── Connect ──────────────────────────────────────────────
+                # Connetti RedisPublisher
                 self.redis_client = redis.Redis(
-                    host=host, port=port, db=db,
+                    host=host,
+                    port=port,
+                    db=db,
                     decode_responses=True,
                     socket_keepalive=True,
-                    health_check_interval=30,
                 )
-                self.redis_client.ping()
-                attempt = 0  # reset counter on successful connect
-                logger.info(f"[RedisPubSub] Connected to Redis at {host}:{port}")
 
+                # Test connessione
+                self.redis_client.ping()
+                logger.info(f"[RedisPubSub] Connected to Redis at {host}:{port}")
+                retry_delay = 2  # reset backoff after a successful connection
+
+                # Sottoscrivi canale
                 self.pubsub = self.redis_client.pubsub()
                 self.pubsub.subscribe(channel)
+
                 logger.info(f"[RedisPubSub] Subscribed to channel: {channel}")
 
-                # ── Listen ───────────────────────────────────────────────
+                # Listen messaggi
                 for message in self.pubsub.listen():
                     if not self.running:
                         break
 
                     if message['type'] == 'message':
                         try:
-                            if message['type'] == 'message':
-                                raw = message['data']
-                                data, metadata = parse_redis_message(raw)
-                                msg_type = metadata.get('type', 'DATA')
-                                self._enqueue_message({
-                                    'data': data, 'metadata': metadata, 'type': msg_type,
-                                })
-                                # flush immediato ad ogni messaggio — non aspettare il timer
-                                self._flush_batch()
+                            raw = message['data']
+                            logger.debug(f"[RedisPubSub] Raw message received, len={len(raw) if raw else 0}")
+                            data, metadata = parse_redis_message(raw)
+                            msg_type = metadata.get('type', 'DATA')
+                            logger.debug(f"[RedisPubSub] Parsed message type={msg_type}")
+
+                            normalized_msg = {
+                                'data': data,
+                                'metadata': metadata,
+                                'type': msg_type,
+                            }
+
+                            self._enqueue_message(normalized_msg)
+
                         except json.JSONDecodeError as e:
-                            logger.error(f"[RedisPubSub] Invalid JSON: {e}")
+                            logger.error(f"[RedisPubSub] Invalid JSON from channel '{channel}': {e}")
                             self.error_occurred.emit(f"Invalid JSON: {e}")
                         except Exception as e:
-                            logger.error(f"[RedisPubSub] Event error: {e}\n{traceback.format_exc()}")
+                            error_detail = traceback.format_exc()
+                            logger.error(f"[RedisPubSub] Event processing error: {e}\n{error_detail}")
                             self.error_occurred.emit(f"Event processing error: {e}")
 
+                    # Controllo flush batch
                     now = time.time()
                     if now - self.last_emit_time >= self.batch_interval:
                         self._flush_batch()
 
-            except (RedisConnectionError, RedisTimeoutError, OSError) as e:
-                # ── Reconnect ────────────────────────────────────────────
-                attempt += 1
-                if max_retries and attempt > max_retries:
-                    logger.error(f"[RedisPubSub] Max retries ({max_retries}) exceeded. Stopping.")
-                    self.error_occurred.emit(f"Redis max retries exceeded: {e}")
-                    break
-
-                delay = min(retry_delay * (2 ** (attempt - 1)), max_delay)
-                logger.warning(
-                    f"[RedisPubSub] Connection lost (attempt {attempt}): {e} — "
-                    f"reconnecting in {delay:.1f}s"
-                )
-                self.error_occurred.emit(f"Redis reconnecting in {delay:.0f}s…")
-                self._cleanup_redis()
-                time.sleep(delay)
-
             except Exception as e:
-                logger.error(f"[RedisPubSub] Fatal error: {e}\n{traceback.format_exc()}")
-                self.error_occurred.emit(f"Redis error: {e}")
-                break
+                if not self.running:
+                    break
+                error_detail = traceback.format_exc()
+                logger.warning(
+                    f"[RedisPubSub] Connection lost: {e} — reconnecting in {retry_delay}s\n{error_detail}"
+                )
+                self.error_occurred.emit(f"Redis disconnected, reconnecting in {retry_delay}s…")
+                self._cleanup_redis()
 
+                # Wait with exponential backoff, waking every 0.5 s to honour stop()
+                waited = 0.0
+                while waited < retry_delay and self.running:
+                    time.sleep(0.5)
+                    waited += 0.5
+
+                retry_delay = min(retry_delay * 2, max_retry_delay)
+
+        # flush finale dei messaggi residui
         self._flush_batch()
         self._cleanup_redis()
         logger.info("[RedisPubSub] Thread stopped")
