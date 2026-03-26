@@ -34,55 +34,43 @@ class MMComplianceTracker:
 class QuotePerformance:
     isin: str
     market: str
-    requirements: Optional[EurexMMRequirements] = None
-    best_bid: Optional[float] = None
-    best_ask: Optional[float] = None
+    at_best_bid: bool = False
+    at_best_ask: bool = False
     bid_order_price: Optional[float] = None
     ask_order_price: Optional[float] = None
+    best_bid: Optional[float] = None
+    best_ask: Optional[float] = None
     bid_order_quantity: Optional[float] = None
     ask_order_quantity: Optional[float] = None
+    meets_spread_req: bool = False
+    meets_quantity_req: bool = False
+
+    @property
+    def market_spread(self) -> Optional[float]:
+        if self.best_bid and self.best_ask:
+            return self.best_ask - self.best_bid
+        return None
+
+    @property
+    def our_spread(self) -> Optional[float]:
+        if self.bid_order_price and self.ask_order_price:
+            return self.ask_order_price - self.bid_order_price
+        return None
+
+    @property
+    def our_spread_pct(self) -> Optional[float]:
+        if self.bid_order_price and self.ask_order_price:
+            mid = (self.bid_order_price + self.ask_order_price) / 2
+            if mid:
+                return (self.ask_order_price - self.bid_order_price) / mid
+        return None
 
     @property
     def is_two_sided(self) -> bool:
         return self.bid_order_price is not None and self.ask_order_price is not None
 
     @property
-    def mid(self) -> Optional[float]:
-        if not self.is_two_sided:
-            return None
-        return (self.bid_order_price + self.ask_order_price) / 2
-
-    @property
-    def our_spread_pct(self) -> Optional[float]:
-        if self.mid is None or self.mid == 0:
-            return None
-        return (self.ask_order_price - self.bid_order_price) / self.mid
-
-    @property
-    def meets_spread_req(self) -> bool:
-        """Bid e ask devono essere compresi nel range [mid ± mid*max_spread_pct/2]."""
-        if self.requirements is None or self.mid is None:
-            return False
-        half = self.mid * self.requirements.max_spread_pct / 2
-        return (
-            self.bid_order_price >= self.mid - half
-            and self.ask_order_price <= self.mid + half
-        )
-
-    @property
-    def meets_quantity_req(self) -> bool:
-        if self.requirements is None:
-            return False
-        return (
-            self.bid_order_quantity is not None
-            and self.ask_order_quantity is not None
-            and self.bid_order_quantity >= self.requirements.min_quantity
-            and self.ask_order_quantity >= self.requirements.min_quantity
-        )
-
-    @property
     def is_compliant(self) -> bool:
-        print(self.isin)
         return self.is_two_sided and self.meets_spread_req and self.meets_quantity_req
 
 
@@ -173,6 +161,7 @@ class MarketMakerPerformance(StrategyUI):
         orders = self.get_orders()
         self.check_market_making_performance(orders)
 
+
     def get_orders(self) -> List[Order]:
         """Thin wrapper — override per filtrare/mockare in test."""
         return self.market_data.get_orders()
@@ -208,7 +197,6 @@ class MarketMakerPerformance(StrategyUI):
 
             perf = QuotePerformance(
                 isin=isin, market=market,
-                requirements=self._requirements.get(market),
                 best_bid=best_bid, best_ask=best_ask,
                 bid_order_price=bid_price, ask_order_price=ask_price,
                 bid_order_quantity=bid_qty, ask_order_quantity=ask_qty,
@@ -220,6 +208,7 @@ class MarketMakerPerformance(StrategyUI):
             if perf.is_compliant:
                 tracker.compliant_ticks += 1
 
+            self._log_performance(perf, tracker)
     # --- helpers ---
 
     @staticmethod
@@ -236,3 +225,30 @@ class MarketMakerPerformance(StrategyUI):
         if side == "BID":
             return our_price >= market_price
         return our_price <= market_price
+
+    @staticmethod
+    def _log_performance(perf: QuotePerformance, tracker: MMComplianceTracker):
+        if not perf.is_two_sided:
+            logger.warning("[%s:%s] Quote unilaterale — BID=%s ASK=%s",
+                           perf.isin, perf.market, perf.bid_order_price, perf.ask_order_price)
+            return
+
+        req = perf.requirements
+        if req is None:
+            return
+
+        if not perf.meets_spread_req:
+            logger.debug("[%s:%s] Spread fuori requisito: %.4f%% > %.4f%%",
+                         perf.isin, perf.market,
+                         (perf.our_spread_pct or 0) * 100, req.max_spread_pct * 100)
+        if not perf.meets_quantity_req:
+            logger.debug("[%s:%s] Quantità insufficiente: BID=%s ASK=%s (minimo %.0f)",
+                         perf.isin, perf.market,
+                         perf.bid_order_quantity, perf.ask_order_quantity, req.min_quantity)
+        if tracker.compliance_ratio < req.min_time_fraction:
+            logger.warning("[%s:%s] Compliance %.1f%% < soglia %.1f%% (%d/%d ticks)",
+                           perf.isin, perf.market,
+                           tracker.compliance_ratio * 100, req.min_time_fraction * 100,
+                           tracker.compliant_ticks, tracker.total_ticks)
+
+        print(tracker.compliance_ratio)
