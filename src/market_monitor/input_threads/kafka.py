@@ -56,7 +56,196 @@ logger = logging.getLogger(__name__)
 TradeKey = Tuple[str, str, int, float, float]
 
 
-class KafkaStreamingThread(threading.Thread):
+class _KafkaBaseThread(threading.Thread):
+    """
+    Base class for Kafka streaming threads.
+
+    Handles the common Kafka setup, polling loop, subscription loading,
+    and hot-reload logic.  Subclasses must implement:
+        - _should_include_subscription(sub): which subscriptions this thread owns
+        - _process_message(topic, value): what to do with a deserialized message
+
+    Optional hooks:
+        - _on_poll_cycle(): called on every poll iteration (before None-check)
+        - _on_poll_idle(): called when poll returns None (default: check new subs)
+    """
+
+    DEFAULT_BOOTSTRAP_SERVERS = "aftstserver51.af.pre:9092,aftstserver52.af.pre:9092,aftstserver53.af.pre:9092"
+    DEFAULT_SCHEMA_REGISTRY = "http://aftstserver51.af.pre:8081,http://aftstserver52.af.pre:8081,http://aftstserver53.af.pre:8081"
+
+    def __init__(self,
+                 subscription_service: SubscriptionService,
+                 bootstrap_servers: Optional[str] = None,
+                 schema_registry_url: Optional[str] = None,
+                 start_mode: str = "latest",
+                 consumer_group: Optional[str] = None,
+                 **kwargs):
+        super().__init__(daemon=True)
+
+        self._subscription_service = subscription_service
+        self.bootstrap_servers = bootstrap_servers or self.DEFAULT_BOOTSTRAP_SERVERS
+        self.schema_registry_url = schema_registry_url or self.DEFAULT_SCHEMA_REGISTRY
+        self.start_mode = start_mode
+        self.consumer_group = consumer_group or str(uuid.uuid4())
+
+        self.stop_event = threading.Event()
+        self.running = False
+        self.consumer = None
+        self.avro_deserializer = None
+
+        # topic -> [KafkaSubscription]
+        self._subscriptions_by_topic: Dict[str, List[KafkaSubscription]] = {}
+        self._topics: Set[str] = set()
+        # topic -> symbol_filter -> KafkaSubscription  (O(1) fast path)
+        self._isin_to_sub: defaultdict[str, Dict[str, KafkaSubscription]] = defaultdict(dict)
+
+    # ------------------------------------------------------------------
+    # Abstract interface
+    # ------------------------------------------------------------------
+
+    def _should_include_subscription(self, sub: KafkaSubscription) -> bool:
+        """Return True if this thread should handle *sub*."""
+        raise NotImplementedError
+
+    def _process_message(self, topic: str, value: Dict[str, Any]):
+        """Dispatch a fully-deserialized Kafka message."""
+        raise NotImplementedError
+
+    # ------------------------------------------------------------------
+    # Optional hooks
+    # ------------------------------------------------------------------
+
+    def _on_poll_cycle(self):
+        """Called on every poll iteration. Override for per-cycle work."""
+
+    def _on_poll_idle(self):
+        """Called when poll returns None (no message)."""
+        self._check_new_subscriptions()
+
+    # ------------------------------------------------------------------
+    # Subscription management
+    # ------------------------------------------------------------------
+
+    def _load_subscriptions(self):
+        """Load (or reload) subscriptions from the shared SubscriptionService."""
+        pending = self._subscription_service.get_pending_subscriptions("kafka") or {}
+        active = self._subscription_service.get_kafka_subscription() or {}
+        all_subs = {**pending, **active}
+
+        self._subscriptions_by_topic.clear()
+        self._topics.clear()
+        self._isin_to_sub.clear()
+
+        count = 0
+        for sub in all_subs.values():
+            if isinstance(sub, KafkaSubscription) and self._should_include_subscription(sub):
+                topic = sub.topic
+                self._subscriptions_by_topic.setdefault(topic, []).append(sub)
+                self._topics.add(topic)
+                if sub.symbol_filter:
+                    self._isin_to_sub[topic][sub.symbol_filter] = sub
+                count += 1
+
+        logger.info(
+            f"{self.__class__.__name__}: loaded {count} subscriptions "
+            f"for {len(self._topics)} topics: {self._topics}"
+        )
+
+    def _check_new_subscriptions(self):
+        """Detect newly registered subscriptions and re-subscribe the consumer."""
+        pending = self._subscription_service.get_pending_subscriptions("kafka") or {}
+        new_topics = {
+            sub.topic
+            for sub in pending.values()
+            if isinstance(sub, KafkaSubscription)
+               and self._should_include_subscription(sub)
+               and sub.topic not in self._topics
+        }
+        if new_topics:
+            logger.info(f"{self.__class__.__name__}: new topics detected: {new_topics}")
+            self._load_subscriptions()
+            if self.consumer:
+                self.consumer.subscribe(list(self._topics))
+
+    # ------------------------------------------------------------------
+    # Main loop
+    # ------------------------------------------------------------------
+
+    def run(self):
+        try:
+            from confluent_kafka import Consumer
+            from confluent_kafka.schema_registry import SchemaRegistryClient
+            from confluent_kafka.schema_registry.avro import AvroDeserializer
+        except ImportError as e:
+            logger.error(f"Kafka libraries not installed: {e}")
+            logger.error("Install with: pip install confluent_kafka fastavro")
+            return
+
+        self._load_subscriptions()
+
+        if not self._topics:
+            logger.warning(f"{self.__class__.__name__}: no topics, thread idle")
+            while not self.stop_event.wait(timeout=5):
+                self._load_subscriptions()
+                if self._topics:
+                    break
+            if not self._topics:
+                logger.info(f"{self.__class__.__name__} stopping (no subscriptions)")
+                return
+
+        schema_registry_client = SchemaRegistryClient({"url": self.schema_registry_url})
+        self.avro_deserializer = AvroDeserializer(schema_registry_client=schema_registry_client)
+
+        consumer_conf = {
+            "bootstrap.servers": self.bootstrap_servers,
+            "group.id": self.consumer_group,
+            "auto.offset.reset": self.start_mode,
+        }
+        self.consumer = Consumer(consumer_conf)
+        self.consumer.subscribe(list(self._topics))
+
+        logger.info(f"{self.__class__.__name__} started - topics: {self._topics}")
+        self.running = True
+
+        deserializer = self.avro_deserializer
+        stop_event = self.stop_event
+        consumer = self.consumer
+
+        try:
+            while not stop_event.is_set():
+                msg = consumer.poll(timeout=0.1)
+                self._on_poll_cycle()
+
+                if msg is None:
+                    self._on_poll_idle()
+                    continue
+
+                if msg.error():
+                    logger.error(f"Kafka error: {msg.error()}")
+                    continue
+
+                try:
+                    value = deserializer(msg.value())
+                except Exception as e:
+                    logger.debug(f"Failed to deserialize message: {e}")
+                    continue
+
+                self._process_message(msg.topic(), value)
+
+        except Exception as e:
+            logger.error(f"Error in {self.__class__.__name__}: {e}", exc_info=True)
+        finally:
+            if self.consumer:
+                self.consumer.close()
+            self.running = False
+            logger.info(f"{self.__class__.__name__} stopped")
+
+    def stop(self):
+        self.stop_event.set()
+        logger.info(f"{self.__class__.__name__} stop requested")
+
+
+class KafkaStreamingThread(_KafkaBaseThread):
     """
     Thread per streaming dati da Kafka con deserializzazione Avro.
 
@@ -77,10 +266,6 @@ class KafkaStreamingThread(threading.Thread):
         consumer_group: Group ID per il consumer (default: UUID random)
     """
 
-    # Default configuration (cluster test Sella)
-    DEFAULT_BOOTSTRAP_SERVERS = "aftstserver51.af.pre:9092,aftstserver52.af.pre:9092,aftstserver53.af.pre:9092"
-    DEFAULT_SCHEMA_REGISTRY = "http://aftstserver51.af.pre:8081,http://aftstserver52.af.pre:8081,http://aftstserver53.af.pre:8081"
-
     def __init__(self,
                  real_time_data: RTData,
                  subscription_service: SubscriptionService,
@@ -89,179 +274,32 @@ class KafkaStreamingThread(threading.Thread):
                  start_mode: str = "latest",
                  consumer_group: Optional[str] = None,
                  **kwargs):
-
-        super().__init__(daemon=True)
-        self.symbol_filter_by_topic: dict = defaultdict(dict)
+        super().__init__(subscription_service, bootstrap_servers, schema_registry_url,
+                         start_mode, consumer_group, **kwargs)
         self.name = "kafka"
-
-        # RTData reference
         self.real_time_data = real_time_data
-        self.subscription_service = subscription_service
 
-        # Kafka configuration
-        self.bootstrap_servers = bootstrap_servers or self.DEFAULT_BOOTSTRAP_SERVERS
-        self.schema_registry_url = schema_registry_url or self.DEFAULT_SCHEMA_REGISTRY
-        self.start_mode = start_mode
-        self.consumer_group = consumer_group or str(uuid.uuid4())
+    def _should_include_subscription(self, sub: KafkaSubscription) -> bool:
+        return True
 
-        # State
-        self.stop_event = threading.Event()
-        self.running = False
-        self.consumer = None
-        self.avro_deserializer = None
-
-        # Subscriptions indexed by topic for fast lookup
-        self._subscriptions_by_topic = {}
-        self._topics: Set[str] = set()
-
-        # FAST LOOKUP: isin -> (subscription_id, KafkaSubscription) per O(1) match
-        self._isin_to_sub: Dict[str, KafkaSubscription] = {}
-
-    def _load_subscriptions(self):
-        """Carica le sottoscrizioni Kafka dal SubscriptionService."""
-        # Get pending + active subscriptions
-        pending = self.subscription_service.get_pending_subscriptions("kafka") or {}
-        active = self.subscription_service.get_kafka_subscription() or {}
-        all_subs = {**pending, **active}
-
-        # Reset
-        self._subscriptions_by_topic.clear()
-        self._topics.clear()
-
-        for sub_id, sub in all_subs.items():
-            if isinstance(sub, KafkaSubscription):
-                topic = sub.topic
-                if topic not in self._subscriptions_by_topic:
-                    self._subscriptions_by_topic[topic] = []
-                self._subscriptions_by_topic[topic].append(sub)
-                self._topics.add(topic)
-
-                # Build fast ISIN lookup
-                if sub.symbol_filter:
-                    self._isin_to_sub[sub.symbol_filter] = sub
-
-        logger.info(
-            f"KafkaStreamingThread: loaded {len(all_subs)} subscriptions "
-            f"for {len(self._topics)} topics: {self._topics}"
-        )
-
-    def run(self):
-        """Loop principale: connetti a Kafka e processa messaggi."""
-        try:
-            from confluent_kafka import Consumer
-            from confluent_kafka.schema_registry import SchemaRegistryClient
-            from confluent_kafka.schema_registry.avro import AvroDeserializer
-        except ImportError as e:
-            logger.error(f"Kafka libraries not installed: {e}")
-            logger.error("Install with: pip install confluent_kafka fastavro")
-            return
-
-        # Load subscriptions
-        self._load_subscriptions()
-
-        if not self._topics:
-            logger.warning("No Kafka topics to subscribe to, thread will idle")
-            # Stay alive but idle, in case subscriptions are added later
-            while not self.stop_event.wait(timeout=5):
-                self._load_subscriptions()
-                if self._topics:
-                    break
-            if not self._topics:
-                logger.info("KafkaStreamingThread stopping (no subscriptions)")
-                return
-
-        # Setup Schema Registry
-        schema_registry_conf = {"url": self.schema_registry_url}
-        schema_registry_client = SchemaRegistryClient(schema_registry_conf)
-        self.avro_deserializer = AvroDeserializer(schema_registry_client=schema_registry_client)
-
-        # Setup Consumer
-        consumer_conf = {
-            "bootstrap.servers": self.bootstrap_servers,
-            "group.id": self.consumer_group,
-            "auto.offset.reset": self.start_mode,
-        }
-        self.consumer = Consumer(consumer_conf)
-        self.consumer.subscribe(list(self._topics))
-
-        logger.info(f"KafkaStreamingThread started - topics: {self._topics}")
-        self.running = True
-
-        # Cache locals for speed in hot loop
-        isin_to_sub = self._isin_to_sub
-        real_time_data = self.real_time_data
-        deserializer = self.avro_deserializer
-        stop_event = self.stop_event
-        consumer = self.consumer
-
-        for tpc in self._topics:
-            self.symbol_filter_by_topic[tpc] = {sub.symbol_filter: sub for sub in self._subscriptions_by_topic[tpc]}
-
-        try:
-            while not stop_event.is_set():
-                # Poll for messages (0.1s = più reattivo)
-                msg = consumer.poll(timeout=0.1)
-                if msg is None:
-                    # Check for new subscriptions periodically
-                    self._check_new_subscriptions()
-                    continue
-
-                if msg.error():
-                    logger.error(f"Kafka error: {msg.error()}")
-                    continue
-
-                # Deserialize and process
-                try:
-                    value = deserializer(msg.value())
-                except Exception as e:
-                    logger.debug(f"Failed to deserialize message: {e}")
-                    continue
-
-                # FAST PATH: O(1) lookup by ISIN
-                instrument = value.get('instrument')
-                if instrument:
-                    subs = self.symbol_filter_by_topic.get(msg.topic())
-                    for k, v in instrument.items():
-                        if sub := subs.get(v):
-                            self._process_matched_message(sub, value, real_time_data)
-
-
-        except Exception as e:
-            logger.error(f"Error in KafkaStreamingThread: {e}", exc_info=True)
-        finally:
-            if self.consumer:
-                self.consumer.close()
-            self.running = False
-            logger.info("KafkaStreamingThread stopped")
-
-    def _check_new_subscriptions(self):
-        """Check for new subscriptions and update consumer if needed."""
-        pending = self.subscription_service.get_pending_subscriptions("kafka") or {}
-
-        new_topics = set()
-        for sub_id, sub in pending.items():
-            if isinstance(sub, KafkaSubscription) and sub.topic not in self._topics:
-                new_topics.add(sub.topic)
-
-        if new_topics:
-            logger.info(f"New Kafka topics detected: {new_topics}")
-            self._load_subscriptions()
-            if self.consumer:
-                self.consumer.subscribe(list(self._topics))
+    def _process_message(self, topic: str, value: Dict[str, Any]):
+        instrument = value.get('instrument')
+        if instrument:
+            topic_subs = self._isin_to_sub.get(topic, {})
+            for v in instrument.values():
+                if sub := topic_subs.get(v):
+                    self._process_matched_message(sub, value, self.real_time_data)
 
     def _process_matched_message(self, sub: KafkaSubscription, value: Dict[str, Any], real_time_data: RTData):
         """
         Processa un messaggio che ha già matchato (fast path).
         """
         try:
-            # Extract and route to store
             self._route_to_store(sub, value, real_time_data)
-
-            # Mark subscription as received
-            self.subscription_service.mark_subscription_received(sub.id, "kafka")
+            self._subscription_service.mark_subscription_received(sub.id, "kafka")
         except Exception as e:
             logger.error(f"Error processing message for {sub.id}: {e}")
-            self.subscription_service.mark_subscription_failed(sub.id, "kafka", str(e))
+            self._subscription_service.mark_subscription_failed(sub.id, "kafka", str(e))
 
     def _handle_message(self, topic: str, value: Dict[str, Any]):
         """
@@ -285,11 +323,11 @@ class KafkaStreamingThread(threading.Thread):
                     continue
 
                 self._route_to_store(sub, value, self.real_time_data)
-                self.subscription_service.mark_subscription_received(sub.id, "kafka")
+                self._subscription_service.mark_subscription_received(sub.id, "kafka")
 
             except Exception as e:
                 logger.error(f"Error processing message for {sub.id}: {e}")
-                self.subscription_service.mark_subscription_failed(sub.id, "kafka", str(e))
+                self._subscription_service.mark_subscription_failed(sub.id, "kafka", str(e))
 
     def _route_to_store(self, sub: KafkaSubscription, value: Dict[str, Any], real_time_data: RTData):
         """
@@ -304,11 +342,9 @@ class KafkaStreamingThread(threading.Thread):
         id_ = sub.id
 
         if store == "market":
-            # Extract fields using subscription's mapping
             if sub.fields_mapping:
                 data = sub.extract_fields(value)
             else:
-                # Default extraction for common formats
                 data = self._extract_default_market_fields(value)
 
             if data:
@@ -326,8 +362,6 @@ class KafkaStreamingThread(threading.Thread):
 
         elif store == "orders":
             from market_monitor.live_data_hub.order import Order
-            # If a fields_mapping is defined, extract only those fields first;
-            # otherwise pass the full raw message to Order.from_dict.
             source = sub.extract_fields(value) if sub.fields_mapping else value
             order = Order.from_dict(source)
             real_time_data.update_order(order)
@@ -385,13 +419,8 @@ class KafkaStreamingThread(threading.Thread):
 
         return data
 
-    def stop(self):
-        """Ferma il thread in modo pulito."""
-        self.stop_event.set()
-        logger.info("KafkaStreamingThread stop requested")
 
-
-class KafkaOrderStreamingThread(threading.Thread):
+class KafkaOrderStreamingThread(_KafkaBaseThread):
     """
     Dedicated thread for streaming order data from Kafka.
 
@@ -413,9 +442,6 @@ class KafkaOrderStreamingThread(threading.Thread):
         consumer_group: Kafka consumer group ID (default: random UUID)
     """
 
-    DEFAULT_BOOTSTRAP_SERVERS = KafkaStreamingThread.DEFAULT_BOOTSTRAP_SERVERS
-    DEFAULT_SCHEMA_REGISTRY = KafkaStreamingThread.DEFAULT_SCHEMA_REGISTRY
-
     def __init__(self,
                  real_time_data: RTData,
                  subscription_service: SubscriptionService,
@@ -424,161 +450,33 @@ class KafkaOrderStreamingThread(threading.Thread):
                  start_mode: str = "latest",
                  consumer_group: Optional[str] = None,
                  **kwargs):
-        super().__init__(daemon=True)
+        super().__init__(subscription_service, bootstrap_servers, schema_registry_url,
+                         start_mode, consumer_group, **kwargs)
         self.name = "kafka_order"
-
         self.real_time_data = real_time_data
-        self._subscription_service = subscription_service
-
-        self.bootstrap_servers = bootstrap_servers or self.DEFAULT_BOOTSTRAP_SERVERS
-        self.schema_registry_url = schema_registry_url or self.DEFAULT_SCHEMA_REGISTRY
-        self.start_mode = start_mode
-        self.consumer_group = consumer_group or str(uuid.uuid4())
-
-        self.stop_event = threading.Event()
-        self.running = False
-        self.consumer = None
-        self.avro_deserializer = None
-
-        # topic -> [KafkaSubscription]  (only order subscriptions)
-        self._subscriptions_by_topic: Dict[str, List[KafkaSubscription]] = {}
-        self._topics: Set[str] = set()
-        # symbol_filter -> KafkaSubscription for O(1) ISIN lookup per topic
-        self._isin_to_sub: defaultdict[str, Dict[str, KafkaSubscription]] = defaultdict(dict)
-
-    # ------------------------------------------------------------------
-    # Subscription management
-    # ------------------------------------------------------------------
 
     @staticmethod
     def _is_order_subscription(sub: KafkaSubscription) -> bool:
         return sub.store == "orders"
 
-    def _load_subscriptions(self):
-        """Load order subscriptions from the shared SubscriptionService."""
-        pending = self._subscription_service.get_pending_subscriptions("kafka") or {}
-        active = self._subscription_service.get_kafka_subscription() or {}
-        all_subs = {**pending, **active}
+    def _should_include_subscription(self, sub: KafkaSubscription) -> bool:
+        return self._is_order_subscription(sub)
 
-        self._subscriptions_by_topic.clear()
-        self._topics.clear()
-        self._isin_to_sub.clear()
-
-        count = 0
-        for sub in all_subs.values():
-            if isinstance(sub, KafkaSubscription) and self._is_order_subscription(sub):
-                topic = sub.topic
-                self._subscriptions_by_topic.setdefault(topic, []).append(sub)
-                self._topics.add(topic)
-                if sub.symbol_filter:
-                    self._isin_to_sub[topic][sub.symbol_filter] = sub
-                count += 1
-
-        logger.info(
-            f"KafkaOrderStreamingThread: loaded {count} order subscriptions "
-            f"for {len(self._topics)} topics: {self._topics}"
-        )
-
-    def _check_new_subscriptions(self):
-        """Detect new order subscriptions and re-subscribe consumer if needed."""
-        pending = self._subscription_service.get_pending_subscriptions("kafka") or {}
-        new_topics = {
-            sub.topic
-            for sub in pending.values()
-            if isinstance(sub, KafkaSubscription)
-               and self._is_order_subscription(sub)
-               and sub.topic not in self._topics
-        }
-        if new_topics:
-            logger.info(f"KafkaOrderStreamingThread: new order topics detected: {new_topics}")
-            self._load_subscriptions()
-            if self.consumer:
-                self.consumer.subscribe(list(self._topics))
-
-    # ------------------------------------------------------------------
-    # run()
-    # ------------------------------------------------------------------
-
-    def run(self):
-        """Poll Kafka for order messages and route them to RTData."""
-        try:
-            from confluent_kafka import Consumer
-            from confluent_kafka.schema_registry import SchemaRegistryClient
-            from confluent_kafka.schema_registry.avro import AvroDeserializer
-        except ImportError as e:
-            logger.error(f"Kafka libraries not installed: {e}")
-            logger.error("Install with: pip install confluent_kafka fastavro")
-            return
-
-        self._load_subscriptions()
-
-        if not self._topics:
-            logger.warning("KafkaOrderStreamingThread: no order topics, thread idle")
-            while not self.stop_event.wait(timeout=5):
-                self._load_subscriptions()
-                if self._topics:
+    def _process_message(self, topic: str, value: Dict[str, Any]):
+        # FAST PATH: O(1) lookup by symbol_filter (typically ISIN)
+        instrument = value.get("instrument")
+        if instrument:
+            topic_subs = self._isin_to_sub.get(topic, {})
+            for field_value in instrument.values():
+                sub = topic_subs.get(field_value)
+                if sub:
+                    self._process_order(sub, value)
                     break
-            if not self._topics:
-                logger.info("KafkaOrderStreamingThread stopping (no subscriptions)")
-                return
-
-        schema_registry_client = SchemaRegistryClient({"url": self.schema_registry_url})
-        self.avro_deserializer = AvroDeserializer(schema_registry_client=schema_registry_client)
-
-        consumer_conf = {
-            "bootstrap.servers": self.bootstrap_servers,
-            "group.id": self.consumer_group,
-            "auto.offset.reset": self.start_mode,
-        }
-        self.consumer = Consumer(consumer_conf)
-        self.consumer.subscribe(list(self._topics))
-
-        logger.info(f"KafkaOrderStreamingThread started - topics: {self._topics}")
-        self.running = True
-
-        deserializer = self.avro_deserializer
-        stop_event = self.stop_event
-        consumer = self.consumer
-
-        try:
-            while not stop_event.is_set():
-                msg = consumer.poll(timeout=0.1)
-                if msg is None:
-                    self._check_new_subscriptions()
-                    continue
-
-                if msg.error():
-                    logger.error(f"Kafka order error: {msg.error()}")
-                    continue
-
-                try:
-                    value = deserializer(msg.value())
-                except Exception as e:
-                    logger.debug(f"Failed to deserialize order message: {e}")
-                    continue
-
-                # FAST PATH: O(1) lookup by symbol_filter (typically ISIN)
-                instrument = value.get("instrument")
-                if instrument:
-                    topic_subs = self._isin_to_sub.get(msg.topic(), {})
-                    for field_value in instrument.values():
-                        sub = topic_subs.get(field_value)
-                        if sub:
-                            self._process_order(sub, value)
-                            break
-                    else:
-                        # Slow path: no symbol_filter or no match — try all topic subs
-                        for sub in self._subscriptions_by_topic.get(msg.topic(), []):
-                            if not sub.symbol_filter and sub.matches(value):
-                                self._process_order(sub, value)
-
-        except Exception as e:
-            logger.error(f"Error in KafkaOrderStreamingThread: {e}", exc_info=True)
-        finally:
-            if self.consumer:
-                self.consumer.close()
-            self.running = False
-            logger.info("KafkaOrderStreamingThread stopped")
+            else:
+                # Slow path: no symbol_filter or no match — try all topic subs
+                for sub in self._subscriptions_by_topic.get(topic, []):
+                    if not sub.symbol_filter and sub.matches(value):
+                        self._process_order(sub, value)
 
     def _process_order(self, sub: KafkaSubscription, value: Dict[str, Any]):
         """Parse the raw Kafka message into an Order and route to RTData."""
@@ -592,13 +490,8 @@ class KafkaOrderStreamingThread(threading.Thread):
             logger.error(f"Error processing order for {sub.id}: {e}")
             self._subscription_service.mark_subscription_failed(sub.id, "kafka", str(e))
 
-    def stop(self):
-        """Stop the thread cleanly."""
-        self.stop_event.set()
-        logger.info("KafkaOrderStreamingThread stop requested")
 
-
-class KafkaTradeStreamingThread(threading.Thread):
+class KafkaTradeStreamingThread(_KafkaBaseThread):
     """
     Thread standalone per streaming di dati di trade da Kafka (PublicDeal, Trade topics).
 
@@ -632,8 +525,7 @@ class KafkaTradeStreamingThread(threading.Thread):
         **kwargs: Parametri extra ignorati (per compatibilità con **kafka_params)
     """
 
-    DEFAULT_BOOTSTRAP_SERVERS = KafkaStreamingThread.DEFAULT_BOOTSTRAP_SERVERS
-    DEFAULT_SCHEMA_REGISTRY = KafkaStreamingThread.DEFAULT_SCHEMA_REGISTRY
+    _TRADE_TOPIC_SUFFIXES = (".PublicDeal", ".Trade")
 
     def __init__(self,
                  queue: Queue,
@@ -644,31 +536,10 @@ class KafkaTradeStreamingThread(threading.Thread):
                  consumer_group: Optional[str] = None,
                  buffer_sec: float = 1.0,
                  **kwargs):
-        super().__init__(daemon=True)
+        super().__init__(subscription_service, bootstrap_servers, schema_registry_url,
+                         start_mode, consumer_group, **kwargs)
         self.name = "kafka_trade"
-
-        # Output
         self.queue_trade: Queue = queue
-
-        # SubscriptionService iniettato — unica fonte di verità per le subscription
-        self._subscription_service: SubscriptionService = subscription_service
-
-        # Kafka config
-        self.bootstrap_servers = bootstrap_servers or self.DEFAULT_BOOTSTRAP_SERVERS
-        self.schema_registry_url = schema_registry_url or self.DEFAULT_SCHEMA_REGISTRY
-        self.start_mode = start_mode
-        self.consumer_group = consumer_group or str(uuid.uuid4())
-
-        # State
-        self.stop_event = threading.Event()
-        self.running = False
-        self.consumer = None
-        self.avro_deserializer = None
-
-        # Subscription indexes (fast O(1) ISIN lookup)
-        self._subscriptions_by_topic: Dict[str, List[KafkaSubscription]] = {}
-        self._topics: Set[str] = set()
-        self._isin_to_sub: defaultdict[str, Dict[str, KafkaSubscription]] = defaultdict(dict)
 
         # Deduplication state
         self._buffer_sec: float = buffer_sec
@@ -676,157 +547,37 @@ class KafkaTradeStreamingThread(threading.Thread):
         self._seen_own_trades: Set[TradeKey] = set()
         self._pending_trade_timestamp_received: Dict[TradeKey, float] = {}
 
-    _TRADE_TOPIC_SUFFIXES = (".PublicDeal", ".Trade")
-
     @classmethod
     def _is_trade_topic(cls, topic: str) -> bool:
         return any(topic.endswith(s) for s in cls._TRADE_TOPIC_SUFFIXES)
 
-    # ------------------------------------------------------------------
-    # Subscription management
-    # ------------------------------------------------------------------
+    def _should_include_subscription(self, sub: KafkaSubscription) -> bool:
+        return self._is_trade_topic(sub.topic)
 
-    def _load_subscriptions(self):
-        """
-        Legge le subscription Kafka dal SubscriptionService condiviso e indicizza
-        solo i topic di trade (*.PublicDeal, *.Trade).
-        """
-        pending = self._subscription_service.get_pending_subscriptions("kafka") or {}
-        active = self._subscription_service.get_kafka_subscription() or {}
-        all_subs = {**pending, **active}
+    def _on_poll_cycle(self):
+        self._flush_public_deal_expired()
 
-        self._subscriptions_by_topic.clear()
-        self._topics.clear()
-        self._isin_to_sub.clear()
-
-        count = 0
-        for sub in all_subs.values():
-            if isinstance(sub, KafkaSubscription) and self._is_trade_topic(sub.topic):
-                topic = sub.topic
-                if topic not in self._subscriptions_by_topic:
-                    self._subscriptions_by_topic[topic] = []
-                self._subscriptions_by_topic[topic].append(sub)
-                self._topics.add(topic)
-                if sub.symbol_filter:
-                    self._isin_to_sub[topic][sub.symbol_filter] = sub
-                count += 1
-
-        logger.info(
-            f"KafkaTradeStreamingThread: loaded {count} trade subscriptions "
-            f"for {len(self._topics)} topics: {self._topics}"
-        )
-
-    def _check_new_subscriptions(self):
-        """Controlla se ci sono nuove subscription pending di tipo trade e aggiorna il consumer."""
-        pending = self._subscription_service.get_pending_subscriptions("kafka") or {}
-        new_topics = {
-            sub.topic
-            for sub in pending.values()
-            if isinstance(sub, KafkaSubscription)
-               and self._is_trade_topic(sub.topic)
-               and sub.topic not in self._topics
-        }
-        if new_topics:
-            logger.info(f"KafkaTradeStreamingThread: new trade topics detected: {new_topics}")
-            self._load_subscriptions()
-            if self.consumer:
-                self.consumer.subscribe(list(self._topics))
-
-    # ------------------------------------------------------------------
-    # run()
-    # ------------------------------------------------------------------
-
-    def run(self):
-        """Loop di polling: connette a Kafka e invia i trade in queue."""
-        try:
-            from confluent_kafka import Consumer
-            from confluent_kafka.schema_registry import SchemaRegistryClient
-            from confluent_kafka.schema_registry.avro import AvroDeserializer
-        except ImportError as e:
-            logger.error(f"Kafka libraries not installed: {e}")
-            logger.error("Install with: pip install confluent_kafka fastavro")
-            return
-
-        self._load_subscriptions()
-
-        if not self._topics:
-            logger.warning("KafkaTradeStreamingThread: no topics, thread idle")
-            while not self.stop_event.wait(timeout=5):
-                self._load_subscriptions()
-                if self._topics:
-                    break
-            if not self._topics:
-                logger.info("KafkaTradeStreamingThread stopping (no subscriptions)")
-                return
-
-        schema_registry_client = SchemaRegistryClient({"url": self.schema_registry_url})
-        self.avro_deserializer = AvroDeserializer(schema_registry_client=schema_registry_client)
-
-        consumer_conf = {
-            "bootstrap.servers": self.bootstrap_servers,
-            "group.id": self.consumer_group,
-            "auto.offset.reset": self.start_mode,
-        }
-        self.consumer = Consumer(consumer_conf)
-        self.consumer.subscribe(list(self._topics))
-
-        logger.info(f"KafkaTradeStreamingThread started - topics: {self._topics}")
-        self.running = True
-
-        # Cache locals for speed in hot loop
-        deserializer = self.avro_deserializer
-        stop_event = self.stop_event
-        consumer = self.consumer
-
-        try:
-            while not stop_event.is_set():
-                msg = consumer.poll(timeout=0.1)
-
-                # Flush expired buffered public deals on every poll cycle
-                self._flush_public_deal_expired()
-
-                if msg is None:
-                    self._check_new_subscriptions()
-                    continue
-
-                if msg.error():
-                    logger.error(f"Kafka error: {msg.error()}")
-                    continue
-
-                try:
-                    value = deserializer(msg.value())
-                except Exception as e:
-                    logger.debug(f"Failed to deserialize trade message: {e}")
-                    continue
-
-                isin_to_sub = self._isin_to_sub.get(msg.topic())
-                # FAST PATH: O(1) lookup by ISIN
-                instrument = value.get('instrument')
-                if instrument:
-                    isin = instrument.get('isin')
-                    if isin:
-                        sub = isin_to_sub.get(isin)
-                        if sub:
-                            try:
-                                self._dispatch(sub, value)
-                                self._subscription_service.mark_subscription_received(sub.id, "kafka")
-                            except Exception as e:
-                                logger.error(f"Error dispatching trade for {sub.id}: {e}")
-                                self._subscription_service.mark_subscription_failed(sub.id, "kafka", str(e))
-                        else:
-                            topic_subs = self._subscriptions_by_topic.get(msg.topic(), [])
-                            for sub in topic_subs:
-                                if sub.matches(value):
-                                    self._dispatch(sub, value)
-                                    self._subscription_service.mark_subscription_received(sub.id, "kafka")
-
-        except Exception as e:
-            logger.error(f"Error in KafkaTradeStreamingThread: {e}", exc_info=True)
-        finally:
-            if self.consumer:
-                self.consumer.close()
-            self.running = False
-            logger.info("KafkaTradeStreamingThread stopped")
+    def _process_message(self, topic: str, value: Dict[str, Any]):
+        isin_to_sub = self._isin_to_sub.get(topic)
+        # FAST PATH: O(1) lookup by ISIN
+        instrument = value.get('instrument')
+        if instrument:
+            isin = instrument.get('isin')
+            if isin:
+                sub = isin_to_sub.get(isin) if isin_to_sub else None
+                if sub:
+                    try:
+                        self._dispatch(sub, value)
+                        self._subscription_service.mark_subscription_received(sub.id, "kafka")
+                    except Exception as e:
+                        logger.error(f"Error dispatching trade for {sub.id}: {e}")
+                        self._subscription_service.mark_subscription_failed(sub.id, "kafka", str(e))
+                else:
+                    topic_subs = self._subscriptions_by_topic.get(topic, [])
+                    for sub in topic_subs:
+                        if sub.matches(value):
+                            self._dispatch(sub, value)
+                            self._subscription_service.mark_subscription_received(sub.id, "kafka")
 
     # ------------------------------------------------------------------
     # Dispatch: estrazione campi + deduplication (no RTData.update)
@@ -939,11 +690,6 @@ class KafkaTradeStreamingThread(threading.Thread):
             self._pending_publicdeals[key].append(df)
             if key not in self._pending_trade_timestamp_received:
                 self._pending_trade_timestamp_received[key] = time.time()
-
-    def stop(self):
-        """Ferma il thread in modo pulito."""
-        self.stop_event.set()
-        logger.info("KafkaTradeStreamingThread stop requested")
 
 
 # ============================================================================
