@@ -1,0 +1,41 @@
+load_strategy_info:
+      package_path: C:\AFMachineLearning\Libraries\MarketMonitor\user_strategy\fixed_income
+      module_name: MarketMakerPerformance
+      class_name: MarketMakerPerformance
+
+
+market_monitor:
+  instruments: []
+
+  tasks:
+    update_HF:
+      activate: true
+      frequency: 0.3
+    update_LF:
+      activate: true
+      frequency: 5
+    trade:
+      activate: true
+      synchronous: true
+      frequency: 1
+
+
+kafka_data_distributor:
+  activate: true
+  kafka_params:
+    bootstrap_servers: "aftstserver51.af.pre:9092,aftstserver52.af.pre:9092,aftstserver53.af.pre:9092"
+    schema_registry_url: "http://aftstserver51.af.pre:8081"
+    start_mode: "latest"  # oppure "earliest"
+
+
+redis_data_distributor:
+  activate: true       # Impostare false se si usa rabbit_data_distributor
+  redis_params:
+    redis_host: 'localhost'
+    redis_port: 6379
+    redis_db: 0
+
+logging:
+  log_level: DEBUG
+  log_level_console: WARNING
+  log_name: MarketMakerPerformance.log
