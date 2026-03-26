@@ -14,7 +14,7 @@ import pandas as pd
 
 from market_monitor.strategy.common.trade_manager.book_memory import FairvaluePrice
 from market_monitor.strategy.common.trade_manager.time_zero_pl import TimeZeroPLManager
-from market_monitor.strategy.common.trade_manager.trade_templates import TradeStorage, TradeFactory, Trade, MyTrade
+from market_monitor.strategy.common.trade_manager.trade_templates import TradeStorage, TradeFactory, Trade, MyTrade, AbstractTrade
 
 logger = logging.getLogger(__name__)
 
@@ -510,7 +510,12 @@ class TradeManager:
             self._last_saved_index = loaded_count
             self._invalidate_cache()
 
-            logger.info(f"Loaded {loaded_count} trades from {filepath}")
+            # Setta il generatore al valore successivo al massimo trade_index caricato,
+            # così i nuovi trade non collidono con quelli ripristinati dal parquet
+            max_idx = max(t.trade_index for t in self.trade_storage.get_last_trades().values())
+            AbstractTrade.seed_id_generator(max_idx + 1)
+
+            logger.info(f"Loaded {loaded_count} trades from {filepath} (trade_index generator seeded to {max_idx + 1})")
 
         except Exception as e:
             logger.error(f"Error loading trades: {e}", exc_info=True)
@@ -544,6 +549,11 @@ class TradeManager:
                 params["side"] = trade_dict.get("side")
 
             trade = TradeClass(**params)
+
+            # Ripristina il trade_index originale dal parquet (ignora quello assegnato da itertools.count)
+            original_index = trade_dict.get('trade_index')
+            if original_index is not None:
+                trade.trade_index = int(original_index)
 
             if TradeClass == Trade:
                 trade.side = trade_dict.get("side")

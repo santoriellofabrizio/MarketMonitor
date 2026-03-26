@@ -11,6 +11,11 @@ import itertools
 class AbstractTrade:
     _id_generator = itertools.count(start=1)
 
+    @classmethod
+    def seed_id_generator(cls, start: int):
+        """Resetta il generatore di trade_index a partire da `start`."""
+        cls._id_generator = itertools.count(start=start)
+
     def __init__(self, ticker, isin, timestamp, quantity, price, market=None, currency=None, price_multiplier=1,
                  **extra):
         self.trade_index: int = next(self._id_generator)
