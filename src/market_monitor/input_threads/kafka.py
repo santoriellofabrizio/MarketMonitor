@@ -324,6 +324,14 @@ class KafkaStreamingThread(threading.Thread):
         elif store == "blob":
             real_time_data._blob_store.store(id_, value)
 
+        elif store == "orders":
+            from market_monitor.live_data_hub.order import Order
+            # If a fields_mapping is defined, extract only those fields first;
+            # otherwise pass the full raw message to Order.from_dict.
+            source = sub.extract_fields(value) if sub.fields_mapping else value
+            order = Order.from_dict(source)
+            real_time_data.update_order(order)
+
     @staticmethod
     def _extract_default_market_fields(value: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -381,6 +389,213 @@ class KafkaStreamingThread(threading.Thread):
         """Ferma il thread in modo pulito."""
         self.stop_event.set()
         logger.info("KafkaStreamingThread stop requested")
+
+
+class KafkaOrderStreamingThread(threading.Thread):
+    """
+    Dedicated thread for streaming order data from Kafka.
+
+    Consumes messages from order topics and routes each one to
+    RTData.update_order() as an Order dataclass.  Only ACTIVE orders
+    are kept in memory; EXPIRED / CANCELLED ones are automatically
+    removed by the OrderStore.
+
+    Subscriptions are registered via
+        subscription_service.subscribe_orders_kafka(...)
+    and are identified by ``sub.store == "orders"``.
+
+    Args:
+        real_time_data: RTData instance where orders will be stored
+        subscription_service: Shared SubscriptionService (injected)
+        bootstrap_servers: Kafka bootstrap servers string
+        schema_registry_url: Avro Schema Registry URL
+        start_mode: "latest" or "earliest"
+        consumer_group: Kafka consumer group ID (default: random UUID)
+    """
+
+    DEFAULT_BOOTSTRAP_SERVERS = KafkaStreamingThread.DEFAULT_BOOTSTRAP_SERVERS
+    DEFAULT_SCHEMA_REGISTRY = KafkaStreamingThread.DEFAULT_SCHEMA_REGISTRY
+
+    def __init__(self,
+                 real_time_data: RTData,
+                 subscription_service: SubscriptionService,
+                 bootstrap_servers: Optional[str] = None,
+                 schema_registry_url: Optional[str] = None,
+                 start_mode: str = "latest",
+                 consumer_group: Optional[str] = None,
+                 **kwargs):
+        super().__init__(daemon=True)
+        self.name = "kafka_order"
+
+        self.real_time_data = real_time_data
+        self._subscription_service = subscription_service
+
+        self.bootstrap_servers = bootstrap_servers or self.DEFAULT_BOOTSTRAP_SERVERS
+        self.schema_registry_url = schema_registry_url or self.DEFAULT_SCHEMA_REGISTRY
+        self.start_mode = start_mode
+        self.consumer_group = consumer_group or str(uuid.uuid4())
+
+        self.stop_event = threading.Event()
+        self.running = False
+        self.consumer = None
+        self.avro_deserializer = None
+
+        # topic -> [KafkaSubscription]  (only order subscriptions)
+        self._subscriptions_by_topic: Dict[str, List[KafkaSubscription]] = {}
+        self._topics: Set[str] = set()
+        # symbol_filter -> KafkaSubscription for O(1) ISIN lookup per topic
+        self._isin_to_sub: defaultdict[str, Dict[str, KafkaSubscription]] = defaultdict(dict)
+
+    # ------------------------------------------------------------------
+    # Subscription management
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _is_order_subscription(sub: KafkaSubscription) -> bool:
+        return sub.store == "orders"
+
+    def _load_subscriptions(self):
+        """Load order subscriptions from the shared SubscriptionService."""
+        pending = self._subscription_service.get_pending_subscriptions("kafka") or {}
+        active = self._subscription_service.get_kafka_subscription() or {}
+        all_subs = {**pending, **active}
+
+        self._subscriptions_by_topic.clear()
+        self._topics.clear()
+        self._isin_to_sub.clear()
+
+        count = 0
+        for sub in all_subs.values():
+            if isinstance(sub, KafkaSubscription) and self._is_order_subscription(sub):
+                topic = sub.topic
+                self._subscriptions_by_topic.setdefault(topic, []).append(sub)
+                self._topics.add(topic)
+                if sub.symbol_filter:
+                    self._isin_to_sub[topic][sub.symbol_filter] = sub
+                count += 1
+
+        logger.info(
+            f"KafkaOrderStreamingThread: loaded {count} order subscriptions "
+            f"for {len(self._topics)} topics: {self._topics}"
+        )
+
+    def _check_new_subscriptions(self):
+        """Detect new order subscriptions and re-subscribe consumer if needed."""
+        pending = self._subscription_service.get_pending_subscriptions("kafka") or {}
+        new_topics = {
+            sub.topic
+            for sub in pending.values()
+            if isinstance(sub, KafkaSubscription)
+               and self._is_order_subscription(sub)
+               and sub.topic not in self._topics
+        }
+        if new_topics:
+            logger.info(f"KafkaOrderStreamingThread: new order topics detected: {new_topics}")
+            self._load_subscriptions()
+            if self.consumer:
+                self.consumer.subscribe(list(self._topics))
+
+    # ------------------------------------------------------------------
+    # run()
+    # ------------------------------------------------------------------
+
+    def run(self):
+        """Poll Kafka for order messages and route them to RTData."""
+        try:
+            from confluent_kafka import Consumer
+            from confluent_kafka.schema_registry import SchemaRegistryClient
+            from confluent_kafka.schema_registry.avro import AvroDeserializer
+        except ImportError as e:
+            logger.error(f"Kafka libraries not installed: {e}")
+            logger.error("Install with: pip install confluent_kafka fastavro")
+            return
+
+        self._load_subscriptions()
+
+        if not self._topics:
+            logger.warning("KafkaOrderStreamingThread: no order topics, thread idle")
+            while not self.stop_event.wait(timeout=5):
+                self._load_subscriptions()
+                if self._topics:
+                    break
+            if not self._topics:
+                logger.info("KafkaOrderStreamingThread stopping (no subscriptions)")
+                return
+
+        schema_registry_client = SchemaRegistryClient({"url": self.schema_registry_url})
+        self.avro_deserializer = AvroDeserializer(schema_registry_client=schema_registry_client)
+
+        consumer_conf = {
+            "bootstrap.servers": self.bootstrap_servers,
+            "group.id": self.consumer_group,
+            "auto.offset.reset": self.start_mode,
+        }
+        self.consumer = Consumer(consumer_conf)
+        self.consumer.subscribe(list(self._topics))
+
+        logger.info(f"KafkaOrderStreamingThread started - topics: {self._topics}")
+        self.running = True
+
+        deserializer = self.avro_deserializer
+        stop_event = self.stop_event
+        consumer = self.consumer
+
+        try:
+            while not stop_event.is_set():
+                msg = consumer.poll(timeout=0.1)
+                if msg is None:
+                    self._check_new_subscriptions()
+                    continue
+
+                if msg.error():
+                    logger.error(f"Kafka order error: {msg.error()}")
+                    continue
+
+                try:
+                    value = deserializer(msg.value())
+                except Exception as e:
+                    logger.debug(f"Failed to deserialize order message: {e}")
+                    continue
+
+                # FAST PATH: O(1) lookup by symbol_filter (typically ISIN)
+                instrument = value.get("instrument")
+                if instrument:
+                    topic_subs = self._isin_to_sub.get(msg.topic(), {})
+                    for field_value in instrument.values():
+                        sub = topic_subs.get(field_value)
+                        if sub:
+                            self._process_order(sub, value)
+                            break
+                    else:
+                        # Slow path: no symbol_filter or no match — try all topic subs
+                        for sub in self._subscriptions_by_topic.get(msg.topic(), []):
+                            if not sub.symbol_filter and sub.matches(value):
+                                self._process_order(sub, value)
+
+        except Exception as e:
+            logger.error(f"Error in KafkaOrderStreamingThread: {e}", exc_info=True)
+        finally:
+            if self.consumer:
+                self.consumer.close()
+            self.running = False
+            logger.info("KafkaOrderStreamingThread stopped")
+
+    def _process_order(self, sub: KafkaSubscription, value: Dict[str, Any]):
+        """Parse the raw Kafka message into an Order and route to RTData."""
+        from market_monitor.live_data_hub.order import Order
+        try:
+            source = sub.extract_fields(value) if sub.fields_mapping else value
+            order = Order.from_dict(source)
+            self.real_time_data.update_order(order)
+            self._subscription_service.mark_subscription_received(sub.id, "kafka")
+        except Exception as e:
+            logger.error(f"Error processing order for {sub.id}: {e}")
+            self._subscription_service.mark_subscription_failed(sub.id, "kafka", str(e))
+
+    def stop(self):
+        """Stop the thread cleanly."""
+        self.stop_event.set()
+        logger.info("KafkaOrderStreamingThread stop requested")
 
 
 class KafkaTradeStreamingThread(threading.Thread):
@@ -742,7 +957,7 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
 
     isin_to_subscribe = [
-        "FEHY JUN26"
+        "FEHY 26"
     ]
 
     # ------------------------------------------------------------------

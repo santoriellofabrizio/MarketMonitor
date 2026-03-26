@@ -20,7 +20,7 @@ from market_monitor.input_threads.trade import TradeThread
 from market_monitor.input_threads.bloomberg import BloombergStreamingThread
 from market_monitor.input_threads.excel import ExcelStreamingThread
 from market_monitor.input_threads.redis import RedisStreamingThread
-from market_monitor.input_threads.kafka import KafkaStreamingThread, KafkaTradeStreamingThread
+from market_monitor.input_threads.kafka import KafkaStreamingThread, KafkaTradeStreamingThread, KafkaOrderStreamingThread
 from market_monitor.live_data_hub.real_time_data_hub import RTData
 from market_monitor.live_data_hub.subscription_service import SubscriptionService
 from market_monitor.strategy.strategy_ui.StrategyUIAsync import StrategyUIAsync
@@ -246,28 +246,34 @@ class Builder:
         threads.append(redis_distributor_thread)
 
     def _setup_kafka_distributor(self, threads, monitor):
-        """Setup book e trade Kafka threads separati."""
+        """Setup book, trade, and order Kafka threads."""
         kafka_params = self.config.get("kafka_data_distributor", {}).get("kafka_params", {})
 
-        # SubscriptionService condiviso: vive in RTData, usato da entrambi i thread
+        # Shared SubscriptionService lives in RTData and is used by all three threads.
 
-        # Book thread: usa RTData (già impostato)
+        # Book thread: market data (BookBest, etc.) -> RTData market store
         book_thread = KafkaStreamingThread(subscription_service=self.global_subscription_service,
                                            real_time_data=monitor.market_data,
                                            **kafka_params)
         threads.append(book_thread)
 
-        # Trade thread: riceve il SubscriptionService condiviso (filtra *.PublicDeal / *.Trade)
+        # Trade thread: PublicDeal / Trade topics -> trade Queue
         trade_queue = Queue()
         trade_thread = KafkaTradeStreamingThread(
             queue=trade_queue,
             subscription_service=self.global_subscription_service,
             **kafka_params,
         )
-
-        # Espone il SubscriptionService condiviso alla strategia per registrare trade subscriptions
         monitor.set_q_trade(trade_queue)
         threads.append(trade_thread)
+
+        # Order thread: order topics -> RTData order store (active orders only)
+        order_thread = KafkaOrderStreamingThread(
+            real_time_data=monitor.market_data,
+            subscription_service=self.global_subscription_service,
+            **kafka_params,
+        )
+        threads.append(order_thread)
 
     def _setup_gui(self, threads, monitor):
         gui = None

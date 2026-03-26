@@ -13,6 +13,7 @@ class DataStore(str, Enum):
     STATE = "state"
     EVENTS = "events"
     BLOB = "blob"
+    ORDERS = "orders"
 
     def __str__(self):
         return self.value
@@ -194,7 +195,7 @@ class KafkaSubscription(LiveSubscription):
     symbol_field: str = "instrument.isin"  # Path nel messaggio per il match
     store: str = "market"
     fields_mapping: Dict[str, str] = dataclass_field(default_factory=dict)
-    subscription_type: Literal['data', 'event'] = 'data'
+    subscription_type: Literal['data', 'event', 'order'] = 'data'
     
     def __post_init__(self):
         self.source = "kafka"
