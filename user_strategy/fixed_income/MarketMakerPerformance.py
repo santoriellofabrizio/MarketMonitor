@@ -12,9 +12,9 @@ logger = logging.getLogger(__name__)
 @dataclass
 class EurexMMRequirements:
     """Requisiti Eurex per il market making su credit futures."""
-    max_spread_pct: float = 0.005   # spread massimo come % del mid price
-    min_quantity: float = 5.0       # quantità minima per lato (bid e ask)
-    min_time_fraction: float = 0.80  # frazione minima del tempo in cui i requisiti devono essere soddisfatti
+    max_spread_pct: float   # spread massimo come % del mid price
+    min_quantity: float      # quantità minima per lato (bid e ask)
+    min_time_fraction: float # frazione minima del tempo in cui i requisiti devono essere soddisfatti
 
 
 @dataclass
@@ -93,11 +93,12 @@ class MarketMakerPerformance(StrategyUI):
 
         # Carica requisiti Eurex dal config YAML
         requirements_cfg = kwargs.get('market_maker_requirements', {})
-        default_cfg = requirements_cfg.get('default', {})
         self._requirements: dict[str, EurexMMRequirements] = {}
         for market in self._best_level:
-            market_cfg = {**default_cfg, **requirements_cfg.get(market, {})}
-            self._requirements[market] = EurexMMRequirements(**market_cfg) if market_cfg else EurexMMRequirements()
+            if market not in requirements_cfg:
+                logger.warning(f"[MARKET] {market} market requirements not configured. skipping.")
+                continue
+            self._requirements[market] = EurexMMRequirements(**requirements_cfg[market])
 
         self._compliance: dict[str, MMComplianceTracker] = {}  # key: f"{isin}:{market}"
 
@@ -182,17 +183,17 @@ class MarketMakerPerformance(StrategyUI):
                 continue
 
             key = f"{order.isin}:{order.instrument['market']}"
-            side = order.side.upper()  # "BUY" / "SELL"
+            side = order.side.upper()
 
             if key not in active_quotes:
                 active_quotes[key] = {}
 
             # Teniamo il prezzo più aggressivo e la quantità totale per ciascun lato
-            if side == "BUY":
+            if side == "BID":
                 prev_price, prev_qty = active_quotes[key].get("BID", (float('-inf'), 0.0))
                 new_price = max(prev_price, order.price)
                 active_quotes[key]["BID"] = (new_price, prev_qty + order.quantity)
-            elif side == "SELL":
+            elif side == "ASK":
                 prev_price, prev_qty = active_quotes[key].get("ASK", (float('inf'), 0.0))
                 new_price = min(prev_price, order.price)
                 active_quotes[key]["ASK"] = (new_price, prev_qty + order.quantity)
@@ -212,8 +213,7 @@ class MarketMakerPerformance(StrategyUI):
             if our_ask == float('inf'):
                 our_ask, our_ask_qty = None, None
 
-            req = self._requirements.get(market, EurexMMRequirements())
-
+            req = self._requirements.get(market)
             # Verifica requisito spread (% del mid)
             mid = (our_bid + our_ask) / 2 if our_bid is not None and our_ask is not None else None
             our_spread_pct = (our_ask - our_bid) / mid if mid else None
