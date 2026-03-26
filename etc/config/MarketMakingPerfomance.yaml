@@ -35,6 +35,16 @@ redis_data_distributor:
     redis_port: 6379
     redis_db: 0
 
+market_maker_requirements:
+  default:
+    max_spread_pct: 0.005   # spread massimo come % del mid price (0.5%)
+    min_quantity: 5.0       # lotti minimi per lato (bid e ask)
+    min_time_fraction: 0.80 # frazione minima del tempo di sessione in cui i requisiti devono essere soddisfatti
+  XEUR:
+    max_spread_pct: 0.003
+    min_quantity: 10.0
+    min_time_fraction: 0.85
+
 logging:
   log_level: DEBUG
   log_level_console: WARNING
