@@ -46,6 +46,9 @@ class CreditTradeAnalysis(StrategyUI):
         # -------------------------------------- BOND SECTION ----------------------------------------------------------
         self.bond_markets = ["ETLX", "XMOT", "MOTX"]
         self.bond_isins = list(self.instruments_df[self.instruments_df["type"] == "BOND"].index)
+        # -------------------------------------- FUTURE SECTION --------------------------------------------------------
+        self.future_markets = ["XEUR"]
+        self.future_isins = list(self.instruments_df[self.instruments_df["type"] == "FUTURE"].index)
         # -------------------------------------- TRADE SECTION ---------------------------------------------------------
         self.trade_isin_multiplier_mapping = self.instruments_df["multiplier"].to_dict()
         self.trade_isin_description_mapping = self.instruments_df["description"].to_dict()
@@ -146,6 +149,7 @@ class CreditTradeAnalysis(StrategyUI):
         for markets, symbols in (
                 (self.etf_markets, self.etf_isins),
                 (self.bond_markets, self.bond_isins),
+                (self.future_markets, self.future_isins),
         ):
             for m in markets:
                 base = f"COALESCENT_DUMA.{m}"
@@ -160,7 +164,8 @@ class CreditTradeAnalysis(StrategyUI):
                         self.global_subscription_service.subscribe_trades_kafka(
                             id=f"{m}_{s}:{ev}",
                             symbol_filter=s,
-                            topic=f"{base}.{ev}",
+                            topic=f"{base}.{ev}"
+
                         )
 
     def update_LF(self) -> None:

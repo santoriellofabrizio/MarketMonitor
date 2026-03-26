@@ -957,7 +957,7 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
 
     isin_to_subscribe = [
-        "FEHY JUN26"
+        "FEHY 26"
     ]
 
     # ------------------------------------------------------------------
