@@ -127,7 +127,6 @@ class EtfEquityLiveAnalysis(StrategyUI):
         return True
 
     def on_start_strategy(self):
-
         last_trades = self.trade_manager.get_trades()
         if not last_trades.empty:
             self.publish_trades_on_dashboard(last_trades)
@@ -147,8 +146,6 @@ class EtfEquityLiveAnalysis(StrategyUI):
                                                                      "BID_SIZE": "bidBestLevel.quantity",
                                                                      "ASK_SIZE": "askBestLevel.quantity"})
         self.subscribe_kafka_trades()
-        self.global_subscription_service.subscribe_orders_kafka(id="FEHY", symbol_filter="FEHY JUN26", symbol_field='instrument.symbol', topic='COALESCENT_DUMA.XEUR.Order')
-
         self.global_subscription_service.subscribe_redis(channel="market:theoretical_live_intraday_price",
                                                          store='market')
 
@@ -213,7 +210,6 @@ class EtfEquityLiveAnalysis(StrategyUI):
     def update_HF(self):
         if datetime.today().time() < dt.time(17, 29, 40):
             self.get_live_data()
-            self.publish_trades_on_excel()
 
     def on_trade(self, new_trades):
 
@@ -263,17 +259,17 @@ class EtfEquityLiveAnalysis(StrategyUI):
                                             orient="records")
 
     def publish_trades_on_dashboard(self, new_trades):
-        pass
-        # if self.redis_dashboard:
-        #     self.redis_dashboard.export_message(channel=self.channel_redis,
-        #                                         value=new_trades,
-        #                                         date_format='iso',
-        #                                         orient="records")
-        # if self.rabbit_dashboard:
-        #     self.rabbit_dashboard.export_message(channel=self.channel_rabbit,
-        #                                          value=new_trades,
-        #                                          date_format='iso',
-        #                                          orient="records")
+
+        if self.redis_dashboard:
+            self.redis_dashboard.export_message(channel=self.channel_redis,
+                                                value=new_trades,
+                                                date_format='iso',
+                                                orient="records")
+        if self.rabbit_dashboard:
+            self.rabbit_dashboard.export_message(channel=self.channel_rabbit,
+                                                 value=new_trades,
+                                                 date_format='iso',
+                                                 orient="records")
 
     def on_command(self, action: str, payload: dict):
         logging.warning('command arrived: {}'.format(action))

@@ -51,7 +51,7 @@ bloomberg_data_distributor:
 
 
 kafka_data_distributor:
-  activate: false
+  activate: true
   kafka_params:
     bootstrap_servers: "aftstserver51.af.pre:9092,aftstserver52.af.pre:9092,aftstserver53.af.pre:9092"
     schema_registry_url: "http://aftstserver51.af.pre:8081"
