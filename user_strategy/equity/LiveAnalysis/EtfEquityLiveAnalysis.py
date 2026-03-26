@@ -213,7 +213,7 @@ class EtfEquityLiveAnalysis(StrategyUI):
     def update_HF(self):
         if datetime.today().time() < dt.time(17, 29, 40):
             self.get_live_data()
-            self.publish_trades_on_excel()
+
 
     def on_trade(self, new_trades):
 
@@ -263,17 +263,16 @@ class EtfEquityLiveAnalysis(StrategyUI):
                                             orient="records")
 
     def publish_trades_on_dashboard(self, new_trades):
-        pass
-        # if self.redis_dashboard:
-        #     self.redis_dashboard.export_message(channel=self.channel_redis,
-        #                                         value=new_trades,
-        #                                         date_format='iso',
-        #                                         orient="records")
-        # if self.rabbit_dashboard:
-        #     self.rabbit_dashboard.export_message(channel=self.channel_rabbit,
-        #                                          value=new_trades,
-        #                                          date_format='iso',
-        #                                          orient="records")
+        if self.redis_dashboard:
+            self.redis_dashboard.export_message(channel=self.channel_redis,
+                                                value=new_trades,
+                                                date_format='iso',
+                                                orient="records")
+        if self.rabbit_dashboard:
+            self.rabbit_dashboard.export_message(channel=self.channel_rabbit,
+                                                 value=new_trades,
+                                                 date_format='iso',
+                                                 orient="records")
 
     def on_command(self, action: str, payload: dict):
         logging.warning('command arrived: {}'.format(action))
