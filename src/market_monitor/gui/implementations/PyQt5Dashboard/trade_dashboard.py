@@ -527,9 +527,11 @@ class TradeDashboard(BasePyQt5Dashboard, TradeDashboardExtensions):
 
             self.all_trades = pd.DataFrame(list(self._trades_index.values()))
 
-            # Only sort when new trade_indexes appear; field-only updates don't
-            # change order so we skip the O(N log N) sort entirely.
-            if new_trades_added and 'timestamp' in self.all_trades.columns:
+            # Always sort after reconstruction: pd.DataFrame(dict.values()) returns
+            # rows in insertion order (not sorted), so skipping the sort on
+            # field-only updates caused the table to appear unsorted when the
+            # strategy or dashboard was restarted.
+            if 'timestamp' in self.all_trades.columns:
                 try:
                     self.all_trades = self.all_trades.sort_values(
                         by=["timestamp", "trade_index"],
