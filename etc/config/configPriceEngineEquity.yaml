@@ -196,7 +196,7 @@ bloomberg_data_distributor:
 
 
 logging:
-  log_level: DEBUG
+  log_level: INFO
   log_level_console: WARNING
   log_name: PriceEngineEquity.log
 
