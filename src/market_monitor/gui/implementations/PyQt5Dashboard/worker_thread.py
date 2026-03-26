@@ -286,69 +286,87 @@ class RedisPubSubThread(BaseDashboardThread):
         channel = self.redis_config.get('channel', 'trades_df')
         logger.info(f"[RedisPubSub] Thread started — host={host}:{port} db={db} channel={channel}")
 
-        try:
-            # Connetti RedisPublisher
-            self.redis_client = redis.Redis(
-                host=host,
-                port=port,
-                db=db,
-                decode_responses=True
-            )
+        retry_delay = 2  # seconds; doubles on each failure up to max_retry_delay
+        max_retry_delay = 60
 
-            # Test connessione
-            self.redis_client.ping()
-            logger.info(f"[RedisPubSub] Connected to Redis at {host}:{port}")
+        while self.running:
+            try:
+                # Connetti RedisPublisher
+                self.redis_client = redis.Redis(
+                    host=host,
+                    port=port,
+                    db=db,
+                    decode_responses=True,
+                    socket_keepalive=True,
+                )
 
-            # Sottoscrivi canale
-            self.pubsub = self.redis_client.pubsub()
-            self.pubsub.subscribe(channel)
+                # Test connessione
+                self.redis_client.ping()
+                logger.info(f"[RedisPubSub] Connected to Redis at {host}:{port}")
+                retry_delay = 2  # reset backoff after a successful connection
 
-            logger.info(f"[RedisPubSub] Subscribed to channel: {channel}")
+                # Sottoscrivi canale
+                self.pubsub = self.redis_client.pubsub()
+                self.pubsub.subscribe(channel)
 
-            # Listen messaggi
-            for message in self.pubsub.listen():
+                logger.info(f"[RedisPubSub] Subscribed to channel: {channel}")
+
+                # Listen messaggi
+                for message in self.pubsub.listen():
+                    if not self.running:
+                        break
+
+                    if message['type'] == 'message':
+                        try:
+                            raw = message['data']
+                            logger.debug(f"[RedisPubSub] Raw message received, len={len(raw) if raw else 0}")
+                            data, metadata = parse_redis_message(raw)
+                            msg_type = metadata.get('type', 'DATA')
+                            logger.debug(f"[RedisPubSub] Parsed message type={msg_type}")
+
+                            normalized_msg = {
+                                'data': data,
+                                'metadata': metadata,
+                                'type': msg_type,
+                            }
+
+                            self._enqueue_message(normalized_msg)
+
+                        except json.JSONDecodeError as e:
+                            logger.error(f"[RedisPubSub] Invalid JSON from channel '{channel}': {e}")
+                            self.error_occurred.emit(f"Invalid JSON: {e}")
+                        except Exception as e:
+                            error_detail = traceback.format_exc()
+                            logger.error(f"[RedisPubSub] Event processing error: {e}\n{error_detail}")
+                            self.error_occurred.emit(f"Event processing error: {e}")
+
+                    # Controllo flush batch
+                    now = time.time()
+                    if now - self.last_emit_time >= self.batch_interval:
+                        self._flush_batch()
+
+            except Exception as e:
                 if not self.running:
                     break
+                error_detail = traceback.format_exc()
+                logger.warning(
+                    f"[RedisPubSub] Connection lost: {e} — reconnecting in {retry_delay}s\n{error_detail}"
+                )
+                self.error_occurred.emit(f"Redis disconnected, reconnecting in {retry_delay}s…")
+                self._cleanup_redis()
 
-                if message['type'] == 'message':
-                    try:
-                        raw = message['data']
-                        logger.debug(f"[RedisPubSub] Raw message received, len={len(raw) if raw else 0}")
-                        data, metadata = parse_redis_message(raw)
-                        msg_type = metadata.get('type', 'DATA')
-                        logger.debug(f"[RedisPubSub] Parsed message type={msg_type}")
+                # Wait with exponential backoff, waking every 0.5 s to honour stop()
+                waited = 0.0
+                while waited < retry_delay and self.running:
+                    time.sleep(0.5)
+                    waited += 0.5
 
-                        normalized_msg = {
-                            'data': data,
-                            'metadata': metadata,
-                            'type': msg_type,
-                        }
+                retry_delay = min(retry_delay * 2, max_retry_delay)
 
-                        self._enqueue_message(normalized_msg)
-
-                    except json.JSONDecodeError as e:
-                        logger.error(f"[RedisPubSub] Invalid JSON from channel '{channel}': {e}")
-                        self.error_occurred.emit(f"Invalid JSON: {e}")
-                    except Exception as e:
-                        error_detail = traceback.format_exc()
-                        logger.error(f"[RedisPubSub] Event processing error: {e}\n{error_detail}")
-                        self.error_occurred.emit(f"Event processing error: {e}")
-
-                # Controllo flush batch
-                now = time.time()
-                if now - self.last_emit_time >= self.batch_interval:
-                    self._flush_batch()
-
-        except Exception as e:
-            error_detail = traceback.format_exc()
-            logger.error(f"[RedisPubSub] Fatal error: {e}\n{error_detail}")
-            self.error_occurred.emit(f"Redis error: {e}")
-
-        finally:
-            # flush finale dei messaggi residui
-            self._flush_batch()
-            self._cleanup_redis()
-            logger.info("[RedisPubSub] Thread stopped")
+        # flush finale dei messaggi residui
+        self._flush_batch()
+        self._cleanup_redis()
+        logger.info("[RedisPubSub] Thread stopped")
 
     def _process_single_message(self, message: dict):
         """
