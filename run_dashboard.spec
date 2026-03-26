@@ -34,6 +34,8 @@ NOTE DIPENDENZE SPECIALI:
 - numpy: collect_all necessario per le estensioni C (.pyd/.so)
 - pika: collect_all per i plugin di connessione (blocco ImportError)
 - jaraco: namespace package con sottomoduli multipli, collect_all obbligatorio
+- market_monitor: collect_submodules per evitare ModuleNotFoundError su
+  import lazy/condizionali non tracciabili dallo static analysis
 """
 
 import os
@@ -44,7 +46,7 @@ from pathlib import Path
 project_root = Path(SPECPATH)
 
 # ============================================================================
-# 0. collect_all per pacchetti problematici
+# 0. collect_all / collect_submodules per pacchetti problematici
 # ============================================================================
 from PyInstaller.utils.hooks import collect_all, collect_submodules
 
@@ -57,70 +59,19 @@ datas_pika, binaries_pika, hiddenimports_pika = collect_all('pika')
 # jaraco: namespace package frammentato in più distribuzioni
 datas_jaraco, binaries_jaraco, hiddenimports_jaraco = collect_all('jaraco')
 
+# market_monitor: collect_submodules garantisce che TUTTI i sottomoduli
+# siano inclusi nell'archivio, indipendentemente da come vengono importati
+# a runtime (import condizionali, lazy, importlib, ecc.).
+# Questo risolve ModuleNotFoundError su worker_thread e altri moduli
+# non raggiungibili dallo static analysis di PyInstaller.
+hiddenimports_mm = collect_submodules('market_monitor')
+
 # ============================================================================
-# 1. Hidden imports - SOLO market_monitor core + dashboard
+# 1. Hidden imports
 # ============================================================================
 hiddenimports = [
-    # ---- Entry / Runner ----
-    'market_monitor.entry._base',
-    'market_monitor.entry.run_dashboard',
-
-    # ---- Core ----
-    'market_monitor.builder',
-    'market_monitor.live_data_hub.real_time_data_hub',
-    'market_monitor.live_data_hub.data_store',
-    'market_monitor.live_data_hub.live_subscription',
-    'market_monitor.live_data_hub.subscription_service',
-
-    # ---- Input threads ----
-    'market_monitor.input_threads.bloomberg',
-    'market_monitor.input_threads.redis',
-    'market_monitor.input_threads.trade',
-    'market_monitor.input_threads.excel',
-    'market_monitor.input_threads.kafka',
-    'market_monitor.input_threads.event_handler.BBGEventHandler',
-
-    # ---- Publishers ----
-    'market_monitor.publishers.base',
-    'market_monitor.publishers.redis_publisher',
-    'market_monitor.publishers.timeseries_publisher',
-
-    # ---- Strategy ----
-    'market_monitor.strategy.strategy_ui.StrategyUI',
-    'market_monitor.strategy.strategy_ui.StrategyUIAsync',
-    'market_monitor.strategy.common.trade_manager.trade_manager',
-    'market_monitor.strategy.common.trade_manager.book_memory',
-    'market_monitor.strategy.common.trade_manager.time_zero_pl',
-    'market_monitor.strategy.common.trade_manager.flow_detector',
-    'market_monitor.strategy.common.trade_manager.trade_templates',
-
-    # ---- GUI - PyQt5 Dashboard (tutti i moduli) ----
-    'market_monitor.gui.implementations.PyQt5Dashboard.builder',
-    'market_monitor.gui.implementations.PyQt5Dashboard.trade_dashboard',
-    'market_monitor.gui.implementations.PyQt5Dashboard.base',
-    'market_monitor.gui.implementations.PyQt5Dashboard.common',
-    'market_monitor.gui.implementations.PyQt5Dashboard.dashboard_extension',
-    'market_monitor.gui.implementations.PyQt5Dashboard.detached_windows',
-    'market_monitor.gui.implementations.PyQt5Dashboard.metrics_definition',
-    'market_monitor.gui.implementations.PyQt5Dashboard.worker_thread',
-    'market_monitor.gui.implementations.PyQt5Dashboard.widgets',
-    'market_monitor.gui.implementations.PyQt5Dashboard.widgets.chart_widget',
-    'market_monitor.gui.implementations.PyQt5Dashboard.widgets.dashboard_state',
-    'market_monitor.gui.implementations.PyQt5Dashboard.widgets.flow_monitor_widget',
-    'market_monitor.gui.implementations.PyQt5Dashboard.widgets.filter',
-    'market_monitor.gui.implementations.PyQt5Dashboard.widgets.trade_history_window',
-    'market_monitor.gui.implementations.PyQt5Dashboard.widgets.pivot_table',
-    'market_monitor.gui.implementations.PyQt5Dashboard.widgets.trade_table',
-
-    # ---- GUI - Legacy (potrebbe essere referenziato da builder) ----
-    'market_monitor.gui.implementations.GUI',
-    'market_monitor.gui.threaded_GUI.GUIQueue',
-    'market_monitor.gui.threaded_GUI.QueueDataSource',
-
-    # ---- Utils ----
-    'market_monitor.utils.config_helpers',
-    'market_monitor.utils.config_observer',
-    'market_monitor.utils.decorators',
+    # ---- market_monitor: tutti i sottomoduli raccolti automaticamente ----
+    *hiddenimports_mm,
 
     # ---- PyQt5 ----
     'PyQt5',
@@ -276,6 +227,6 @@ print("\nUSO:")
 print("  ATTENZIONE: in onefile il config viene cercato relativo al temp dir.")
 print("  Passa SEMPRE il path assoluto al config:")
 print(r'  run-dashboard.exe "C:\MieiConfig\dashboard.yaml"')
-print("  oppure usa la variabile d'ambiente:")
+print("  oppure usa la variabile d\'ambiente:")
 print("  set MARKET_MONITOR_CONFIG=C:\\MieiConfig\\dashboard.yaml")
 print("=" * 80)
