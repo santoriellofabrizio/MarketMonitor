@@ -124,7 +124,9 @@ class MarketMakerPerformance(StrategyUI):
 
         for isin, market in self._isin_market_mapping.items():
             key = f"{isin}:{market}"
-            best_bid, best_ask = self._best_level.get(f"{market}:{isin}", (None, None))
+            market_levels = self._best_level.get(market, {})
+            best_bid = market_levels.get("BID", {}).get(isin)
+            best_ask = market_levels.get("ASK", {}).get(isin)
             our_quotes = active_quotes.get(key, {})
 
             bid_price, bid_qty = our_quotes.get("BID", (None, None))
@@ -134,11 +136,25 @@ class MarketMakerPerformance(StrategyUI):
             if ask_price == float('inf'):
                 ask_price = ask_qty = None
 
+            req = self._requirements.get(market)
+            meets_spread = False
+            meets_qty = False
+            if req is not None and bid_price is not None and ask_price is not None:
+                mid = (bid_price + ask_price) / 2
+                if mid:
+                    meets_spread = (ask_price - bid_price) / mid <= req.max_spread_pct
+                meets_qty = (
+                    (bid_qty or 0.0) >= req.min_quantity and
+                    (ask_qty or 0.0) >= req.min_quantity
+                )
+
             perf = QuotePerformance(
                 isin=isin, market=market,
                 best_bid=best_bid, best_ask=best_ask,
                 bid_order_price=bid_price, ask_order_price=ask_price,
                 bid_order_quantity=bid_qty, ask_order_quantity=ask_qty,
+                meets_spread_req=meets_spread,
+                meets_quantity_req=meets_qty,
             )
             self._performance[key] = perf
 
