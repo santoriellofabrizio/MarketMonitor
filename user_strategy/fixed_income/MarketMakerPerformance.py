@@ -146,8 +146,6 @@ class MarketMakerPerformance(StrategyUI):
             tracker.total_ticks += 1
             if perf.is_compliant:
                 tracker.compliant_ticks += 1
-
-            self._log_performance(perf, tracker)
     # --- helpers ---
 
     @staticmethod
@@ -165,29 +163,3 @@ class MarketMakerPerformance(StrategyUI):
             return our_price >= market_price
         return our_price <= market_price
 
-    @staticmethod
-    def _log_performance(perf: QuotePerformance, tracker: MMComplianceTracker):
-        if not perf.is_two_sided:
-            logger.warning("[%s:%s] Quote unilaterale — BID=%s ASK=%s",
-                           perf.isin, perf.market, perf.bid_order_price, perf.ask_order_price)
-            return
-
-        req = perf.requirements
-        if req is None:
-            return
-
-        if not perf.meets_spread_req:
-            logger.debug("[%s:%s] Spread fuori requisito: %.4f%% > %.4f%%",
-                         perf.isin, perf.market,
-                         (perf.our_spread_pct or 0) * 100, req.max_spread_pct * 100)
-        if not perf.meets_quantity_req:
-            logger.debug("[%s:%s] Quantità insufficiente: BID=%s ASK=%s (minimo %.0f)",
-                         perf.isin, perf.market,
-                         perf.bid_order_quantity, perf.ask_order_quantity, req.min_quantity)
-        if tracker.compliance_ratio < req.min_time_fraction:
-            logger.warning("[%s:%s] Compliance %.1f%% < soglia %.1f%% (%d/%d ticks)",
-                           perf.isin, perf.market,
-                           tracker.compliance_ratio * 100, req.min_time_fraction * 100,
-                           tracker.compliant_ticks, tracker.total_ticks)
-
-        print(tracker.compliance_ratio)
