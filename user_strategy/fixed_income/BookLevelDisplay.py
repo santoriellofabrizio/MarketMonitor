@@ -133,7 +133,10 @@ class BookLevelDisplay:
         self._lines_written = 0
         self._tick = 0
         self._ch = _Ch()
-        self._color = _Ansi.enable_windows() and (
+        # _ansi: VT/cursor movement supportato (SetConsoleMode su Win, sempre True su *nix)
+        self._ansi = _Ansi.enable_windows()
+        # _color: colori ANSI (richiede anche isatty, altrimenti escapes vanno in log/file)
+        self._color = self._ansi and (
             hasattr(sys.stdout, "isatty") and sys.stdout.isatty()
         )
 
@@ -413,6 +416,6 @@ class BookLevelDisplay:
             sys.stdout.flush()
 
     def _clear_previous(self) -> None:
-        """Risale di N righe per sovrascrivere l'output precedente (solo se ANSI attivo)."""
-        if self._lines_written > 0 and self._color:
+        """Risale di N righe per sovrascrivere l'output precedente (solo se VT attivo)."""
+        if self._lines_written > 0 and self._ansi:
             self._safe_write(f"\033[{self._lines_written}A\033[J")
