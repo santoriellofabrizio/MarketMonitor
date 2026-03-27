@@ -131,7 +131,7 @@ class BookLevelDisplay:
         self._width = width
         self._bar_width = bar_width
         self._tick = 0
-        self._lines_written = 0
+        self._first_render_done = False
         self._ch = _Ch()
         self._ansi = _Ansi.enable_windows()
         self._color = self._ansi and (
@@ -170,13 +170,14 @@ class BookLevelDisplay:
 
         output = "\n".join(lines)
 
-        buf = ""
-        if self._lines_written > 0 and self._ansi:
-            buf = f"\033[{self._lines_written}A\033[J"
+        # \033[H = cursore a home (riga 1, col 1)
+        # \033[J = cancella da cursore a fine schermo
+        # Combinati in un unico write atomico con il contenuto → no flickering.
+        # Più robusto di \033[NA\033[J: non dipende dal conteggio esatto delle righe.
+        buf = "\033[H\033[J" if self._ansi and self._first_render_done else ""
+        self._first_render_done = True
         buf += output + "\n"
-
         self._safe_write(buf)
-        self._lines_written = output.count("\n") + 1
 
     # ── private: layout ──────────────────────────────────────────────────────
 
