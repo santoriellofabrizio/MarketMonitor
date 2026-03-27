@@ -209,7 +209,7 @@ class BookLevelDisplay:
             *self._render_bid(perf),
             thin,
             self._render_qty_row(perf),
-            self._render_compliance_row(tracker) if tracker else (),
+            *([self._render_compliance_row(tracker)] if tracker else []),
             thick,
         ]
 
