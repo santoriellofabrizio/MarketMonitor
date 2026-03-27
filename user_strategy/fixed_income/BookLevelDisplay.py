@@ -18,10 +18,7 @@ import sys
 from datetime import datetime
 from typing import Optional
 
-from user_strategy.fixed_income.MarketMakerPerformance import (
-    MMComplianceTracker,
-    QuotePerformance,
-)
+from user_strategy.fixed_income._mm_models import MMComplianceTracker, QuotePerformance
 
 
 # ─────────────────────────────────────────────────────────────────────────────
