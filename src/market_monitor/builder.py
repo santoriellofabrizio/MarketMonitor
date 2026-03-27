@@ -180,9 +180,15 @@ class Builder:
 
         package_path = os.path.abspath(package_path)
 
-        # Aggiungi package_path a sys.path
+        # Aggiungi package_path a sys.path (per import relativi a user_strategy/)
         if package_path not in sys.path:
             sys.path.insert(0, package_path)
+
+        # Aggiungi anche la project root (parent di user_strategy/) per supportare
+        # import del tipo "from user_strategy.xxx import yyy"
+        project_root = self._find_user_strategy_root(package_path)
+        if project_root and project_root not in sys.path:
+            sys.path.insert(0, project_root)
 
         # Normalizza il module_name (rimuovi backslash iniziali)
         module_name = module_name.lstrip('\\/')
