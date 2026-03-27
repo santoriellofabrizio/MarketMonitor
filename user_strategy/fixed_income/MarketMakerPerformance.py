@@ -6,6 +6,8 @@ from market_monitor.live_data_hub.order import Order
 from market_monitor.live_data_hub.subscription_service import SubscriptionService
 from market_monitor.strategy.strategy_ui.StrategyUI import StrategyUI
 
+from user_strategy.fixed_income.BookLevelDisplay import BookLevelDisplay
+
 logger = logging.getLogger(__name__)
 
 
@@ -101,6 +103,7 @@ class MarketMakerPerformance(StrategyUI):
             self._requirements[market] = EurexMMRequirements(**requirements_cfg[market])
 
         self._compliance: dict[str, MMComplianceTracker] = {}  # key: f"{isin}:{market}"
+        self._display = BookLevelDisplay()
 
     def on_market_data_setting(self):
         self.subscribe_orders()
@@ -160,6 +163,7 @@ class MarketMakerPerformance(StrategyUI):
 
         orders = self.get_orders()
         self.check_market_making_performance(orders)
+        self._display.render(self._performance, self._compliance)
 
 
     def get_orders(self) -> List[Order]:
