@@ -157,8 +157,6 @@ class BookLevelDisplay:
         compliance:
             Dict ``"isin:market"`` → :class:`MMComplianceTracker`.
         """
-        self._clear_previous()
-
         ts = datetime.now().strftime("%H:%M:%S.%f")[:-3]
         spinner = self._ch.spinner[self._tick % len(self._ch.spinner)]
         self._tick += 1
@@ -172,9 +170,16 @@ class BookLevelDisplay:
         if lines and lines[-1] == "":
             lines.pop()
 
+        # Costruisci un unico buffer: clear + contenuto in un singolo write
+        # per evitare flickering (il terminale ridisegna tra due write separate)
+        buf = ""
+        if self._lines_written > 0 and self._ansi:
+            buf = f"\033[{self._lines_written}A\033[J"
+
         output = "\n".join(lines)
-        self._safe_write(output + "\n")
-        self._lines_written = output.count("\n") + 2  # +2 per la riga finale
+        buf += output + "\n"
+        self._safe_write(buf)
+        self._lines_written = output.count("\n") + 1
 
     # ── private: layout ──────────────────────────────────────────────────────
 
@@ -415,7 +420,3 @@ class BookLevelDisplay:
             sys.stdout.write(text.encode(enc, errors="replace").decode(enc))
             sys.stdout.flush()
 
-    def _clear_previous(self) -> None:
-        """Risale di N righe per sovrascrivere l'output precedente (solo se VT attivo)."""
-        if self._lines_written > 0 and self._ansi:
-            self._safe_write(f"\033[{self._lines_written}A\033[J")
