@@ -66,6 +66,16 @@ datas_jaraco, binaries_jaraco, hiddenimports_jaraco = collect_all('jaraco')
 # non raggiungibili dallo static analysis di PyInstaller.
 hiddenimports_mm = collect_submodules('market_monitor')
 
+# SFM internal libraries: collect_submodules per includere tutti i sottomoduli
+# di ciascun pacchetto interno Sella Financial Markets.
+hiddenimports_sfm_datalibrary = collect_submodules('sfm_datalibrary')
+hiddenimports_sfm_dbconnections = collect_submodules('sfm_dbconnections')
+hiddenimports_sfm_data_provider = collect_submodules('sfm_data_provider')
+hiddenimports_sfm_quantlib = collect_submodules('sfm_quantlib')
+hiddenimports_sfm_return_adjustments_lib = collect_submodules('sfm_return_adjustments_lib')
+hiddenimports_sfm_pcf_db_library = collect_submodules('sfm_pcf_db_library')
+hiddenimports_sfm_timescaledb_queries = collect_submodules('sfm_timescaledb_queries')
+
 # ============================================================================
 # 1. Hidden imports
 # ============================================================================
@@ -116,8 +126,13 @@ hiddenimports = [
     'confluent_kafka',
 
     # ---- Sella internals ----
-    'sfm_dbconnections',
-    'sfm_dbconnections.DbConnectionParameters',
+    *hiddenimports_sfm_datalibrary,
+    *hiddenimports_sfm_dbconnections,
+    *hiddenimports_sfm_data_provider,
+    *hiddenimports_sfm_quantlib,
+    *hiddenimports_sfm_return_adjustments_lib,
+    *hiddenimports_sfm_pcf_db_library,
+    *hiddenimports_sfm_timescaledb_queries,
 
     # ---- Da collect_all ----
     *hiddenimports_numpy,
