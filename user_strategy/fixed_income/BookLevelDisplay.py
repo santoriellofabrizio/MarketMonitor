@@ -131,8 +131,10 @@ class BookLevelDisplay:
         self._width = width
         self._bar_width = bar_width
         self._tick = 0
+        self._lines_written = 0
         self._ch = _Ch()
-        self._color = _Ansi.enable_windows() and (
+        self._ansi = _Ansi.enable_windows()
+        self._color = self._ansi and (
             hasattr(sys.stdout, "isatty") and sys.stdout.isatty()
         )
 
@@ -166,7 +168,15 @@ class BookLevelDisplay:
         if lines and lines[-1] == "":
             lines.pop()
 
-        self._safe_write("\n".join(lines) + "\n")
+        output = "\n".join(lines)
+
+        buf = ""
+        if self._lines_written > 0 and self._ansi:
+            buf = f"\033[{self._lines_written}A\033[J"
+        buf += output + "\n"
+
+        self._safe_write(buf)
+        self._lines_written = output.count("\n") + 1
 
     # ── private: layout ──────────────────────────────────────────────────────
 
