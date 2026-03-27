@@ -130,13 +130,9 @@ class BookLevelDisplay:
         self._tol = at_best_tol_bps
         self._width = width
         self._bar_width = bar_width
-        self._lines_written = 0
         self._tick = 0
         self._ch = _Ch()
-        # _ansi: VT/cursor movement supportato (SetConsoleMode su Win, sempre True su *nix)
-        self._ansi = _Ansi.enable_windows()
-        # _color: colori ANSI (richiede anche isatty, altrimenti escapes vanno in log/file)
-        self._color = self._ansi and (
+        self._color = _Ansi.enable_windows() and (
             hasattr(sys.stdout, "isatty") and sys.stdout.isatty()
         )
 
@@ -170,16 +166,7 @@ class BookLevelDisplay:
         if lines and lines[-1] == "":
             lines.pop()
 
-        # Costruisci un unico buffer: clear + contenuto in un singolo write
-        # per evitare flickering (il terminale ridisegna tra due write separate)
-        buf = ""
-        if self._lines_written > 0 and self._ansi:
-            buf = f"\033[{self._lines_written}A\033[J"
-
-        output = "\n".join(lines)
-        buf += output + "\n"
-        self._safe_write(buf)
-        self._lines_written = output.count("\n") + 1
+        self._safe_write("\n".join(lines) + "\n")
 
     # ── private: layout ──────────────────────────────────────────────────────
 
