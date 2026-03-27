@@ -53,6 +53,52 @@ class _Ansi:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Caratteri: unicode o ASCII a seconda dell'encoding del terminale
+# ─────────────────────────────────────────────────────────────────────────────
+
+class _Ch:
+    """Seleziona a runtime caratteri unicode o fallback ASCII."""
+
+    _UNICODE = {
+        "thick": "━",
+        "thin":  "─",
+        "bar_full": "█",
+        "bar_hi":   "▓",
+        "bar_lo":   "░",
+        "dot":   "●",
+        "ok":    "✓",
+        "err":   "✗",
+        "arrow": "►",
+        "pipe":  "│",
+        "spinner": ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"),
+    }
+    _ASCII = {
+        "thick": "=",
+        "thin":  "-",
+        "bar_full": "|",
+        "bar_hi":   "#",
+        "bar_lo":   ".",
+        "dot":   "*",
+        "ok":    "OK",
+        "err":   "!!",
+        "arrow": ">",
+        "pipe":  "|",
+        "spinner": ("|", "/", "-", "\\", "|", "/", "-", "\\", "|", "/"),
+    }
+
+    def __init__(self):
+        enc = getattr(sys.stdout, "encoding", None) or "ascii"
+        try:
+            "━─█▓░●✓✗►│⠋".encode(enc)
+            self._ch = self._UNICODE
+        except (UnicodeEncodeError, LookupError):
+            self._ch = self._ASCII
+
+    def __getattr__(self, name: str):
+        return self._ch[name]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # BookLevelDisplay
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -75,8 +121,6 @@ class BookLevelDisplay:
         Larghezza delle barre quantità. Default 18.
     """
 
-    _SPINNER = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
-
     def __init__(
         self,
         at_best_tol_bps: float = 1.0,
@@ -88,6 +132,7 @@ class BookLevelDisplay:
         self._bar_width = bar_width
         self._lines_written = 0
         self._tick = 0
+        self._ch = _Ch()
         self._color = _Ansi.enable_windows() and (
             hasattr(sys.stdout, "isatty") and sys.stdout.isatty()
         )
@@ -112,7 +157,7 @@ class BookLevelDisplay:
         self._clear_previous()
 
         ts = datetime.now().strftime("%H:%M:%S.%f")[:-3]
-        spinner = self._SPINNER[self._tick % len(self._SPINNER)]
+        spinner = self._ch.spinner[self._tick % len(self._ch.spinner)]
         self._tick += 1
 
         lines: list[str] = []
@@ -125,8 +170,7 @@ class BookLevelDisplay:
             lines.pop()
 
         output = "\n".join(lines)
-        sys.stdout.write(output + "\n")
-        sys.stdout.flush()
+        self._safe_write(output + "\n")
         self._lines_written = output.count("\n") + 2  # +2 per la riga finale
 
     # ── private: layout ──────────────────────────────────────────────────────
@@ -139,8 +183,8 @@ class BookLevelDisplay:
         spinner: str,
     ) -> list[str]:
         w = self._width
-        thick = self._c("━" * w, _Ansi.BOLD)
-        thin  = self._c("─" * w, _Ansi.DIM)
+        thick = self._c(self._ch.thick * w, _Ansi.BOLD)
+        thin  = self._c(self._ch.thin  * w, _Ansi.DIM)
 
         dot   = self._status_dot(perf)
         isin  = self._c(perf.isin, _Ansi.BOLD, _Ansi.WHITE)
@@ -184,10 +228,10 @@ class BookLevelDisplay:
         if ours is not None:
             at, dist_bps = self._at_best_ask(ours, best)
             if at:
-                ind = self._c("✓ AT BEST", _Ansi.GREEN, _Ansi.BOLD)
+                ind = self._c(f"{self._ch.ok} AT BEST", _Ansi.GREEN, _Ansi.BOLD)
                 col = _Ansi.GREEN
             elif dist_bps is not None:
-                ind = self._c(f"✗ +{dist_bps:.1f}bp", _Ansi.YELLOW)
+                ind = self._c(f"{self._ch.err} +{dist_bps:.1f}bp", _Ansi.YELLOW)
                 col = _Ansi.YELLOW
             else:
                 ind = self._c("?", _Ansi.DIM)
@@ -218,10 +262,10 @@ class BookLevelDisplay:
         if ours is not None:
             at, dist_bps = self._at_best_bid(ours, best)
             if at:
-                ind = self._c("✓ AT BEST", _Ansi.GREEN, _Ansi.BOLD)
+                ind = self._c(f"{self._ch.ok} AT BEST", _Ansi.GREEN, _Ansi.BOLD)
                 col = _Ansi.GREEN
             elif dist_bps is not None:
-                ind = self._c(f"✗ -{dist_bps:.1f}bp", _Ansi.YELLOW)
+                ind = self._c(f"{self._ch.err} -{dist_bps:.1f}bp", _Ansi.YELLOW)
                 col = _Ansi.YELLOW
             else:
                 ind = self._c("?", _Ansi.DIM)
@@ -268,9 +312,8 @@ class BookLevelDisplay:
             col = _Ansi.GREEN if perf.meets_spread_req else _Ansi.RED
             parts.append(f"ours {self._c(f'{our_bps:.1f}bp', col)}")
 
-        inner = "  │  ".join(parts) if parts else self._c("no spread data", _Ansi.DIM)
-        w = self._width
-        line = f"  {'─' * 6}  spread: {inner}"
+        inner = f"  {self._ch.pipe}  ".join(parts) if parts else self._c("no spread data", _Ansi.DIM)
+        line = f"  {self._ch.thin * 6}  spread: {inner}"
         return [self._c(line, _Ansi.DIM)]
 
     # ── bottom rows ──────────────────────────────────────────────────────────
@@ -291,7 +334,7 @@ class BookLevelDisplay:
         filled  = round(ratio * self._bar_width)
         empty   = self._bar_width - filled
         col     = _Ansi.GREEN if ratio >= 0.8 else (_Ansi.YELLOW if ratio >= 0.6 else _Ansi.RED)
-        bar     = self._c("▓" * filled, col) + self._c("░" * empty, _Ansi.DIM)
+        bar     = self._c(self._ch.bar_hi * filled, col) + self._c(self._ch.bar_lo * empty, _Ansi.DIM)
         pct     = self._c(f"{ratio * 100:5.1f}%", col, _Ansi.BOLD)
         ticks   = self._c(f"({tracker.compliant_ticks}/{tracker.total_ticks})", _Ansi.DIM)
         return f"  Compliance  {bar} {pct} {ticks}"
@@ -309,28 +352,28 @@ class BookLevelDisplay:
         arrow: bool,
         price_color: str = _Ansi.WHITE,
     ) -> str:
-        arrow_ch = self._c("►", price_color, _Ansi.BOLD) if arrow else " "
+        arrow_ch = self._c(self._ch.arrow, price_color, _Ansi.BOLD) if arrow else " "
         price_s  = self._c(f"{price:>10.4f}", price_color, _Ansi.BOLD)
         qty_s    = f"{qty:>6.0f}" if qty is not None else "      "
         bar_len  = min(self._bar_width, int((qty or 0) / 100)) if qty else 4
-        bar_s    = self._c("█" * max(1, bar_len), bar_color)
+        bar_s    = self._c(self._ch.bar_full * max(1, bar_len), bar_color)
         return f"  {side_label:3}  {arrow_ch} {price_s}  {bar_s:<{self._bar_width}}  {qty_s}  {label}  {indicator}"
 
     def _missing_row(self, label: str) -> str:
         return (
             f"        {self._c('       ---', _Ansi.RED)}  "
             f"{self._c(label, _Ansi.DIM)}  "
-            f"{self._c('✗ MISSING', _Ansi.RED, _Ansi.BOLD)}"
+            f"{self._c(self._ch.err + ' MISSING', _Ansi.RED, _Ansi.BOLD)}"
         )
 
     # ── status dot ───────────────────────────────────────────────────────────
 
     def _status_dot(self, perf: QuotePerformance) -> str:
         if perf.is_compliant:
-            return self._c("●", _Ansi.GREEN)
+            return self._c(self._ch.dot, _Ansi.GREEN)
         if perf.is_two_sided:
-            return self._c("●", _Ansi.YELLOW)
-        return self._c("●", _Ansi.RED)
+            return self._c(self._ch.dot, _Ansi.YELLOW)
+        return self._c(self._ch.dot, _Ansi.RED)
 
     # ── at-best helpers ──────────────────────────────────────────────────────
 
@@ -359,6 +402,17 @@ class BookLevelDisplay:
             return text
         return "".join(codes) + text + _Ansi.RESET
 
+    def _safe_write(self, text: str) -> None:
+        """Scrive su stdout gestendo UnicodeEncodeError (es. cp1252 su Windows)."""
+        try:
+            sys.stdout.write(text)
+            sys.stdout.flush()
+        except UnicodeEncodeError:
+            enc = getattr(sys.stdout, "encoding", "ascii") or "ascii"
+            sys.stdout.write(text.encode(enc, errors="replace").decode(enc))
+            sys.stdout.flush()
+
     def _clear_previous(self) -> None:
-        if self._lines_written > 0:
-            sys.stdout.write(f"\033[{self._lines_written}A\033[J")
+        """Risale di N righe per sovrascrivere l'output precedente (solo se ANSI attivo)."""
+        if self._lines_written > 0 and self._color:
+            self._safe_write(f"\033[{self._lines_written}A\033[J")
