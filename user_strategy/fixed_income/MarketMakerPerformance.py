@@ -1,4 +1,3 @@
-from dataclasses import dataclass, field
 from typing import Literal, Optional, List
 import logging
 
@@ -6,72 +5,10 @@ from market_monitor.live_data_hub.order import Order
 from market_monitor.live_data_hub.subscription_service import SubscriptionService
 from market_monitor.strategy.strategy_ui.StrategyUI import StrategyUI
 
+from user_strategy.fixed_income._mm_models import EurexMMRequirements, MMComplianceTracker, QuotePerformance
+from user_strategy.fixed_income.BookLevelDisplay import BookLevelDisplay
+
 logger = logging.getLogger(__name__)
-
-
-@dataclass
-class EurexMMRequirements:
-    """Requisiti Eurex per il market making su credit futures."""
-    max_spread_pct: float   # spread massimo come % del mid price
-    min_quantity: float      # quantità minima per lato (bid e ask)
-    min_time_fraction: float # frazione minima del tempo in cui i requisiti devono essere soddisfatti
-
-
-@dataclass
-class MMComplianceTracker:
-    """Traccia il tempo cumulativo di compliance dall'inizio della sessione."""
-    total_ticks: int = 0
-    compliant_ticks: int = 0
-
-    @property
-    def compliance_ratio(self) -> float:
-        if self.total_ticks == 0:
-            return 0.0
-        return self.compliant_ticks / self.total_ticks
-
-
-@dataclass
-class QuotePerformance:
-    isin: str
-    market: str
-    at_best_bid: bool = False
-    at_best_ask: bool = False
-    bid_order_price: Optional[float] = None
-    ask_order_price: Optional[float] = None
-    best_bid: Optional[float] = None
-    best_ask: Optional[float] = None
-    bid_order_quantity: Optional[float] = None
-    ask_order_quantity: Optional[float] = None
-    meets_spread_req: bool = False
-    meets_quantity_req: bool = False
-
-    @property
-    def market_spread(self) -> Optional[float]:
-        if self.best_bid and self.best_ask:
-            return self.best_ask - self.best_bid
-        return None
-
-    @property
-    def our_spread(self) -> Optional[float]:
-        if self.bid_order_price and self.ask_order_price:
-            return self.ask_order_price - self.bid_order_price
-        return None
-
-    @property
-    def our_spread_pct(self) -> Optional[float]:
-        if self.bid_order_price and self.ask_order_price:
-            mid = (self.bid_order_price + self.ask_order_price) / 2
-            if mid:
-                return (self.ask_order_price - self.bid_order_price) / mid
-        return None
-
-    @property
-    def is_two_sided(self) -> bool:
-        return self.bid_order_price is not None and self.ask_order_price is not None
-
-    @property
-    def is_compliant(self) -> bool:
-        return self.is_two_sided and self.meets_spread_req and self.meets_quantity_req
 
 
 class MarketMakerPerformance(StrategyUI):
@@ -101,6 +38,7 @@ class MarketMakerPerformance(StrategyUI):
             self._requirements[market] = EurexMMRequirements(**requirements_cfg[market])
 
         self._compliance: dict[str, MMComplianceTracker] = {}  # key: f"{isin}:{market}"
+        self._display = BookLevelDisplay()
 
     def on_market_data_setting(self):
         self.subscribe_orders()
@@ -160,6 +98,7 @@ class MarketMakerPerformance(StrategyUI):
 
         orders = self.get_orders()
         self.check_market_making_performance(orders)
+        self._display.render(self._performance, self._compliance)
 
 
     def get_orders(self) -> List[Order]:
@@ -207,8 +146,6 @@ class MarketMakerPerformance(StrategyUI):
             tracker.total_ticks += 1
             if perf.is_compliant:
                 tracker.compliant_ticks += 1
-
-            self._log_performance(perf, tracker)
     # --- helpers ---
 
     @staticmethod
@@ -226,29 +163,3 @@ class MarketMakerPerformance(StrategyUI):
             return our_price >= market_price
         return our_price <= market_price
 
-    @staticmethod
-    def _log_performance(perf: QuotePerformance, tracker: MMComplianceTracker):
-        if not perf.is_two_sided:
-            logger.warning("[%s:%s] Quote unilaterale — BID=%s ASK=%s",
-                           perf.isin, perf.market, perf.bid_order_price, perf.ask_order_price)
-            return
-
-        req = perf.requirements
-        if req is None:
-            return
-
-        if not perf.meets_spread_req:
-            logger.debug("[%s:%s] Spread fuori requisito: %.4f%% > %.4f%%",
-                         perf.isin, perf.market,
-                         (perf.our_spread_pct or 0) * 100, req.max_spread_pct * 100)
-        if not perf.meets_quantity_req:
-            logger.debug("[%s:%s] Quantità insufficiente: BID=%s ASK=%s (minimo %.0f)",
-                         perf.isin, perf.market,
-                         perf.bid_order_quantity, perf.ask_order_quantity, req.min_quantity)
-        if tracker.compliance_ratio < req.min_time_fraction:
-            logger.warning("[%s:%s] Compliance %.1f%% < soglia %.1f%% (%d/%d ticks)",
-                           perf.isin, perf.market,
-                           tracker.compliance_ratio * 100, req.min_time_fraction * 100,
-                           tracker.compliant_ticks, tracker.total_ticks)
-
-        print(tracker.compliance_ratio)
