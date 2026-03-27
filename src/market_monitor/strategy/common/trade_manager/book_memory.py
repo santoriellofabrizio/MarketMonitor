@@ -199,7 +199,7 @@ class BookStorage:
         >>> storage.get_last_before(ts)   # (datetime, BookSnapshot) | None
     """
 
-    def __init__(self, maxlen: int = 3):
+    def __init__(self, maxlen: int = 20):
         self._storage: deque[tuple[datetime, BookSnapshot]] = deque(maxlen=maxlen)
 
     def append(self, snapshot: BookSnapshot, time_snapshot: datetime | None = None) -> None:

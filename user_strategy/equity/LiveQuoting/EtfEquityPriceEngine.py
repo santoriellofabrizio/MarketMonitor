@@ -300,6 +300,9 @@ class EtfEquityPriceEngine(StrategyUI):
         elif action == "debug_isin":
             self._handle_debug_isin(payload)
 
+        elif action == "stop":
+            self.stop()
+
         else:
             logger.warning(f"Unknown command: '{action}'")
 

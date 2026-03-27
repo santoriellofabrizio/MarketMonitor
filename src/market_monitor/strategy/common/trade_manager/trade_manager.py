@@ -53,6 +53,8 @@ class TradeManager:
         self.max_time_to_match = kwargs.get('max_time_to_match_side', self.DEFAULT_MAX_TIME_TO_MATCH_SECONDS)
         self.max_cache_size = kwargs.get("max_cache_size", self.DEFAULT_MAX_CACHE_SIZE)
         self.trade_folder = trade_folder or Path.cwd() / "etc" / "data" / "trades"
+        if isinstance(self.trade_folder, str):
+            self.trade_folder = Path(self.trade_folder)
         self.use_timezone_aware = kwargs.get("use_timezone_aware", True)
 
 

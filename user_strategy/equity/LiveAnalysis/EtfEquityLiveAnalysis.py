@@ -280,6 +280,8 @@ class EtfEquityLiveAnalysis(StrategyUI):
             self.from_bloomberg_to_kafka()
         elif action == "switch_to_bloomberg":
             self.from_kafka_to_bloomberg()
+        elif action == 'stop':
+            self.stop()
 
     def get_live_data(self):
         raw = self.market_data.get_data_field(field=["BID", "ASK"])
