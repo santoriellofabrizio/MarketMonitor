@@ -10,73 +10,61 @@ market_monitor:
     - isin: IT0005645509
       description: BOT 14 AP 26 A
       maturity: 2026-04-14
-      reference_ester: null
       multiplier: 10000
 
     - isin: IT0005650574
       description: BOT 14 MG 26 A
       maturity: 2026-05-14
-      reference_ester: null
       multiplier: 10000
 
     - isin: IT0005680639
       description: BOT 29 MG 26 S
       maturity: 2026-05-29
-      reference_ester: null
       multiplier: 10000
 
     - isin: IT0005655037
       description: BOT 12 GN 26 A
       maturity: 2026-06-12
-      reference_ester: null
       multiplier: 10000
 
     - isin: IT0005660029
       description: BOT 14 LG 26 A
       maturity: 2026-07-14
-      reference_ester: null
       multiplier: 10000
 
     - isin: IT0005692485
       description: BOT 31 LG 26 S
       maturity: 2026-07-31
-      reference_ester: null
       multiplier: 10000
 
     - isin: IT0005666851
       description: BOT 14 AG 26 A
       maturity: 2026-08-14
-      reference_ester: null
       multiplier: 10000
 
     - isin: IT0005669269
       description: BOT 14 ST 26 A
       maturity: 2026-09-14
-      reference_ester: null
       multiplier: 10000
 
     - isin: IT0005674335
       description: BOT 14 OT 26 A
       maturity: 2026-10-14
-      reference_ester: null
       multiplier: 10000
 
     - isin: IT0005678492
       description: BOT 13 NV 26 A
       maturity: 2026-11-13
-      reference_ester: null
       multiplier: 10000
 
     - isin: IT0005684888
       description: BOT 14 DC 26 A
       maturity: 2026-12-14
-      reference_ester: null
       multiplier: 10000
 
     - isin: IT0005689887
       description: BOT 14 GE 27 A
       maturity: 2027-01-14
-      reference_ester: null
       multiplier: 10000
 
     - isin: IT0005695256
@@ -88,7 +76,6 @@ market_monitor:
     - isin: IT0005699340
       description: BOT 12 MZ 27 A
       maturity: 2027-03-12
-      reference_ester: null
       multiplier: 10000
 
   rabbit_data_export:
