@@ -82,6 +82,11 @@ datas_jaraco, binaries_jaraco, hiddenimports_jaraco = collect_all('jaraco')
 # a runtime (import condizionali, lazy, importlib, ecc.).
 hiddenimports_mm = collect_submodules('market_monitor')
 
+# sfm_datalibrary / sfm_data_provider: librerie interne Sella impacchettate,
+# non rilevabili dallo static analysis di PyInstaller.
+datas_sfm_dl, binaries_sfm_dl, hiddenimports_sfm_dl = collect_all('sfm_datalibrary')
+datas_sfm_dp, binaries_sfm_dp, hiddenimports_sfm_dp = collect_all('sfm_data_provider')
+
 # ============================================================================
 # 1. Hidden imports
 # ============================================================================
@@ -140,6 +145,8 @@ hiddenimports = [
     # ---- Sella internals ----
     'sfm_dbconnections',
     'sfm_dbconnections.DbConnectionParameters',
+    *hiddenimports_sfm_dl,
+    *hiddenimports_sfm_dp,
 
     # ---- Da collect_all ----
     *hiddenimports_numpy,
@@ -157,6 +164,8 @@ datas = [
     *datas_numpy,
     *datas_pika,
     *datas_jaraco,
+    *datas_sfm_dl,
+    *datas_sfm_dp,
 ]
 
 # ============================================================================
@@ -166,6 +175,8 @@ binaries = [
     *binaries_numpy,
     *binaries_pika,
     *binaries_jaraco,
+    *binaries_sfm_dl,
+    *binaries_sfm_dp,
 ]
 
 # ============================================================================
