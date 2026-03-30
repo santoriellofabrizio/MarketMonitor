@@ -19,11 +19,9 @@ set DEPLOY_DIR=dist\MarketMonitor_Deploy
 :: ============================================================================
 :: Verifica prerequisiti
 :: ============================================================================
-where pyinstaller >nul 2>&1
+where uv >nul 2>&1
 if errorlevel 1 (
-    echo [ERRORE] pyinstaller non trovato. Installa con:
-    echo   uv add --dev pyinstaller
-    echo   oppure: pip install pyinstaller
+    echo [ERRORE] uv non trovato. Installa da https://docs.astral.sh/uv/
     exit /b 1
 )
 
@@ -33,11 +31,24 @@ if not exist "%SPEC_FILE%" (
 )
 
 :: ============================================================================
-:: Build con PyInstaller
+:: Sincronizzazione dipendenze (garantisce sfm_datalibrary e tutte le lib nel venv)
 :: ============================================================================
+echo [0/3] Sincronizzazione dipendenze con uv sync...
+echo.
+uv sync
+if errorlevel 1 (
+    echo.
+    echo [ERRORE] uv sync fallito. Verifica accesso al NAS e al lockfile.
+    exit /b 1
+)
+
+:: ============================================================================
+:: Build con PyInstaller (tramite uv run: usa il venv corretto)
+:: ============================================================================
+echo.
 echo [1/3] Avvio build PyInstaller...
 echo.
-pyinstaller %SPEC_FILE% --clean --noconfirm
+uv run pyinstaller %SPEC_FILE% --clean --noconfirm
 if errorlevel 1 (
     echo.
     echo [ERRORE] Build fallita. Controlla l'output sopra.
