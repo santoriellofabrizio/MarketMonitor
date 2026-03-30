@@ -57,6 +57,7 @@ src/market_monitor/input_threads/event_handler/__init__.py
 src/market_monitor/live_data_hub/__init__.py
 src/market_monitor/live_data_hub/data_store.py
 src/market_monitor/live_data_hub/live_subscription.py
+src/market_monitor/live_data_hub/order.py
 src/market_monitor/live_data_hub/real_time_data_hub.py
 src/market_monitor/live_data_hub/subscription_service.py
 src/market_monitor/publishers/__init__.py

@@ -146,7 +146,9 @@ class EtfEquityLiveAnalysis(StrategyUI):
                                                                      "BID_SIZE": "bidBestLevel.quantity",
                                                                      "ASK_SIZE": "askBestLevel.quantity"})
         self.subscribe_kafka_trades()
-        self.global_subscription_service.subscribe_orders_kafka(id="FEHY", symbol_filter="FEHY JUN26", symbol_field='instrument.symbol', topic='COALESCENT_DUMA.XEUR.Order')
+        self.global_subscription_service.subscribe_orders_kafka(id="FEHY", symbol_filter="FEHY JUN26",
+                                                                symbol_field='instrument.symbol',
+                                                                topic='COALESCENT_DUMA.XEUR.Order')
 
         self.global_subscription_service.subscribe_redis(channel="market:theoretical_live_intraday_price",
                                                          store='market')
@@ -191,12 +193,12 @@ class EtfEquityLiveAnalysis(StrategyUI):
         for isin in self.all_isins:
             for mkt in ["ETFP", "XPAR", "XAMS"]:
                 self.global_subscription_service.subscribe_trades_kafka(id=f"{isin}:{mkt}:PublicDeal",
-                                                                 symbol_filter=isin,
-                                                                 topic=f"COALESCENT_DUMA.{mkt}.PublicDeal")
+                                                                        symbol_filter=isin,
+                                                                        topic=f"COALESCENT_DUMA.{mkt}.PublicDeal")
 
                 self.global_subscription_service.subscribe_trades_kafka(id=f"{isin}:{mkt}:Trade",
-                                                                 symbol_filter=isin,
-                                                                 topic=f"COALESCENT_DUMA.{mkt}.Trade")
+                                                                        symbol_filter=isin,
+                                                                        topic=f"COALESCENT_DUMA.{mkt}.Trade")
 
     def update_LF(self) -> None:
         try:
@@ -212,7 +214,6 @@ class EtfEquityLiveAnalysis(StrategyUI):
     def update_HF(self):
         if datetime.today().time() < dt.time(17, 29, 40):
             self.get_live_data()
-            self.publish_trades_on_excel()
 
     def on_trade(self, new_trades):
 
@@ -227,6 +228,40 @@ class EtfEquityLiveAnalysis(StrategyUI):
 
         trades_to_publish = self.trade_manager.get_trades_to_publish()
         self.publish_trades_on_dashboard(trades_to_publish)
+        self.publish_trades_stats()
+
+    def publish_trades_stats(self):
+
+        all_trades = self.trade_manager.get_trades()
+        quoting_trades = all_trades[all_trades['quoting'] == True]
+
+        self._process_and_export(quoting_trades, "market_stat")
+
+        own_trades = quoting_trades[quoting_trades["own_trade"] != 0]
+        self._process_and_export(own_trades, "mine_stat")
+
+    def _process_and_export(self, df, prefix):
+
+        df = df.copy()
+        df['ctv_bid'] = df.apply(lambda x: x['ctv'] if x['side'] == 'bid' else 0, axis=1)
+        df['ctv_ask'] = df.apply(lambda x: x['ctv'] if x['side'] == 'ask' else 0, axis=1)
+        df['spread_pl_bid'] = df.apply(lambda x: x['spread_pl_10s'] if x['side'] == 'bid' else 0, axis=1)
+        df['spread_pl_ask'] = df.apply(lambda x: x['spread_pl_10s'] if x['side'] == 'ask' else 0, axis=1)
+
+        # Aggregazione includendo i nuovi campi
+        stats = df.groupby('isin').agg({
+            "spread_pl_bid": 'sum',
+            'spread_pl_ask': 'sum',
+            'ctv_bid': 'sum',
+            'ctv_ask': 'sum'
+        })
+
+        for stat, values in stats.items():
+            self.redis_dashboard.export_message(
+                channel=f"{prefix}:{stat}",
+                value=values,
+                skip_if_unchanged=True
+            )
 
     def _enrich_trades(self, trades) -> pd.DataFrame:
         trades['model_price'] = trades['isin'].map(self.model_price)

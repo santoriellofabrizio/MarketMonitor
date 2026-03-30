@@ -84,7 +84,7 @@ class PricePublisherHub:
             )
         except Exception as e:
             timeseries = None
-            logger.warning(f"Redis TS not connected: {e}")
+            logger.error(f"Redis TS not connected: {e}")
 
         return cls(gui=gui, timeseries=timeseries, isin_to_ticker=isin_to_ticker)
 
