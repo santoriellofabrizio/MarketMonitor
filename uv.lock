@@ -288,6 +288,7 @@ dependencies = [
     { name = "redis", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "ruamel-yaml", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "scipy", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "sfm-data-provider", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "sfm-datalibrary", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "sfm-dbconnections", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "sfm-pcf-db-library", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
@@ -325,6 +326,7 @@ requires-dist = [
     { name = "redis", specifier = ">=6.2.0" },
     { name = "ruamel-yaml", specifier = ">=0.18.6" },
     { name = "scipy", specifier = ">=1.16.0" },
+    { name = "sfm-data-provider" },
     { name = "sfm-datalibrary", specifier = ">=1.0.77872" },
     { name = "sfm-dbconnections", specifier = ">=1.1.75128" },
     { name = "sfm-pcf-db-library", specifier = ">=1.0.72038" },
@@ -739,6 +741,22 @@ dependencies = [
 ]
 wheels = [
     { path = "sfm_cryptography-1.0.71170-py3-none-any.whl" },
+]
+
+[[package]]
+name = "sfm-data-provider"
+version = "1.2.77185"
+source = { registry = '\\nas1bes\AreaFinanza/SHARE/PROGETTI ML/Python/python3_11/python packages' }
+dependencies = [
+    { name = "joblib", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "matplotlib", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "pytest-mock", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "ruamel-yaml", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "sfm-datalibrary", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "tqdm", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+wheels = [
+    { path = "sfm_data_provider-1.2.77185-py3-none-any.whl" },
 ]
 
 [[package]]

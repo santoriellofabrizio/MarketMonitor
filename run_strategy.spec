@@ -85,12 +85,7 @@ hiddenimports_mm = collect_submodules('market_monitor')
 # sfm_datalibrary / sfm_data_provider: librerie interne Sella impacchettate,
 # non rilevabili dallo static analysis di PyInstaller.
 datas_sfm_dl, binaries_sfm_dl, hiddenimports_sfm_dl = collect_all('sfm_datalibrary')
-# sfm_data_provider e' opzionale in questo bundle (usata solo da user_strategy/).
-# Se non e' ancora installata nel virtualenv di build, la skip senza errori.
-try:
-    datas_sfm_dp, binaries_sfm_dp, hiddenimports_sfm_dp = collect_all('sfm_data_provider')
-except Exception:
-    datas_sfm_dp, binaries_sfm_dp, hiddenimports_sfm_dp = [], [], []
+datas_sfm_dp, binaries_sfm_dp, hiddenimports_sfm_dp = collect_all('sfm_data_provider')
 
 # ============================================================================
 # 1. Hidden imports

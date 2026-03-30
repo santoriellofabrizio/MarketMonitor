@@ -24,6 +24,7 @@ dependencies = [
     "redis>=6.2.0",
     "ruamel-yaml>=0.18.6",
     "scipy>=1.16.0",
+    "sfm-data-provider",
     "sfm-datalibrary>=1.0.77872",
     "sfm-dbconnections>=1.1.75128",
     "sfm-pcf-db-library>=1.0.72038",
