@@ -16,7 +16,9 @@ from __future__ import annotations
 import atexit
 import json
 import logging
+import os
 import re
+import sys
 import time
 import weakref
 from pathlib import Path
@@ -199,7 +201,14 @@ class StrategyInstance(QObject):
     def start(self) -> bool:
         if self._process.state() != QProcess.NotRunning:
             return False
-        self._process.start("run-strategy", [self.config_name])
+        # Quando si gira come exe PyInstaller, risolvere il path di run-strategy
+        # rispetto alla cartella dell'exe corrente (stessa cartella di deployment).
+        if getattr(sys, 'frozen', False):
+            exe_dir = os.path.dirname(os.path.abspath(sys.executable))
+            runner = os.path.join(exe_dir, 'run-strategy.exe')
+        else:
+            runner = 'run-strategy'
+        self._process.start(runner, [self.config_name])
         if self._process.waitForStarted(3000):
             self.pid = self._process.processId()
             self.status = "RUNNING"
