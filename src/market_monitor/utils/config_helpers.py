@@ -23,12 +23,15 @@ class ConfigEntry:
 
 
 def _project_root() -> Path:
-    # PyInstaller frozen: usa _MEIPASS (dove stanno i datas)
+    # Variabile d'ambiente esplicita (override, utile per ambienti custom)
     frozen_root = os.environ.get('_MARKET_MONITOR_FROZEN_ROOT')
     if frozen_root:
         return Path(frozen_root)
-    # Dalla posizione del file (src/market_monitor/utils/)
-    # risali a src/market_monitor/ -> src/ -> root progetto
+    # PyInstaller frozen (ONEFILE o ONEDIR): sys.executable punta all'exe
+    # nella cartella di deployment, dove si trovano etc/config/ e user_strategy/
+    if getattr(sys, 'frozen', False):
+        return Path(sys.executable).parent
+    # Sviluppo: risali da src/market_monitor/utils/ alla root del progetto
     return Path(__file__).parent.parent.parent.parent
 
 

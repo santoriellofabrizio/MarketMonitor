@@ -762,8 +762,10 @@ class StrategyControlPanel(QMainWindow):
             from market_monitor.utils.config_helpers import find_config, load_config
             cfg = load_config(find_config(config_name))
             panel_cfg = cfg.get("control_panel", {})
-        except Exception:
-            pass
+        except Exception as e:
+            logging.getLogger(__name__).warning(
+                "Impossibile caricare panel_config per '%s': %s", config_name, e
+            )
 
         channels = self._channels_for_config(config_name)
         inst = StrategyInstance(
