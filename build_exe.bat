@@ -103,10 +103,14 @@ mkdir "%DEPLOY_DIR%"
 xcopy /e /i /q "%OUTPUT_DIR%\*" "%DEPLOY_DIR%\" >nul
 echo   - Copiato: run-strategy.exe + _internal\
 
-:: run-control-panel: singolo exe (ONEFILE)
+:: run-control-panel: singolo exe (ONEFILE) + launcher VBS (no terminale)
 if exist "dist\run-control-panel.exe" (
     copy /y "dist\run-control-panel.exe" "%DEPLOY_DIR%\run-control-panel.exe" >nul
     echo   - Copiato: run-control-panel.exe
+)
+if exist "run-control-panel-launcher.vbs" (
+    copy /y "run-control-panel-launcher.vbs" "%DEPLOY_DIR%\run-control-panel-launcher.vbs" >nul
+    echo   - Copiato: run-control-panel-launcher.vbs  ^(doppio clic: apre il panel senza terminale^)
 )
 
 :: run-dashboard: singolo exe (ONEFILE)
