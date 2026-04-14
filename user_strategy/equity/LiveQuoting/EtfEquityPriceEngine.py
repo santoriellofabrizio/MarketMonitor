@@ -315,6 +315,24 @@ class EtfEquityPriceEngine(StrategyUI):
             except (TypeError, ValueError) as e:
                 logger.error(f"Invalid outlier_std value: {e}")
 
+        elif action == "set_halflife":
+            try:
+                from user_strategy.utils.pricing_models.AggregationFunctions import EwmaOutlier, Ewma
+                val = float(payload.get("value", 10.0))
+                if val <= 0:
+                    raise ValueError("halflife must be positive")
+                updated = []
+                for name in self.models.model_names:
+                    entry = self.models._entries.get(name)
+                    if entry and hasattr(entry.model, "forecast_aggregator"):
+                        fc = entry.model.forecast_aggregator
+                        if isinstance(fc, (EwmaOutlier, Ewma)):
+                            fc.halflife = val
+                            updated.append(name)
+                logger.warning(f"halflife updated to {val} on models: {updated}")
+            except (TypeError, ValueError) as e:
+                logger.error(f"Invalid halflife value: {e}")
+
         elif action == "debug_isin":
             self._handle_debug_isin(payload)
 
