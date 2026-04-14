@@ -122,7 +122,7 @@ class TimeZeroPLManager(threading.Thread):
         col = f"spread_pl_{int(lag)}s"
         is_first_horizon = (lag == self.time_zero_lags[0])
 
-        mid_price, _ = self.get_mid(trade)
+        mid_price, _ = self.get_mid(trade, lag)
         if mid_price is not None:
             pl = self.calculate_time_zero_pl(trade, mid_price)
             setattr(trade, col, pl)
@@ -140,13 +140,17 @@ class TimeZeroPLManager(threading.Thread):
         if self.on_horizon_computed is not None:
             self.on_horizon_computed(trade)
 
-    def get_mid(self, trade: Trade):
+    def get_mid(self, trade: Trade, lag: float):
         try:
             if not self.mid_price_storage:
                 logger.debug(f"[GET_MID] Storage vuoto per ISIN {trade.isin}")
                 return None, None
 
-            time_snip, snapshot = self.mid_price_storage[-1]
+            delayed_timestamp = trade.timestamp + datetime.timedelta(seconds=lag)
+            if self.mid_price_storage.get_first_after(delayed_timestamp) is not None:
+                time_snip, snapshot = self.mid_price_storage.get_first_after(delayed_timestamp)
+            else:
+                time_snip, snapshot = self.mid_price_storage.get_last_before(delayed_timestamp)
 
             mid_entry = snapshot.get(trade.isin)
             if mid_entry is None:

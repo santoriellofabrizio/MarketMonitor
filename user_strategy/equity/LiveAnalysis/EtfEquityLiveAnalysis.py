@@ -233,12 +233,17 @@ class EtfEquityLiveAnalysis(StrategyUI):
     def publish_trades_stats(self):
 
         all_trades = self.trade_manager.get_trades()
+        last_trades = self.trade_manager.get_trades(n_seconds=10)
         quoting_trades = all_trades[all_trades['quoting'] == True]
 
         self._process_and_export(quoting_trades, "market_stat")
 
         own_trades = quoting_trades[quoting_trades["own_trade"] != 0]
         self._process_and_export(own_trades, "mine_stat")
+        self.redis_dashboard.export_message(channel="excel_dashboard", value=last_trades[['ticker','isin','timestamp',
+                                                                                          'market','quantity','price',
+                                                                                          'ctv','own_trade','cluster',
+                                                                                          'side']])
 
     def _process_and_export(self, df, prefix):
 
@@ -262,6 +267,8 @@ class EtfEquityLiveAnalysis(StrategyUI):
                 value=values,
                 skip_if_unchanged=True
             )
+
+            self.redis_dashboard.export_static_data(**{f"{prefix}:{stat}": values})
 
     def _enrich_trades(self, trades) -> pd.DataFrame:
         trades['model_price'] = trades['isin'].map(self.model_price)

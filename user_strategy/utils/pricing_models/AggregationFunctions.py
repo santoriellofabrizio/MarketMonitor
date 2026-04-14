@@ -3,7 +3,7 @@ from typing import Union
 
 import pandas as pd
 from dateutil.utils import today
-from scipy.stats import trim_mean
+# from scipy.stats import trim_mean
 
 from user_strategy.utils import CustomBDay
 
@@ -12,13 +12,13 @@ class ForecastAggregator:
     pass
 
 
-class TrimmedMean(ForecastAggregator):
-
-    def __init__(self, perc_outlier: float):
-        self.perc_outlier = perc_outlier
-
-    def __call__(self, all_predictions: pd.DataFrame):
-        return pd.Series(trim_mean(all_predictions, proportiontocut=self.perc_outlier), index=all_predictions.columns)
+# class TrimmedMean(ForecastAggregator):
+#
+#     def __init__(self, perc_outlier: float):
+#         self.perc_outlier = perc_outlier
+#
+#     def __call__(self, all_predictions: pd.DataFrame):
+#         return pd.Series(trim_mean(all_predictions, proportiontocut=self.perc_outlier), index=all_predictions.columns)
 
 
 class Ewma(ForecastAggregator):
@@ -71,6 +71,6 @@ class EwmaOutlier(ForecastAggregator):
 # Dizionario per gestire le classi di aggregazione previste
 forecast_aggregation = {
     "ewma": Ewma,
-    "trimmed_mean": TrimmedMean,
+    # "trimmed_mean": TrimmedMean,
     "ewma_outlier": EwmaOutlier
 }

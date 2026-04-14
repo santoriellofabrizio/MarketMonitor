@@ -5,7 +5,7 @@ import time as sleep_time
 
 from collections import deque
 from contextlib import contextmanager
-from datetime import datetime, time, date
+from datetime import date
 import numpy as np
 import pandas as pd
 from dateutil.utils import today
@@ -19,20 +19,18 @@ from sfm_data_provider.core.holidays.holiday_manager import HolidayManager
 
 from market_monitor.publishers.timeseries_publisher import TimeSeriesPublisher
 from datetime import datetime, time
-from typing import Dict, Set, Optional
+from typing import  Optional
 import logging
 
 from sfm_data_provider.interface.bshdata import BshData
 
-from market_monitor.gui.implementations.GUI import GUI
-from market_monitor.publishers.redis_publisher import RedisMessaging
+
 from market_monitor.strategy.strategy_ui.StrategyUI import StrategyUI
 from user_strategy.equity.LiveQuoting.InputParamsQuoting import InputParamsQuoting
 from user_strategy.equity.LiveQuoting.price_publisher import PricePublisherHub
 from user_strategy.equity.LiveQuoting.pricing_engine import PricingModelRegistry
 from user_strategy.equity.LiveQuoting.utils import filter_outliers, round_series_to_tick
-from user_strategy.utils.bloomberg_subscription_utils.SubscriptionManager import SubscriptionManager
-from user_strategy.utils.pricing_models.AggregationFunctions import ForecastAggregator, TrimmedMean
+
 
 from user_strategy.utils.pricing_models.PricingModel import ClusterPricingModel
 from user_strategy.utils.bloomberg_subscription_utils.SubscriptionManager import SubscriptionManager
@@ -242,7 +240,7 @@ class EtfEquityPriceEngine(StrategyUI):
         self.models.register("intraday", ClusterPricingModel(
             beta=beta_cluster,
             returns=self.corrected_return_intraday,
-            forecast_aggregator=TrimmedMean(0.2),
+            forecast_aggregator=self.input_params.forecast_aggregator_cluster,
             cluster_correction=self._calculate_cluster_correction(beta_cluster, 0),
             name="theoretical_live_cluster_price",
         ), self.corrected_return_intraday)
@@ -495,7 +493,7 @@ class EtfEquityPriceEngine(StrategyUI):
                 self.get_mid()
 
             with _timer("predict_all", self.logger):
-                predictions = self.models.predict_all(self.mid_eur)
+                predictions = self.models.predict_all(self.mid_eur) or pd.DataFrame()
 
             if self.alpha < 1.0:
                 with _timer("alpha_blend", self.logger):
@@ -505,15 +503,38 @@ class EtfEquityPriceEngine(StrategyUI):
                             predictions[key] = self.alpha * pred + (1.0 - self.alpha) * self.mid_eur
 
             with _timer("round_prices", self.logger):
+                # Recuperiamo le serie gestendo il caso in cui la chiave non esista o sia None
+                idx_series = predictions.get("index_cluster")
+                if idx_series is None:
+                    idx_series = pd.Series(dtype=float)
+
+                clust_series = predictions.get("cluster")
+                if clust_series is None:
+                    clust_series = pd.Series(dtype=float)
+
+                intraday_series = predictions.get("intraday")
+                if intraday_series is None:
+                    intraday_series = pd.Series(dtype=float)
+
+                # Calcolo dei prezzi normalizzati
                 normalized_prices = {
-                    'live_idx': round_series_to_tick(predictions.get("index_cluster"), self.reference_tick_size),
-                    'live_clust': round_series_to_tick(predictions.get("cluster", pd.Series(dtype=float)).fillna(0),
-                                                       self.reference_tick_size),
-                    'intraday': round_series_to_tick(predictions.get("intraday", pd.Series(dtype=float)).fillna(0),
-                                                     self.reference_tick_size),
-                    'mid': round_series_to_tick(self.mid_eur.fillna(0), self.reference_tick_size),
-                    'normalized_mid': (self.mid_eur / self.etf_prices.loc[self.etf_prices.index.max()]),
+                    # Arrotondamento con riempimento dei None/NaN a 0
+                    'live_idx': round_series_to_tick(idx_series.fillna(0), self.reference_tick_size),
+
+                    'live_clust': round_series_to_tick(clust_series.fillna(0), self.reference_tick_size),
+
+                    'intraday': round_series_to_tick(intraday_series.fillna(0), self.reference_tick_size),
+
+                    # Gestione del mid_eur se fosse None
+                    'mid': round_series_to_tick(
+                        (self.mid_eur if self.mid_eur is not None else pd.Series([0])).fillna(0),
+                        self.reference_tick_size),
+
+                    # Protezione per la divisione: se etf_prices è None o vuoto, restituisce 0 o NaN
+                    'normalized_mid': (self.mid_eur / self.etf_prices.iloc[-1]) if (
+                                self.etf_prices is not None and not self.etf_prices.empty) else 0,
                 }
+
 
             with _timer("publish_gui", self.logger):
                 self.publisher.publish_prices_to_gui(normalized_prices)

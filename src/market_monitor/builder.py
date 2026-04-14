@@ -57,8 +57,10 @@ class Builder:
 
         self._set_real_time_data(user_strategy, lock)
 
+        q_trade = Queue() if self.config["market_monitor"]["tasks"]["trade"]["synchronous"] else asyncio.Queue()
+
         if self.config.get("trade_distributor", {}).get("activate", False):
-            self._setup_trade_distributor(threads, user_strategy, lock, logger)
+            self._setup_trade_distributor(threads, user_strategy, lock, logger, q_trade)
         if self.config.get("bloomberg_data_distributor", {}).get("activate", False):
             self._setup_bloomberg_distributor(threads, user_strategy)
         if self.config.get("excel_data_distributor", {}).get("activate", False):
@@ -66,7 +68,7 @@ class Builder:
         if self.config.get("redis_data_distributor", {}).get("activate", False):
             self._setup_redis_distributor(threads, user_strategy)
         if self.config.get("kafka_data_distributor", {}).get("activate", False):
-            self._setup_kafka_distributor(threads, user_strategy)
+            self._setup_kafka_distributor(threads, user_strategy, q_trade)
 
         self._setup_gui(threads, user_strategy)
 
@@ -226,8 +228,7 @@ class Builder:
         strategy.set_subscription_service(self.global_subscription_service)
         strategy.set_market_data(market_data)
 
-    def _setup_trade_distributor(self, threads, monitor, lock, logger):
-        q_trade = Queue() if self.config["market_monitor"]["tasks"]["trade"]["synchronous"] else asyncio.Queue()
+    def _setup_trade_distributor(self, threads, monitor, lock, logger, q_trade):
         monitor.set_q_trade(q_trade)
         path = self.config["trade_distributor"]["path"]
         trade_thread = TradeThread(lock, q_trade, path=path)
@@ -251,7 +252,7 @@ class Builder:
         redis_distributor_thread.set_real_time_data(monitor.market_data)
         threads.append(redis_distributor_thread)
 
-    def _setup_kafka_distributor(self, threads, monitor):
+    def _setup_kafka_distributor(self, threads, monitor, q_trade):
         """Setup book, trade, and order Kafka threads."""
         kafka_params = self.config.get("kafka_data_distributor", {}).get("kafka_params", {})
 
@@ -264,7 +265,7 @@ class Builder:
         threads.append(book_thread)
 
         # Trade thread: PublicDeal / Trade topics -> trade Queue
-        trade_queue = Queue()
+        trade_queue = q_trade
         trade_thread = KafkaTradeStreamingThread(
             queue=trade_queue,
             subscription_service=self.global_subscription_service,

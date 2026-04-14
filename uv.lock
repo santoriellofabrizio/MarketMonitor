@@ -615,6 +615,17 @@ wheels = [
 ]
 
 [[package]]
+name = "pytest-mock"
+version = "3.1.1"
+source = { registry = '\\nas1bes\AreaFinanza/SHARE/PROGETTI ML/Python/python3_11/python packages' }
+dependencies = [
+    { name = "pytest", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+wheels = [
+    { path = "pytest_mock-3.1.1-py3-none-any.whl" },
+]
+
+[[package]]
 name = "python-dateutil"
 version = "2.9.0.post0"
 source = { registry = '\\nas1bes\AreaFinanza/SHARE/PROGETTI ML/Python/python3_11/python packages' }

@@ -23,8 +23,8 @@ Requires-Dist: questionary>=2.0.0
 Requires-Dist: redis>=6.2.0
 Requires-Dist: ruamel-yaml>=0.18.6
 Requires-Dist: scipy>=1.16.0
-Requires-Dist: sfm-datalibrary>=1.0.77872
 Requires-Dist: sfm-data-provider
+Requires-Dist: sfm-datalibrary>=1.0.77872
 Requires-Dist: sfm-dbconnections>=1.1.75128
 Requires-Dist: sfm-pcf-db-library>=1.0.72038
 Requires-Dist: sfm-return-adjustment-lib>=1.0.75641

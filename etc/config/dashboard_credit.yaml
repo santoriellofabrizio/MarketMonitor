@@ -19,7 +19,7 @@ dashboard:
     user: mqclient
     password: Mqclient-00
     virtual_host: TestCredEQEtf
-    exchange: trades_rabbit_credit
+    exchange: trades_rabbit_abr
 
 
   metrics:
