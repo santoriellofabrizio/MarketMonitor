@@ -180,6 +180,24 @@ control_panel:
       step: 0.05
       description: "α·model_price + (1-α)·mid — blending model price with market mid"
 
+    - label: "Outlier Std"
+      action: "set_outlier_std"
+      type: "float_input"
+      min: 0.5
+      max: 10.0
+      default: 3.0
+      step: 0.5
+      description: "Soglia outlier in deviazioni standard per EwmaOutlier (aggiorna tutti i modelli attivi)"
+
+    - label: "Halflife"
+      action: "set_halflife"
+      type: "float_input"
+      min: 1.0
+      max: 100.0
+      default: 10.0
+      step: 1.0
+      description: "Half-life EWMA in periodi (aggiorna tutti i modelli Ewma/EwmaOutlier attivi)"
+
     - label: "Debug ISIN"
       action: "debug_isin"
       type: "isin_debug"
