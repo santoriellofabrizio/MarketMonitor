@@ -276,6 +276,8 @@ class KafkaSubscription(LiveSubscription):
         for key in path.split('.'):
             if isinstance(value, dict) and key in value:
                 value = value[key]
+            elif isinstance(value, list) and key.isdigit():
+                value = value[int(key)]
             else:
                 return None
         return value

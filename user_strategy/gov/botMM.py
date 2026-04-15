@@ -78,7 +78,7 @@ class botMM(StrategyUI):
                 id=f"{isin}_book",
                 symbol_filter=isin,
                 topic=f"COALESCENT_DUMA.SSOB.BookByLevels",
-                fields_mapping={"ASK":"askLevels.0.price", "BID": "bidLevels.0.price" }
+                fields_mapping={"ASK": "askLevels.0.price", "BID": "bidLevels.0.price" }
             )
             for ev in ("PublicDeal", "Trade"):
                 self.global_subscription_service.subscribe_trades_kafka(
