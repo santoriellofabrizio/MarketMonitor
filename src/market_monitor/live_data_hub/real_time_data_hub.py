@@ -108,12 +108,19 @@ class RTData:
         if isinstance(self.mid_key, str):
             self.mid_key = [self.mid_key]
 
-        # Data Stores (organized by data type)
-        self._market_store = MarketStore(locker, self.fields)
-        self._state_store = StateStore(locker)
-        self._event_store = EventStore(locker, default_maxlen=1000)
-        self._blob_store = BlobStore(locker)
-        self._order_store = OrderStore(locker)
+        # Data Stores (organized by data type) — each store owns its own lock
+        # to eliminate false cross-store lock contention under high Kafka throughput.
+        # The shared `locker` parameter is retained for backward compatibility only.
+        if locker is not None:
+            self.logger.warning(
+                "RTData: il parametro 'locker' è deprecato e non viene più passato agli store. "
+                "Ogni store gestisce il proprio lock indipendente."
+            )
+        self._market_store = MarketStore(self.fields)
+        self._state_store = StateStore()
+        self._event_store = EventStore(default_maxlen=1000)
+        self._blob_store = BlobStore()
+        self._order_store = OrderStore()
 
         # Subscription service
         self._subscription_service = subscription_service

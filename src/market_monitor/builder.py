@@ -5,8 +5,7 @@ import logging
 import os
 import sys
 from importlib import util
-from queue import Queue
-from threading import Lock
+from queue import Queue, Full
 from sfm_datalibrary.connections.db_connections import DbConnectionParameters, OracleConnectionParameters, \
     TimescaleConnectionParameters, DbEnvironmentType
 
@@ -50,15 +49,14 @@ class Builder:
             self._setup_timescale_connection()
 
         # Lettura dei parametri principali
-        lock = Lock()
         strategy = self._load_strategy_from_metadata()
         user_strategy = strategy(**self.config["market_monitor"])
         threads = []
 
-        self._set_real_time_data(user_strategy, lock)
+        self._set_real_time_data(user_strategy)
 
         if self.config.get("trade_distributor", {}).get("activate", False):
-            self._setup_trade_distributor(threads, user_strategy, lock, logger)
+            self._setup_trade_distributor(threads, user_strategy, logger)
         if self.config.get("bloomberg_data_distributor", {}).get("activate", False):
             self._setup_bloomberg_distributor(threads, user_strategy)
         if self.config.get("excel_data_distributor", {}).get("activate", False):
@@ -216,21 +214,27 @@ class Builder:
             logging.error(f"Errore durante il caricamento dinamico della strategia: {e}")
             raise
 
-    def _set_real_time_data(self, strategy: StrategyUIAsync, lock):
+    def _set_real_time_data(self, strategy: StrategyUIAsync):
         self.global_subscription_service = SubscriptionService()
 
-        market_data = RTData(lock,
+        market_data = RTData(locker=None,
                              subscription_service=self.global_subscription_service,
                              **self.config.get("market_data_distributor", {}).get("book_params", {}))
 
         strategy.set_subscription_service(self.global_subscription_service)
         strategy.set_market_data(market_data)
 
-    def _setup_trade_distributor(self, threads, monitor, lock, logger):
-        q_trade = Queue() if self.config["market_monitor"]["tasks"]["trade"]["synchronous"] else asyncio.Queue()
+    # Max number of trade items in the queue before drop-oldest kicks in.
+    TRADE_QUEUE_MAXSIZE = 5_000
+
+    def _setup_trade_distributor(self, threads, monitor, logger):
+        if self.config["market_monitor"]["tasks"]["trade"]["synchronous"]:
+            q_trade = Queue(maxsize=self.TRADE_QUEUE_MAXSIZE)
+        else:
+            q_trade = asyncio.Queue(maxsize=self.TRADE_QUEUE_MAXSIZE)
         monitor.set_q_trade(q_trade)
         path = self.config["trade_distributor"]["path"]
-        trade_thread = TradeThread(lock, q_trade, path=path)
+        trade_thread = TradeThread(q_trade, path=path)
         threads.append(trade_thread)
 
     def _setup_bloomberg_distributor(self, threads, monitor):
@@ -264,7 +268,7 @@ class Builder:
         threads.append(book_thread)
 
         # Trade thread: PublicDeal / Trade topics -> trade Queue
-        trade_queue = Queue()
+        trade_queue = Queue(maxsize=self.TRADE_QUEUE_MAXSIZE)
         trade_thread = KafkaTradeStreamingThread(
             queue=trade_queue,
             subscription_service=self.global_subscription_service,

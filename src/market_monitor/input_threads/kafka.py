@@ -56,6 +56,28 @@ logger = logging.getLogger(__name__)
 TradeKey = Tuple[str, str, int, float, float]
 
 
+def _put_trade_dropping_oldest(queue: Queue, item: Any) -> None:
+    """
+    Inserisce un elemento nella queue senza bloccare.
+    Se la queue è piena, scarta il trade più vecchio (drop-oldest policy).
+    Un trade vecchio processato con ritardo produce P&L errato, quindi
+    è preferibile scartare il vecchio rispetto al nuovo.
+    """
+    if queue.full():
+        try:
+            dropped = queue.get_nowait()
+            logger.warning(
+                f"[BACKPRESSURE] Trade queue piena (maxsize={queue.maxsize}), "
+                f"dropped trade type={dropped[0]}"
+            )
+        except Exception:
+            pass
+    try:
+        queue.put_nowait(item)
+    except Exception:
+        logger.error("[BACKPRESSURE] Trade queue put_nowait fallito")
+
+
 class _KafkaBaseThread(threading.Thread):
     """
     Base class for Kafka streaming threads.
@@ -645,7 +667,7 @@ class KafkaTradeStreamingThread(_KafkaBaseThread):
             if not pending_queue:
                 continue
             for df in pending_queue:
-                self.queue_trade.put((TradeType.MARKET, df.set_index("ticker")))
+                _put_trade_dropping_oldest(self.queue_trade, (TradeType.MARKET, df.set_index("ticker")))
 
     def _handle_public_vs_own_deal(self, data: Dict[str, Any]) -> None:
         """
@@ -673,8 +695,8 @@ class KafkaTradeStreamingThread(_KafkaBaseThread):
         df = pd.DataFrame([data])
 
         if is_own:
-            self.queue_trade.put((TradeType.OWN, df.set_index("ticker")))
-            self.queue_trade.put((TradeType.MARKET, df.set_index("ticker")))
+            _put_trade_dropping_oldest(self.queue_trade, (TradeType.OWN, df.set_index("ticker")))
+            _put_trade_dropping_oldest(self.queue_trade, (TradeType.MARKET, df.set_index("ticker")))
             self._seen_own_trades.add(key)
             # Cancella il primo public deal bufferizzato corrispondente
             if key in self._pending_publicdeals and self._pending_publicdeals[key]:

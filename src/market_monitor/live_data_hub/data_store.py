@@ -6,7 +6,7 @@ AGGIORNAMENTO: Gestione sicura di indici/colonne mancanti.
 
 import logging
 from datetime import datetime
-from threading import Lock
+from threading import Lock, RLock
 from typing import Any, Dict, List, Optional, Tuple
 from collections import deque, defaultdict
 
@@ -19,221 +19,190 @@ logger = logging.getLogger(__name__)
 class MarketStore:
     """
     DataFrame-based storage for market data (prices from Bloomberg/RedisPublisher).
-    Thread-safe with minimal pandas overhead.
+    Thread-safe with minimal lock hold time via lazy-snapshot double-buffer pattern.
 
-    AGGIORNAMENTO: Metodi robusti che gestiscono indici/colonne mancanti.
+    Write path: acquires lock, mutates _write_buf, marks _dirty=True, releases lock.
+    Read path: acquires lock briefly only if _dirty (to refresh snapshot), then
+               operates on the stable snapshot reference WITHOUT holding any lock.
+               Multiple read calls in the same update_HF() cycle reuse the cached
+               snapshot — zero lock overhead after the first call per dirty epoch.
     """
 
-    def __init__(self, locker: Lock, fields: List[str]):
-        self._lock = locker
+    def __init__(self, fields: List[str], locker: Lock = None):
+        self._lock = locker if locker is not None else Lock()
         self._fields = fields
-        self._market_data: pd.DataFrame = pd.DataFrame()
+        self._write_buf: pd.DataFrame = pd.DataFrame()
+        self._snapshot: Optional[pd.DataFrame] = None  # stable read-only copy
+        self._dirty: bool = False
         self._last_update: Dict[str, datetime] = {}
 
-    def initialize(self, securities: List[str]):
-        """Initialize market DataFrame for securities"""
+    def _get_snapshot(self) -> pd.DataFrame:
+        """
+        Returns a stable snapshot of the market data.
+        Refreshes under lock only when writes have occurred since the last read
+        (_dirty=True). Subsequent calls in the same cycle are fully lock-free.
+        """
         with self._lock:
-            self._market_data = pd.DataFrame(
+            if self._dirty or self._snapshot is None:
+                self._snapshot = self._write_buf.copy()
+                self._dirty = False
+        return self._snapshot  # stable reference, no lock held by caller
+
+    def initialize(self, securities: List[str]):
+        """Initialize market DataFrame for securities."""
+        with self._lock:
+            self._write_buf = pd.DataFrame(
                 index=securities,
                 columns=self._fields,
                 dtype=float
             )
             # EUR always at 1.0
-            if "EUR" not in self._market_data.index:
-                self._market_data.loc["EUR"] = [1.0] * len(self._fields)
+            if "EUR" not in self._write_buf.index:
+                self._write_buf.loc["EUR"] = [1.0] * len(self._fields)
+            self._dirty = True
 
     def update(self, ticker: str, data: Dict[str, float]):
         """
         Update market data for ticker.
-
-        AGGIORNAMENTO: Crea automaticamente ticker/colonne se mancanti.
+        Mutates _write_buf under lock and marks snapshot as stale.
         """
-
         with self._lock:
             try:
-                #  Se DataFrame è completamente vuoto, inizializzalo con i campi necessari
-                if self._market_data.empty:
-                    # Usa i campi da data + fields predefiniti
+                if self._write_buf.empty:
                     all_fields = list(set(self._fields + list(data.keys())))
-                    self._market_data = pd.DataFrame(columns=all_fields, dtype=float)
+                    self._write_buf = pd.DataFrame(columns=all_fields, dtype=float)
 
-                # Aggiungi colonne mancanti PRIMA di aggiungere il ticker
                 for field in data.keys():
-                    if field not in self._market_data.columns:
-                        self._market_data[field] = np.nan
+                    if field not in self._write_buf.columns:
+                        self._write_buf[field] = np.nan
 
-                #  Ora possiamo aggiungere il ticker (le colonne esistono)
-                if ticker not in self._market_data.index:
-                    self._market_data.loc[ticker] = np.nan
+                if ticker not in self._write_buf.index:
+                    self._write_buf.loc[ticker] = np.nan
 
-                # Update valori
                 for field, value in data.items():
-                    self._market_data.at[ticker, field] = value
+                    self._write_buf.at[ticker, field] = value
                 self._last_update[ticker] = datetime.now()
-                return
+                self._dirty = True
 
             except Exception as e:
                 logger.error(f"Error updating market data for {ticker}: {e}")
-                return False, list(data.keys())
 
     def get_data(self, tickers: Optional[List[str]] = None,
                  fields: Optional[List[str]] = None) -> pd.DataFrame:
-        """
-        Get market data (thread-safe copy).
-
-        AGGIORNAMENTO: Gestisce indici/colonne mancanti.
-        """
-        with self._lock:
-            #  DataFrame vuoto
-            if self._market_data.empty:
-                return pd.DataFrame()
-
-            try:
-                if tickers is None and fields is None:
-                    return self._market_data.copy()
-
-                elif tickers is None:
-                    # Filtra solo colonne esistenti
-                    existing_fields = [f for f in fields if f in self._market_data.columns]
-                    if not existing_fields:
-                        return pd.DataFrame()
-                    return self._market_data[existing_fields].copy()
-
-                elif fields is None:
-                    #  Filtra solo ticker esistenti
-                    existing_tickers = [t for t in tickers if t in self._market_data.index]
-                    if not existing_tickers:
-                        return pd.DataFrame()
-                    return self._market_data.loc[existing_tickers].copy()
-
-                else:
-                    #  Filtra entrambi
-                    existing_tickers = [t for t in tickers if t in self._market_data.index]
-                    existing_fields = [f for f in fields if f in self._market_data.columns]
-                    if not existing_tickers or not existing_fields:
-                        return pd.DataFrame()
-                    return self._market_data.loc[existing_tickers, existing_fields].copy()
-
-            except Exception as e:
-                logger.error(f"Error getting market data: {e}")
-                return pd.DataFrame()
+        """Get market data snapshot. Lock-free after first call per dirty epoch."""
+        buf = self._get_snapshot()
+        if buf.empty:
+            return pd.DataFrame()
+        try:
+            if tickers is None and fields is None:
+                return buf.copy()
+            elif tickers is None:
+                existing_fields = [f for f in fields if f in buf.columns]
+                if not existing_fields:
+                    return pd.DataFrame()
+                return buf[existing_fields].copy()
+            elif fields is None:
+                existing_tickers = [t for t in tickers if t in buf.index]
+                if not existing_tickers:
+                    return pd.DataFrame()
+                return buf.loc[existing_tickers].copy()
+            else:
+                existing_tickers = [t for t in tickers if t in buf.index]
+                existing_fields = [f for f in fields if f in buf.columns]
+                if not existing_tickers or not existing_fields:
+                    return pd.DataFrame()
+                return buf.loc[existing_tickers, existing_fields].copy()
+        except Exception as e:
+            logger.error(f"Error getting market data: {e}")
+            return pd.DataFrame()
 
     def get_field(self, field: str, tickers: Optional[List[str]] = None) -> pd.Series:
-        """
-        Get specific field for tickers.
-
-        AGGIORNAMENTO: Ritorna Series vuota se campo/ticker mancante.
-        """
-        with self._lock:
-            # Controlli esistenza
-            if self._market_data.empty or field not in self._market_data.columns:
-                return pd.Series(dtype=float)
-
-            try:
-                if tickers is None:
-                    return self._market_data[field].copy()
-                else:
-                    # Filtra ticker esistenti
-                    existing_tickers = [t for t in tickers if t in self._market_data.index]
-                    if not existing_tickers:
-                        return pd.Series(dtype=float)
-                    return self._market_data.loc[existing_tickers, field].copy()
-
-            except Exception as e:
-                logger.error(f"Error getting field {field}: {e}")
-                return pd.Series(dtype=float)
+        """Get specific field for tickers. Lock-free after snapshot refresh."""
+        buf = self._get_snapshot()
+        if buf.empty or field not in buf.columns:
+            return pd.Series(dtype=float)
+        try:
+            if tickers is None:
+                return buf[field].copy()
+            else:
+                existing_tickers = [t for t in tickers if t in buf.index]
+                if not existing_tickers:
+                    return pd.Series(dtype=float)
+                return buf.loc[existing_tickers, field].copy()
+        except Exception as e:
+            logger.error(f"Error getting field {field}: {e}")
+            return pd.Series(dtype=float)
 
     def get_mid(self, mid_fields: List[str],
                 tickers: Optional[List[str]] = None) -> pd.Series:
-        """
-        Calculate mid prices (optimized with numpy).
-
-        AGGIORNAMENTO: Gestisce campi mancanti.
-        """
-        with self._lock:
-            # Controlli esistenza
-            if self._market_data.empty:
-                return pd.Series(dtype=float)
-
-            # Filtra solo campi esistenti
-            existing_fields = [f for f in mid_fields if f in self._market_data.columns]
-            if not existing_fields:
-                return pd.Series(dtype=float)
-
-            try:
-                if tickers is None:
-                    data = self._market_data[existing_fields]
-                else:
-                    # Filtra ticker esistenti
-                    existing_tickers = [t for t in tickers if t in self._market_data.index]
-                    if not existing_tickers:
-                        return pd.Series(dtype=float)
-                    data = self._market_data.loc[existing_tickers, existing_fields]
-
-                return pd.Series(data.values.mean(axis=1), index=data.index)
-
-            except Exception as e:
-                logger.error(f"Error calculating mid prices: {e}")
-                return pd.Series(dtype=float)
+        """Calculate mid prices. Lock-free after snapshot refresh."""
+        buf = self._get_snapshot()
+        if buf.empty:
+            return pd.Series(dtype=float)
+        existing_fields = [f for f in mid_fields if f in buf.columns]
+        if not existing_fields:
+            return pd.Series(dtype=float)
+        try:
+            if tickers is None:
+                data = buf[existing_fields]
+            else:
+                existing_tickers = [t for t in tickers if t in buf.index]
+                if not existing_tickers:
+                    return pd.Series(dtype=float)
+                data = buf.loc[existing_tickers, existing_fields]
+            return pd.Series(data.values.mean(axis=1), index=data.index)
+        except Exception as e:
+            logger.error(f"Error calculating mid prices: {e}")
+            return pd.Series(dtype=float)
 
     def get_mid_dict(self, mid_fields: List[str],
                      tickers: Optional[List[str]] = None) -> Dict[str, float]:
-        """
-        Get mid prices as dict (faster for lookups).
-
-        AGGIORNAMENTO: Ritorna dict vuoto se campi mancanti.
-        """
-        with self._lock:
-            # Controlli esistenza
-            if self._market_data.empty:
-                return {}
-
-            # Filtra solo campi esistenti
-            existing_fields = [f for f in mid_fields if f in self._market_data.columns]
-            if not existing_fields:
-                return {}
-
-            try:
-                if tickers is None:
-                    data = self._market_data[existing_fields]
-                else:
-                    # Filtra ticker esistenti
-                    existing_tickers = [t for t in tickers if t in self._market_data.index]
-                    if not existing_tickers:
-                        return {}
-                    data = self._market_data.loc[existing_tickers, existing_fields]
-
-                means = data.values.mean(axis=1)
-                return {ticker: means[i] for i, ticker in enumerate(data.index)}
-
-            except Exception as e:
-                logger.error(f"Error getting mid dict: {e}")
-                return {}
+        """Get mid prices as dict. Lock-free after snapshot refresh."""
+        buf = self._get_snapshot()
+        if buf.empty:
+            return {}
+        existing_fields = [f for f in mid_fields if f in buf.columns]
+        if not existing_fields:
+            return {}
+        try:
+            if tickers is None:
+                data = buf[existing_fields]
+            else:
+                existing_tickers = [t for t in tickers if t in buf.index]
+                if not existing_tickers:
+                    return {}
+                data = buf.loc[existing_tickers, existing_fields]
+            means = data.values.mean(axis=1)
+            return {ticker: means[i] for i, ticker in enumerate(data.index)}
+        except Exception as e:
+            logger.error(f"Error getting mid dict: {e}")
+            return {}
 
     def get_last_update(self, ticker: str) -> Optional[datetime]:
-        """Get last update time for ticker"""
+        """Get last update time for ticker."""
         with self._lock:
             return self._last_update.get(ticker)
 
     def get_securities(self) -> List[str]:
-        """Get list of securities"""
-        with self._lock:
-            return list(self._market_data.index) if not self._market_data.empty else []
+        """Get list of securities."""
+        buf = self._get_snapshot()
+        return list(buf.index) if not buf.empty else []
 
     def set_dataframe(self, df: pd.DataFrame):
-        """Replace entire DataFrame"""
+        """Replace entire DataFrame."""
         with self._lock:
-            self._market_data = df.copy() if not df.empty else pd.DataFrame()
+            self._write_buf = df.copy() if not df.empty else pd.DataFrame()
+            self._dirty = True
 
     def has_ticker(self, ticker: str) -> bool:
-        """Check if ticker exists"""
-        with self._lock:
-            return ticker in self._market_data.index if not self._market_data.empty else False
+        """Check if ticker exists."""
+        buf = self._get_snapshot()
+        return ticker in buf.index if not buf.empty else False
 
     def has_field(self, field: str) -> bool:
-        """Check if field exists"""
-        with self._lock:
-            return field in self._market_data.columns if not self._market_data.empty else False
+        """Check if field exists."""
+        buf = self._get_snapshot()
+        return field in buf.columns if not buf.empty else False
 
 
 class StateStore:
@@ -249,8 +218,8 @@ class StateStore:
     AGGIORNAMENTO: Metodi sempre sicuri anche con namespace/key mancanti.
     """
 
-    def __init__(self, locker: Lock):
-        self._lock = locker
+    def __init__(self, locker: Lock = None):
+        self._lock = locker if locker is not None else RLock()
         self._state_data: Dict[str, Dict[str, Any]] = defaultdict(dict)
 
     def update(self, namespace: str, key: str, data: Any):
@@ -368,8 +337,8 @@ class EventStore:
     AGGIORNAMENTO: Metodi sempre sicuri anche con event_type mancante.
     """
 
-    def __init__(self, locker: Lock, default_maxlen: int = 1000):
-        self._lock = locker
+    def __init__(self, locker: Lock = None, default_maxlen: int = 1000):
+        self._lock = locker if locker is not None else Lock()
         self._default_maxlen = default_maxlen
         self._events: Dict[str, deque] = {}
         self._maxlens: Dict[str, int] = {}
@@ -477,8 +446,8 @@ class BlobStore:
     AGGIORNAMENTO: Metodi sempre sicuri anche con key mancante.
     """
 
-    def __init__(self, locker: Lock):
-        self._lock = locker
+    def __init__(self, locker: Lock = None):
+        self._lock = locker if locker is not None else Lock()
         self._blobs: Dict[str, Any] = {}
         self._metadata: Dict[str, Dict[str, Any]] = {}
 
@@ -584,8 +553,8 @@ class OrderStore:
     active orders remain in memory at all times.
     """
 
-    def __init__(self, locker: Lock):
-        self._lock = locker
+    def __init__(self, locker: Lock = None):
+        self._lock = locker if locker is not None else Lock()
         self._orders: Dict[str, Any] = {}  # mktOrderId -> Order
 
     def update(self, order: Any) -> None:
