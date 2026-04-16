@@ -108,19 +108,46 @@ class EtfFiPriceEngine(StrategyUI):
         self.market_data.set_securities(self._all_securities, "market")
         self.book_mid = pd.Series(index=self._all_securities, dtype=float)
         bbg_sub_mgr = self.market_data.get_subscription_manager()
-        self._subscribe_instruments(bbg_sub_mgr)
+        self._subscribe_etf(bbg_sub_mgr)
+        self._subscribe_index(bbg_sub_mgr)
+        self._subscribe_futures(bbg_sub_mgr)
         self._subscribe_fx(bbg_sub_mgr)
         self._seed_initial_prices()
 
-    def _subscribe_instruments(self, bbg_sub_mgr) -> None:
-        """Subscribe to Bloomberg for all non-FX instruments (BID/ASK or LAST_PRICE for IR)."""
-        ir_contracts = set(self.irp_contracts_list + self.irs_contracts_list)
-        for instrument_id, subscription_string in self._subscription_dict.items():
-            fields = ["LAST_PRICE"] if instrument_id in ir_contracts else ["BID", "ASK"]
+    def _subscribe_etf(self, bbg_sub_mgr) -> None:
+        """Subscribe to Bloomberg BID/ASK for ETF instruments."""
+        for isin in self.etf_isins:
+            bbg_sub_mgr.subscribe_bloomberg(
+                id=isin,
+                subscription_string=self._subscription_dict[isin],
+                fields=["BID", "ASK"],
+                params={"interval": 1}
+            )
+
+    def _subscribe_index(self, bbg_sub_mgr) -> None:
+        """Subscribe to Bloomberg BID/ASK for index/driver instruments."""
+        for instrument_id in self.drivers_list:
             bbg_sub_mgr.subscribe_bloomberg(
                 id=instrument_id,
-                subscription_string=subscription_string,
-                fields=fields,
+                subscription_string=self._subscription_dict[instrument_id],
+                fields=["BID", "ASK"],
+                params={"interval": 1}
+            )
+
+    def _subscribe_futures(self, bbg_sub_mgr) -> None:
+        """Subscribe to Bloomberg for credit futures (BID/ASK) and IR/IRP contracts (LAST_PRICE)."""
+        for instrument_id in self.credit_futures_contracts:
+            bbg_sub_mgr.subscribe_bloomberg(
+                id=instrument_id,
+                subscription_string=self._subscription_dict[instrument_id],
+                fields=["BID", "ASK"],
+                params={"interval": 1}
+            )
+        for instrument_id in self.irp_contracts_list + self.irs_contracts_list:
+            bbg_sub_mgr.subscribe_bloomberg(
+                id=instrument_id,
+                subscription_string=self._subscription_dict[instrument_id],
+                fields=["LAST_PRICE"],
                 params={"interval": 1}
             )
 
