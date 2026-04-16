@@ -1,4 +1,3 @@
-
 import os
 import sqlite3
 import time as sleep_time
@@ -17,22 +16,19 @@ from sfm_data_provider.analytics.adjustments.fx_spot import FxSpotComponent
 from sfm_data_provider.analytics.adjustments.ter import TerComponent
 from sfm_data_provider.core.holidays.holiday_manager import HolidayManager
 
-from market_monitor.publishers.timeseries_publisher import TimeSeriesPublisher
+
 from datetime import datetime, time
-from typing import Dict, Set, Optional
+from typing import Optional
 import logging
 
 from sfm_data_provider.interface.bshdata import BshData
 
-from market_monitor.gui.implementations.GUI import GUI
-from market_monitor.publishers.redis_publisher import RedisMessaging
 from market_monitor.strategy.strategy_ui.StrategyUI import StrategyUI
 from user_strategy.equity.LiveQuoting.InputParamsQuoting import InputParamsQuoting
 from user_strategy.equity.LiveQuoting.price_publisher import PricePublisherHub
 from user_strategy.equity.LiveQuoting.pricing_engine import PricingModelRegistry
 from user_strategy.equity.LiveQuoting.utils import filter_outliers, round_series_to_tick
-from user_strategy.utils.bloomberg_subscription_utils.SubscriptionManager import SubscriptionManager
-from user_strategy.utils.pricing_models.AggregationFunctions import ForecastAggregator, TrimmedMean
+from user_strategy.utils.pricing_models.AggregationFunctions import EwmaOutlier
 
 from user_strategy.utils.pricing_models.PricingModel import ClusterPricingModel
 from user_strategy.utils.bloomberg_subscription_utils.SubscriptionManager import SubscriptionManager
@@ -40,7 +36,6 @@ from user_strategy.utils.bloomberg_subscription_utils.SubscriptionManager import
 logger = logging.getLogger(__name__)
 
 DB_ANAGRPHIC_PATH = r"V:\EquityETF\etf_equity_anagraphic_db.sqlite"
-
 
 
 class EtfEquityPriceEngine(StrategyUI):
@@ -110,7 +105,7 @@ class EtfEquityPriceEngine(StrategyUI):
         self.position: Optional[pd.Series] = None
         self.return_to_publish: list = [1, 2, 3, 4, 5, 6, 7, 8]
         self.today = pd.Timestamp.today().normalize()
-        self.yesterday = HolidayManager().previous_business_day(self.today)
+        self.yesterday = HolidayManager().previous_business_day(self.today, market='ETFP')
 
     def _filter_active_etps(self, isin_list: list) -> list:
         """
@@ -166,9 +161,9 @@ class EtfEquityPriceEngine(StrategyUI):
         snapshot_time = time(16, 45)
 
         fx_composition = self.API.info.get_fx_composition(
-            self.etfs, fx_fxfwrd='fx', reference_date=date(2026,3,2))
+            self.etfs, fx_fxfwrd='fx', reference_date=date(2026, 4, 2))
         fx_forward = self.API.info.get_fx_composition(
-            self.etfs, fx_fxfwrd="fxfwrd", reference_date=date(2026,3,2))
+            self.etfs, fx_fxfwrd="fxfwrd", reference_date=date(2026, 4, 2))
 
         for isin, isin_proxy in kwargs.get("fx_mapping", {}).items():
             fx_composition.loc[isin] = fx_composition.loc[isin_proxy]
@@ -228,32 +223,30 @@ class EtfEquityPriceEngine(StrategyUI):
         beta_cluster = self._prepare_beta_matrix(self.input_params.beta_cluster)
         beta_cluster_index = self._prepare_beta_matrix(self.input_params.beta_cluster_index)
 
-        self.input_params.set_forecast_aggregation_func(kwargs["pricing"])
-
         self.models = PricingModelRegistry()
-        self.models.register("cluster", ClusterPricingModel(
-            beta=beta_cluster,
-            returns=self.corrected_return,
-            forecast_aggregator=self.input_params.forecast_aggregator_cluster,
-            cluster_correction=self._calculate_cluster_correction(beta_cluster, 0),
-            name="theoretical_live_cluster_price",
-        ), self.corrected_return)
+        # self.models.register("cluster", ClusterPricingModel(
+        #     beta=beta_cluster,
+        #     returns=self.corrected_return,
+        #     forecast_aggregator=self.input_params.forecast_aggregator_cluster,
+        #     cluster_correction=self._calculate_cluster_correction(beta_cluster, 0),
+        #     name="theoretical_live_cluster_price",
+        # ), self.corrected_return)
 
         self.models.register("intraday", ClusterPricingModel(
             beta=beta_cluster,
             returns=self.corrected_return_intraday,
-            forecast_aggregator=TrimmedMean(0.2),
+            forecast_aggregator=EwmaOutlier(**self.kwargs['pricing']['cluster']['ewma_outlier']),
             cluster_correction=self._calculate_cluster_correction(beta_cluster, 0),
             name="theoretical_live_cluster_price",
         ), self.corrected_return_intraday)
 
-        self.models.register("index_cluster", ClusterPricingModel(
-            beta=beta_cluster_index,
-            returns=self.corrected_return,
-            forecast_aggregator=self.input_params.forecast_aggregator_cluster,
-            cluster_correction=self._calculate_cluster_correction(beta_cluster_index, 0),
-            name="theoretical_live_index_cluster_price",
-        ), self.corrected_return)
+        # self.models.register("index_cluster", ClusterPricingModel(
+        #     beta=beta_cluster_index,
+        #     returns=self.corrected_return,
+        #     forecast_aggregator=self.input_params.forecast_aggregator_cluster,
+        #     cluster_correction=self._calculate_cluster_correction(beta_cluster_index, 0),
+        #     name="theoretical_live_index_cluster_price",
+        # ), self.corrected_return)
 
     def _init_bloomberg(self, kwargs: dict) -> None:
         """Configura la sottoscrizione Bloomberg e pubblica i ritorni storici iniziali."""
@@ -286,9 +279,6 @@ class EtfEquityPriceEngine(StrategyUI):
             self.models.predict_all(self.mid_eur)
             logger.warning("Beta reload completed successfully")
 
-        elif action == "update_forecaster":
-            self._handle_update_forecaster(payload)
-
         elif action == "set_alpha":
             try:
                 val = float(payload.get("value", 1.0))
@@ -296,6 +286,42 @@ class EtfEquityPriceEngine(StrategyUI):
                 logger.warning(f"Alpha updated to {self.alpha:.2f}")
             except (TypeError, ValueError) as e:
                 logger.error(f"Invalid alpha value: {e}")
+
+        elif action == "set_outlier_std":
+            try:
+                from user_strategy.utils.pricing_models.AggregationFunctions import EwmaOutlier
+                val = float(payload.get("value", 3.0))
+                if val <= 0:
+                    raise ValueError("outlier_std must be positive")
+                updated = []
+                for name in self.models.model_names:
+                    entry = self.models._entries.get(name)
+                    if entry and hasattr(entry.model, "forecast_aggregator"):
+                        fc = entry.model.forecast_aggregator
+                        if isinstance(fc, EwmaOutlier):
+                            fc.outlier_threshold = val
+                            updated.append(name)
+                logger.warning(f"outlier_std updated to {val} on models: {updated}")
+            except (TypeError, ValueError) as e:
+                logger.error(f"Invalid outlier_std value: {e}")
+
+        elif action == "set_halflife":
+            try:
+                from user_strategy.utils.pricing_models.AggregationFunctions import EwmaOutlier, Ewma
+                val = float(payload.get("value", 10.0))
+                if val <= 0:
+                    raise ValueError("halflife must be positive")
+                updated = []
+                for name in self.models.model_names:
+                    entry = self.models._entries.get(name)
+                    if entry and hasattr(entry.model, "forecast_aggregator"):
+                        fc = entry.model.forecast_aggregator
+                        if isinstance(fc, (EwmaOutlier, Ewma)):
+                            fc.halflife = val
+                            updated.append(name)
+                logger.warning(f"halflife updated to {val} on models: {updated}")
+            except (TypeError, ValueError) as e:
+                logger.error(f"Invalid halflife value: {e}")
 
         elif action == "debug_isin":
             self._handle_debug_isin(payload)
@@ -498,7 +524,7 @@ class EtfEquityPriceEngine(StrategyUI):
                 self.get_mid()
 
             with _timer("predict_all", self.logger):
-                predictions = self.models.predict_all(self.mid_eur)
+                predictions = self.models.predict_all(self.mid_eur) or pd.DataFrame()
 
             if self.alpha < 1.0:
                 with _timer("alpha_blend", self.logger):
@@ -508,14 +534,36 @@ class EtfEquityPriceEngine(StrategyUI):
                             predictions[key] = self.alpha * pred + (1.0 - self.alpha) * self.mid_eur
 
             with _timer("round_prices", self.logger):
+                # Recuperiamo le serie gestendo il caso in cui la chiave non esista o sia None
+                idx_series = predictions.get("index_cluster")
+                if idx_series is None:
+                    idx_series = pd.Series(dtype=float)
+
+                clust_series = predictions.get("cluster")
+                if clust_series is None:
+                    clust_series = pd.Series(dtype=float)
+
+                intraday_series = predictions.get("intraday")
+                if intraday_series is None:
+                    intraday_series = pd.Series(dtype=float)
+
+                # Calcolo dei prezzi normalizzati
                 normalized_prices = {
-                    'live_idx': round_series_to_tick(predictions.get("index_cluster"), self.reference_tick_size),
-                    'live_clust': round_series_to_tick(predictions.get("cluster", pd.Series(dtype=float)).fillna(0),
-                                                       self.reference_tick_size),
-                    'intraday': round_series_to_tick(predictions.get("intraday", pd.Series(dtype=float)).fillna(0),
-                                                     self.reference_tick_size),
-                    'mid': round_series_to_tick(self.mid_eur.fillna(0), self.reference_tick_size),
-                    'normalized_mid': (self.mid_eur / self.etf_prices.loc[self.etf_prices.index.max()]),
+                    # Arrotondamento con riempimento dei None/NaN a 0
+                    'live_idx': round_series_to_tick(idx_series.fillna(0), self.reference_tick_size),
+
+                    'live_clust': round_series_to_tick(clust_series.fillna(0), self.reference_tick_size),
+
+                    'intraday': round_series_to_tick(intraday_series.fillna(0), self.reference_tick_size),
+
+                    # Gestione del mid_eur se fosse None
+                    'mid': round_series_to_tick(
+                        (self.mid_eur if self.mid_eur is not None else pd.Series([0])).fillna(0),
+                        self.reference_tick_size),
+
+                    # Protezione per la divisione: se etf_prices è None o vuoto, restituisce 0 o NaN
+                    'normalized_mid': (self.mid_eur / self.etf_prices.iloc[-1]) if (
+                            self.etf_prices is not None and not self.etf_prices.empty) else 0,
                 }
 
             with _timer("publish_gui", self.logger):
@@ -708,11 +756,10 @@ class EtfEquityPriceEngine(StrategyUI):
 
         return cluster_sizes.where(cluster_sizes == 1, (cluster_sizes - 1) / cluster_sizes)
 
+
 @contextmanager
 def _timer(label: str, log: logging.Logger = logger):
     t0 = sleep_time.perf_counter()
     yield
     elapsed_ms = (sleep_time.perf_counter() - t0) * 1000
     log.debug(f"[TIMER] {label}: {elapsed_ms:.1f} ms")
-
-

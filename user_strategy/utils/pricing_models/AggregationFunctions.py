@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, timedelta
 from typing import Union
 
 import pandas as pd
@@ -38,13 +38,15 @@ class Ewma(ForecastAggregator):
 
 
 class EwmaOutlier(ForecastAggregator):
-    def __init__(self, halflife: Union[int, float], outlier_std: float = None):
+    def __init__(self, halflife: Union[int, float], outlier_std: float = None, use_time: bool = False, *args, **kwargs):
         """
         :param halflife: Half-life for EWMA.
         :param outlier_std: Number of standard deviations to identify outliers.
         """
         self.halflife = halflife
         self.outlier_threshold = outlier_std
+        self.use_time = use_time
+
         self.yesterday: date = (pd.Timestamp.today() - CustomBDay).date()
 
     def remove_outliers(self, data: pd.DataFrame):
@@ -60,6 +62,14 @@ class EwmaOutlier(ForecastAggregator):
     def __call__(self, all_predictions: pd.DataFrame):
 
         cleaned_data = self.remove_outliers(all_predictions).sort_index(ascending=True)
+        if self.use_time:
+            return (cleaned_data.
+                ewm(halflife=timedelta(seconds=self.halflife), ignore_na=True, times=all_predictions.index).
+                mean().
+                ffill().
+                bfill().
+                iloc[-1])
+
         return (cleaned_data.
                         ewm(halflife=self.halflife, ignore_na=True).
                         mean().
