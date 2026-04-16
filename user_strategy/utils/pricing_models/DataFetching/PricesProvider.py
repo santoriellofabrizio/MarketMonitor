@@ -11,14 +11,13 @@ from user_strategy.utils.pricing_models.DataFetching.download_functions import d
     process_downloaded_prices, download_daily_prices, get_price_for_day_time
 from user_strategy.utils.pricing_models.ExcelStoringDecorator import save_to_excel
 from user_strategy.utils.InputParams import InputParams
-from user_strategy.utils.bloomberg_subscription_utils.SubscriptionManager import SubscriptionManager
 
 logger = logging.getLogger()
 
 
 class PricesProvider:
 
-    def __init__(self, etfs, input_params: InputParams = None, subscription_manager: SubscriptionManager = None,
+    def __init__(self, etfs, input_params: InputParams = None, subscription_dict: dict[str, str] = None,
                  instruments_to_download_eod: List[str] = None, additional_contracts: pd.DataFrame = None,
                  trading_currency: pd.DataFrame = None, **kwargs):
         """
@@ -36,7 +35,7 @@ class PricesProvider:
         """
         # -------------------------- INPUT PARAMS ------------------------------------------------------
         self.etfs = etfs
-        self._subscription_manager = subscription_manager
+        self._subscription_dict: dict[str, str] = subscription_dict or {}
         self._input_params: InputParams = input_params
         if self._input_params is None: self._input_params = {}
         self.additional_contracts = additional_contracts if additional_contracts is not None else pd.DataFrame()
@@ -273,7 +272,12 @@ class PricesProvider:
         Returns:
             str: Subscription string for the ticker.
         """
-        return self._subscription_manager.get_subscription_string(ticker)
+        if ticker in self._subscription_dict:
+            return self._subscription_dict[ticker]
+        if ticker.upper().endswith(("INDEX", "EQUITY", "CURNCY", "COMDTY", "CORP")):
+            return ticker
+        logging.warning(f"No Bloomberg subscription string found for {ticker}, returning as-is")
+        return ticker
 
 
 if __name__ == "__main__":
