@@ -101,7 +101,7 @@ class InputParamsFI(InputParams):
         self._elaborate_inputs()
 
     # -------------------------------------------------------------------------
-    # Initialization helpers
+    # Configuration
     # -------------------------------------------------------------------------
 
     def _set_config_parameters(self) -> None:
@@ -109,20 +109,36 @@ class InputParamsFI(InputParams):
         for key, value in self.params.items():
             setattr(self, key, value)
 
+    # -------------------------------------------------------------------------
+    # Data loading — orchestrator and sub-loaders
+    # -------------------------------------------------------------------------
+
     def _load_inputs(self) -> None:
         """Load all instrument data from SQLite and Oracle into class attributes."""
         if self._sql_db_manager is None:
             self._initialize_sql_db_manager()
+        self._load_etf_isins()
+        self._load_fx_data()
+        self._load_instrument_anagraphic()
+        self._load_ytm_mapping()
+        self._load_cluster_config()
+        self._load_hedge_ratios()
+        self._load_trading_config()
 
+    def _load_etf_isins(self) -> None:
         self.etf_isins = self._sql_db_manager.read_data(
             table='InstrumentsAnagraphic',
             where_clause="WHERE INSTRUMENT_TYPE = 'ETF'",
             columns=['INSTRUMENT_ID']
         )['INSTRUMENT_ID'].tolist()
 
+    def _load_fx_data(self) -> None:
         self.currency_exposure, self.currency_weights = self._get_currency_data(self.etf_isins)
+
+    def _load_instrument_anagraphic(self) -> None:
         self.drivers, self.credit_futures_data, self.index_data, self.irs_data, self.irp_data = self.get_drivers_data()
 
+    def _load_ytm_mapping(self) -> None:
         self.YTM_mapping = self._sql_db_manager.read_data(
             table='YasMapping', columns=['INSTRUMENT_ID', 'MAPPING_INSTRUMENT_ID']
         ).set_index("INSTRUMENT_ID")
@@ -133,6 +149,7 @@ class InputParamsFI(InputParams):
         )
         self.YTM_mapping = pd.concat([self.YTM_mapping, new_rows])
 
+    def _load_cluster_config(self) -> None:
         self.cluster_anagraphic = self._sql_db_manager.read_data(
             table='StatModelHyperparameters', columns=['INSTRUMENT_ID', 'CLUSTER_ID']
         ).set_index('INSTRUMENT_ID')
@@ -140,6 +157,7 @@ class InputParamsFI(InputParams):
             table='StatModelHyperparameters', columns=['INSTRUMENT_ID', 'BROTHER_ID']
         ).set_index('INSTRUMENT_ID')
 
+    def _load_hedge_ratios(self) -> None:
         hr_drivers_raw = self._sql_db_manager.read_data(
             table='BetaDriver', columns=['INSTRUMENT_ID', 'DRIVER', 'BETA'],
             where_clause="WHERE DATE = (SELECT MAX(DATE) FROM BetaDriver)"
@@ -154,38 +172,39 @@ class InputParamsFI(InputParams):
         ).pivot(index="INSTRUMENT_ID", columns="REFERENCE_INSTRUMENT_ID", values="BETA").fillna(0)
         self._check_hedge_ratios(self.hedge_ratios_cluster)
 
-        self.hedge_ratios_credit_futures_cluster = self._sql_db_manager.read_data(
+        cf_cluster_raw = self._sql_db_manager.read_data(
             table='CreditFuturesBetaCluster', columns=['INSTRUMENT_ID', 'REFERENCE_INSTRUMENT_ID', 'BETA'],
             where_clause="WHERE DATE = (SELECT MAX(DATE) FROM CreditFuturesBetaCluster)"
         ).pivot(index="INSTRUMENT_ID", columns="REFERENCE_INSTRUMENT_ID", values="BETA").fillna(0)
         new_rows = pd.DataFrame(
-            self.hedge_ratios_credit_futures_cluster.loc[self.credit_futures_data['INSTRUMENT']].values,
+            cf_cluster_raw.loc[self.credit_futures_data['INSTRUMENT']].values,
             index=self.credit_futures_data.index,
-            columns=self.hedge_ratios_credit_futures_cluster.columns
+            columns=cf_cluster_raw.columns
         )
-        self.hedge_ratios_credit_futures_cluster = pd.concat([self.hedge_ratios_credit_futures_cluster, new_rows])
+        self.hedge_ratios_credit_futures_cluster = pd.concat([cf_cluster_raw, new_rows])
         self._check_hedge_ratios(self.hedge_ratios_credit_futures_cluster)
 
         self.hedge_ratios_brothers = self._create_hedge_ratios_brothers(self.brothers)
-        self.hedge_ratios_credit_futures_brothers = self._sql_db_manager.read_data(
+
+        cf_brothers_raw = self._sql_db_manager.read_data(
             table='CreditFuturesFinancialConfig', columns=['INSTRUMENT_ID', 'DRIVER_INSTRUMENT_ID', 'WEIGHT']
         ).pivot(index="INSTRUMENT_ID", columns="DRIVER_INSTRUMENT_ID", values="WEIGHT").fillna(0)
         new_rows = pd.DataFrame(
-            self.hedge_ratios_credit_futures_brothers.loc[self.credit_futures_data['INSTRUMENT']].values,
+            cf_brothers_raw.loc[self.credit_futures_data['INSTRUMENT']].values,
             index=self.credit_futures_data.index,
-            columns=self.hedge_ratios_credit_futures_brothers.columns
+            columns=cf_brothers_raw.columns
         )
-        self.hedge_ratios_credit_futures_brothers = pd.concat([self.hedge_ratios_credit_futures_brothers, new_rows])
+        self.hedge_ratios_credit_futures_brothers = pd.concat([cf_brothers_raw, new_rows])
 
-        credit_futures_trading_currency = self._sql_db_manager.read_data(
+    def _load_trading_config(self) -> None:
+        cf_currencies = self._sql_db_manager.read_data(
             table='CreditFutures', columns=['INSTRUMENT_ID', 'UNDERLYING_INDEX', 'CURRENCY']
         )
         self.trading_currency = pd.concat([
-            credit_futures_trading_currency.set_index('INSTRUMENT_ID')['CURRENCY'],
-            credit_futures_trading_currency.set_index('UNDERLYING_INDEX')['CURRENCY'],
+            cf_currencies.set_index('INSTRUMENT_ID')['CURRENCY'],
+            cf_currencies.set_index('UNDERLYING_INDEX')['CURRENCY'],
             pd.DataFrame('EUR', index=self.etf_isins, columns=['CURRENCY'])
         ])
-
         price_multiplier = self._get_price_multipliers(self.drivers.index.tolist())
         self.price_multiplier = pd.concat([
             price_multiplier,
@@ -200,7 +219,7 @@ class InputParamsFI(InputParams):
         self.currencies_EUR_ccy: List[str] = self._currency_exposure.columns.tolist()
 
     # -------------------------------------------------------------------------
-    # Drivers data loading (split by instrument type)
+    # Instrument drivers (split by type)
     # -------------------------------------------------------------------------
 
     def get_drivers_data(self) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
@@ -369,29 +388,6 @@ class InputParamsFI(InputParams):
         ).fillna(0)
         return fx_comp, fx_weights.set_index("INSTRUMENT_ID")
 
-    def _create_hedge_ratios_brothers(self, brothers_df: pd.DataFrame) -> pd.DataFrame:
-        isins = brothers_df.index
-        hr_brothers = pd.DataFrame(0., index=isins, columns=isins, dtype=float)
-        for _, group in brothers_df.groupby('BROTHER_ID'):
-            brothers = group.index.to_list()
-            for isin in brothers:
-                other_brothers = [bro for bro in brothers if bro != isin]
-                if other_brothers:
-                    hr_brothers.loc[isin, other_brothers] = 1 / len(other_brothers)
-                else:
-                    hr_brothers.loc[isin, isin] = 1
-        return hr_brothers
-
-    def _get_price_multipliers(self, isin_list: List[str]) -> pd.DataFrame:
-        oracle_conn = self._get_oracle_connection()
-        isin_str = "','".join(isin_list)
-        query = (
-            f"SELECT a.exch_symbol, a.contract_size FROM AF_DATAMART_DBA.FUTURES_ROOTS a "
-            f"WHERE a.exch_symbol in ('{isin_str}')"
-        )
-        data, names = oracle_conn.execute_query(query)
-        return pd.DataFrame(data, columns=names).set_index('EXCH_SYMBOL')
-
     # -------------------------------------------------------------------------
     # EUREX code utilities
     # -------------------------------------------------------------------------
@@ -482,6 +478,33 @@ class InputParamsFI(InputParams):
             raise Exception(
                 f'These instruments have all hedge ratios equal to 0 in cluster model: {all_zero}'
             )
+
+    # -------------------------------------------------------------------------
+    # Hedge ratio helpers
+    # -------------------------------------------------------------------------
+
+    def _create_hedge_ratios_brothers(self, brothers_df: pd.DataFrame) -> pd.DataFrame:
+        isins = brothers_df.index
+        hr_brothers = pd.DataFrame(0., index=isins, columns=isins, dtype=float)
+        for _, group in brothers_df.groupby('BROTHER_ID'):
+            brothers = group.index.to_list()
+            for isin in brothers:
+                other_brothers = [bro for bro in brothers if bro != isin]
+                if other_brothers:
+                    hr_brothers.loc[isin, other_brothers] = 1 / len(other_brothers)
+                else:
+                    hr_brothers.loc[isin, isin] = 1
+        return hr_brothers
+
+    def _get_price_multipliers(self, isin_list: List[str]) -> pd.DataFrame:
+        oracle_conn = self._get_oracle_connection()
+        isin_str = "','".join(isin_list)
+        query = (
+            f"SELECT a.exch_symbol, a.contract_size FROM AF_DATAMART_DBA.FUTURES_ROOTS a "
+            f"WHERE a.exch_symbol in ('{isin_str}')"
+        )
+        data, names = oracle_conn.execute_query(query)
+        return pd.DataFrame(data, columns=names).set_index('EXCH_SYMBOL')
 
     # -------------------------------------------------------------------------
     # Properties (only those with actual logic)
