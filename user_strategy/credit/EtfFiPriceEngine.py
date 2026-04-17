@@ -52,18 +52,20 @@ class EtfFiPriceEngine(StrategyUI):
 
     def _setup_instrument_universe(self) -> None:
         """Build all instrument lists, the full securities universe and the subscription dict."""
-        self.etf_isins = self.input_params.etf_isins
-        self.drivers_data = self.input_params.drivers
+        dc = self.input_params.data_config
+
+        self.etf_isins = dc.etf_isins
+        self.drivers_data = dc.drivers
         self.drivers_list = self.drivers_data.index.to_list()
 
-        self.credit_futures_contracts_data = self.input_params.credit_futures_data
+        self.credit_futures_contracts_data = dc.credit_futures_data
         self.credit_futures_contracts = self.credit_futures_contracts_data.index.tolist()
-        self.index_drivers = self.input_params.index_data.index.to_list()
+        self.index_drivers = dc.index_data.index.to_list()
         cutoff_date = max(self.credit_futures_contracts_data['EXPIRY_DATE']) + dt.timedelta(days=97)
 
-        self.irs_data = self.input_params.irs_data
+        self.irs_data = dc.irs_data
         self.irs_contracts_list = self.irs_data.index.to_list()
-        self.irp_data = self.input_params.irp_data
+        self.irp_data = dc.irp_data
         self.irp_manager = IRPManager(
             cutoff_date,
             self.irp_data,
@@ -72,8 +74,8 @@ class EtfFiPriceEngine(StrategyUI):
         self.irp_contracts_data = self.irp_manager.get_contracts_list_data()
         self.irp_contracts_list = self.irp_contracts_data.index.to_list()
 
-        self.trading_currency: pd.DataFrame = self.input_params.trading_currency
-        self.fx_list = self.input_params.currency_exposure.columns.tolist()
+        self.trading_currency: pd.DataFrame = dc.trading_currency
+        self.fx_list = dc.currency_exposure.columns.tolist()
 
         self._all_securities = (self.etf_isins + self.fx_list + self.drivers_list +
                                 self.credit_futures_contracts + self.irp_contracts_list)
@@ -177,7 +179,7 @@ class EtfFiPriceEngine(StrategyUI):
         ])
         self.prices_provider = PricesProviderFI(
             etfs=self.etf_isins,
-            input_params=self.input_params,
+            input_params=self.input_params.data_config,
             subscription_dict=self._subscription_dict,
             instruments_to_download_eod=self.index_drivers + self.irs_contracts_list + self.irp_contracts_list,
             additional_contracts=additional_contracts,
@@ -285,7 +287,7 @@ class EtfFiPriceEngine(StrategyUI):
         Returns:
             pd.DataFrame: FX live correction.
         """
-        fx_book: pd.Series = self.book_mid[self.input_params.currencies_EUR_ccy]
+        fx_book: pd.Series = self.book_mid[self.input_params.data_config.currencies_EUR_ccy]
         return self.prices_provider.get_fx_correction(fx_book, cumulative=self._cumulative_returns)
 
     def wait_for_book_initialization(self):
@@ -298,12 +300,10 @@ class EtfFiPriceEngine(StrategyUI):
 
     def _setup_pricing_models(self) -> None:
         """Initialize TheoreticalPriceManager with all models except NAV (needs historical data)."""
-        self.cluster_correction: pd.Series = self._calculate_cluster_correction(
-            self.input_params.hedge_ratios_cluster
-        )
-        self.brothers_correction: pd.Series = self._calculate_cluster_correction(
-            self.input_params.hedge_ratios_brothers
-        )
+        pc = self.input_params.pricing_config
+
+        self.cluster_correction: pd.Series = self._calculate_cluster_correction(pc.hedge_ratios_cluster)
+        self.brothers_correction: pd.Series = self._calculate_cluster_correction(pc.hedge_ratios_brothers)
 
         self.theoretical_price_manager = TheoreticalPriceManager()
 
@@ -313,9 +313,9 @@ class EtfFiPriceEngine(StrategyUI):
             instruments=self.etf_isins,
             model=ClusterPricingModel(
                 name="th live cluster price",
-                beta=self.input_params.hedge_ratios_cluster,
+                beta=pc.hedge_ratios_cluster,
                 returns=self.corrected_returns,
-                forecast_aggregator=self.input_params.forecast_aggregator_cluster,
+                forecast_aggregator=pc.forecast_aggregator_cluster,
                 cluster_correction=self.cluster_correction,
             )
         )
@@ -325,9 +325,9 @@ class EtfFiPriceEngine(StrategyUI):
             instruments=self.etf_isins,
             model=ClusterPricingModel(
                 name="th live brother price",
-                beta=self.input_params.hedge_ratios_brothers,
+                beta=pc.hedge_ratios_brothers,
                 returns=self.corrected_returns,
-                forecast_aggregator=self.input_params.forecast_aggregator_brother,
+                forecast_aggregator=pc.forecast_aggregator_brother,
                 cluster_correction=self.brothers_correction,
             )
         )
@@ -337,9 +337,9 @@ class EtfFiPriceEngine(StrategyUI):
             instruments=self.etf_isins,
             model=DriverPricingModel(
                 name="th live driver price",
-                beta=self.input_params.hedge_ratios_drivers,
+                beta=pc.hedge_ratios_drivers,
                 returns=self.corrected_returns,
-                forecast_aggregator=self.input_params.forecast_aggregator_driver,
+                forecast_aggregator=pc.forecast_aggregator_driver,
             )
         )
         self.theoretical_price_manager.add_pricing(
@@ -348,11 +348,11 @@ class EtfFiPriceEngine(StrategyUI):
             instruments=self.credit_futures_contracts + self.index_drivers,
             model=ClusterPricingModel(
                 name="th live cluster credit futures price",
-                beta=self.input_params.hedge_ratios_credit_futures_cluster.loc[
+                beta=pc.hedge_ratios_credit_futures_cluster.loc[
                     self.credit_futures_contracts + self.index_drivers
                 ],
                 returns=self.corrected_returns,
-                forecast_aggregator=self.input_params.forecast_aggregator_cluster,
+                forecast_aggregator=pc.forecast_aggregator_cluster,
                 disable_warning=True,
             )
         )
@@ -362,9 +362,9 @@ class EtfFiPriceEngine(StrategyUI):
             instruments=self.credit_futures_contracts,
             model=ClusterPricingModel(
                 name="th live brother credit futures price",
-                beta=self.input_params.hedge_ratios_credit_futures_brothers.loc[self.credit_futures_contracts],
+                beta=pc.hedge_ratios_credit_futures_brothers.loc[self.credit_futures_contracts],
                 returns=self.corrected_returns,
-                forecast_aggregator=self.input_params.forecast_aggregator_brother,
+                forecast_aggregator=pc.forecast_aggregator_brother,
                 disable_warning=True,
             )
         )

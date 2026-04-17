@@ -41,29 +41,23 @@ class PricesProvider:
         self.additional_contracts = additional_contracts if additional_contracts is not None else pd.DataFrame()
         self.trading_currency = trading_currency if trading_currency is not None else pd.DataFrame()
 
-        # Extract parameters from `self._input_params` if provided, else use defaults
-        if isinstance(self._input_params, InputParams):
-            self.currencies_EUR_ccy = getattr(self._input_params, 'currencies_EUR_ccy', kwargs.get('currencies_EUR_ccy', []))
-            self.price_snipping_time: time = getattr(self._input_params, 'price_snipping_time',
-                                                     kwargs.get('price_snipping_time', time(17)))
-            self.drivers_anagraphic = getattr(self._input_params, 'drivers', kwargs.get('drivers', pd.DataFrame()))
-            self.index_anagraphic = getattr(self._input_params, 'index_data', kwargs.get('index_data', pd.DataFrame()))
-            self.use_cache_ts: bool = getattr(self._input_params, 'use_cache_ts', kwargs.get('use_cache_ts', True))
-            self.number_of_days: int = getattr(self._input_params, 'number_of_days', kwargs.get('number_of_days', 22))
-            self.ytm_mapping: pd.DataFrame = getattr(self._input_params, 'YTM_mapping', kwargs.get('YTM_mapping', pd.DataFrame()))
-            self.currency_weights: pd.DataFrame = getattr(self._input_params, 'currency_weights', kwargs.get('currency_weights', pd.DataFrame()))
-            self.ter_manual = getattr(self._input_params, 'ter_manual', kwargs.get('ter_manual', pd.DataFrame()))
-        elif isinstance(self._input_params, dict):
-            self.currencies_EUR_ccy = self._input_params.get('currencies_EUR_ccy', kwargs.get('currencies_EUR_ccy', []))
-            self.price_snipping_time: time = self._input_params.get('price_snipping_time',
-                                                     kwargs.get('price_snipping_time', time(17)))
-            self.drivers_anagraphic = self._input_params.get('drivers', kwargs.get('drivers', pd.DataFrame()))
-            self.index_anagraphic = self._input_params.get('index_data', kwargs.get('index_data', pd.DataFrame()))
-            self.use_cache_ts: bool = self._input_params.get('use_cache_ts', kwargs.get('use_cache_ts', True))
-            self.number_of_days: int = self._input_params.get('number_of_days', kwargs.get('number_of_days', 22))
-            self.ytm_mapping: pd.DataFrame = self._input_params.get('YTM_mapping', kwargs.get('YTM_mapping', pd.DataFrame()))
-            self.currency_weights: pd.DataFrame = self._input_params.get('currency_weights', kwargs.get('currency_weights', pd.DataFrame()))
-            self.ter_manual: pd.DataFrame = self._input_params.get('ter_manual', kwargs.get('ter_manual', pd.DataFrame()))
+        # Extract parameters from `self._input_params` if provided, else use defaults.
+        # Accepts InputParams subclasses, DataFetchingConfig, or any duck-typed object;
+        # dict is handled separately since it uses .get() instead of getattr.
+        if isinstance(self._input_params, dict):
+            _get = lambda attr, default: self._input_params.get(attr, default)
+        else:
+            _get = lambda attr, default: getattr(self._input_params, attr, default)
+
+        self.currencies_EUR_ccy = _get('currencies_EUR_ccy', kwargs.get('currencies_EUR_ccy', []))
+        self.price_snipping_time: time = _get('price_snipping_time', kwargs.get('price_snipping_time', time(17)))
+        self.drivers_anagraphic = _get('drivers', kwargs.get('drivers', pd.DataFrame()))
+        self.index_anagraphic = _get('index_data', kwargs.get('index_data', pd.DataFrame()))
+        self.use_cache_ts: bool = _get('use_cache_ts', kwargs.get('use_cache_ts', True))
+        self.number_of_days: int = _get('number_of_days', kwargs.get('number_of_days', 22))
+        self.ytm_mapping: pd.DataFrame = _get('YTM_mapping', kwargs.get('YTM_mapping', pd.DataFrame()))
+        self.currency_weights: pd.DataFrame = _get('currency_weights', kwargs.get('currency_weights', pd.DataFrame()))
+        self.ter_manual: pd.DataFrame = _get('ter_manual', kwargs.get('ter_manual', pd.DataFrame()))
 
         if instruments_to_download_eod is None:
             self.instruments_to_download_eod = []

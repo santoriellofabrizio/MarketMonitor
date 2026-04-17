@@ -28,7 +28,7 @@ class InputParamsFIQuoting(InputParamsFI):
         super().set_forecast_aggregation_func(kwargs)
         try:
             params = kwargs["brother"]
-            self._forecast_aggregator_brother = forecast_aggregation[params["forecast_aggregation"]](
+            self.forecast_aggregator_brother = forecast_aggregation[params["forecast_aggregation"]](
                 **params[params["forecast_aggregation"]]
             )
         except KeyError:

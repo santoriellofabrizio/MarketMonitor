@@ -10,6 +10,7 @@ from pandas._libs.tslibs.offsets import BDay
 
 from user_strategy.fixed_income.InstrumentDbManager.InstrumentDbManager import InstrumentDbManager
 from user_strategy.utils import CustomBDay
+from user_strategy.utils.FIInputConfig import DataFetchingConfig, PricingConfig
 from user_strategy.utils.pricing_models.AggregationFunctions import ForecastAggregator, forecast_aggregation
 from user_strategy.utils.SvnDownloader import download_fxdincomedb_from_svn
 from user_strategy.utils.InputParams import InputParams
@@ -99,6 +100,7 @@ class InputParamsFI(InputParams):
 
         self._load_inputs()
         self._elaborate_inputs()
+        self._build_configs()
 
     # -------------------------------------------------------------------------
     # Configuration
@@ -217,6 +219,38 @@ class InputParamsFI(InputParams):
         """Add EUR prefix to FX columns and build currencies list."""
         self._currency_exposure.columns = ["EUR" + c for c in self._currency_exposure.columns]
         self.currencies_EUR_ccy: List[str] = self._currency_exposure.columns.tolist()
+
+    def _build_configs(self) -> None:
+        """Assemble the two typed config objects from loaded attributes."""
+        self.data_config = DataFetchingConfig(
+            etf_isins=self.etf_isins,
+            drivers=self.drivers,
+            index_data=self.index_data,
+            credit_futures_data=self.credit_futures_data,
+            irs_data=self.irs_data,
+            irp_data=self.irp_data,
+            YTM_mapping=self.YTM_mapping,
+            currencies_EUR_ccy=self.currencies_EUR_ccy,
+            currency_weights=self.currency_weights,
+            currency_exposure=self.currency_exposure,  # property validates completeness
+            trading_currency=self.trading_currency,
+            price_snipping_time=self.price_snipping_time,
+            number_of_days=self.number_of_days,
+            use_cache_ts=self.use_cache_ts,
+        )
+        self.pricing_config = PricingConfig(
+            hedge_ratios_cluster=self.hedge_ratios_cluster,
+            hedge_ratios_drivers=self.hedge_ratios_drivers,
+            hedge_ratios_brothers=self.hedge_ratios_brothers,
+            hedge_ratios_credit_futures_cluster=self.hedge_ratios_credit_futures_cluster,
+            hedge_ratios_credit_futures_brothers=self.hedge_ratios_credit_futures_brothers,
+            cluster_anagraphic=self.cluster_anagraphic,
+            brothers=self.brothers,
+            forecast_aggregator_cluster=self.forecast_aggregator_cluster,
+            forecast_aggregator_driver=self.forecast_aggregator_driver,
+            forecast_aggregator_nav=self.forecast_aggregator_nav,
+            forecast_aggregator_brother=self.forecast_aggregator_brother,
+        )
 
     # -------------------------------------------------------------------------
     # Instrument drivers (split by type)
