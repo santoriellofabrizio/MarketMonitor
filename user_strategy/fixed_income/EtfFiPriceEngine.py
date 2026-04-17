@@ -14,7 +14,7 @@ from user_strategy.utils.pricing_models.DataFetching.PricesProviderFI import Pri
 from user_strategy.utils.InputParamsFIQuoting import InputParamsFIQuoting
 from user_strategy.utils.pricing_models.PricingModel import ClusterPricingModel, DriverPricingModel, \
     CreditFuturesCalendarSpreadPricingModel, CreditFuturesInterestRatePricingModel, NavPricingModel
-from user_strategy.utils.pricing_models.TheoreticalPriceManager import TheoreticalPriceManager
+from user_strategy.utils.pricing_models.PricingModelRegistry import PricingModelRegistry
 from user_strategy.utils.pricing_models.IRPManager import IRPManager
 from user_strategy.utils.enums import TICK_SIZE
 
@@ -194,8 +194,7 @@ class EtfFiPriceEngine(StrategyUI):
 
     def _setup_nav_model(self) -> None:
         """Add the NAV pricing model (must be called after historical data is loaded)."""
-        self.theoretical_price_manager.add_pricing(
-            dtype=float,
+        self.pricing_model_registry.register(
             name="th live nav price",
             instruments=self.etf_isins,
             model=NavPricingModel(
@@ -299,16 +298,15 @@ class EtfFiPriceEngine(StrategyUI):
     # -------------------------------------------------------------------------
 
     def _setup_pricing_models(self) -> None:
-        """Initialize TheoreticalPriceManager with all models except NAV (needs historical data)."""
+        """Initialize PricingModelRegistry with all models except NAV (needs historical data)."""
         pc = self.input_params.pricing_config
 
         self.cluster_correction: pd.Series = self._calculate_cluster_correction(pc.hedge_ratios_cluster)
         self.brothers_correction: pd.Series = self._calculate_cluster_correction(pc.hedge_ratios_brothers)
 
-        self.theoretical_price_manager = TheoreticalPriceManager()
+        self.pricing_model_registry = PricingModelRegistry()
 
-        self.theoretical_price_manager.add_pricing(
-            dtype=float,
+        self.pricing_model_registry.register(
             name="th live cluster price",
             instruments=self.etf_isins,
             model=ClusterPricingModel(
@@ -319,8 +317,7 @@ class EtfFiPriceEngine(StrategyUI):
                 cluster_correction=self.cluster_correction,
             )
         )
-        self.theoretical_price_manager.add_pricing(
-            dtype=float,
+        self.pricing_model_registry.register(
             name="th live brother price",
             instruments=self.etf_isins,
             model=ClusterPricingModel(
@@ -331,8 +328,7 @@ class EtfFiPriceEngine(StrategyUI):
                 cluster_correction=self.brothers_correction,
             )
         )
-        self.theoretical_price_manager.add_pricing(
-            dtype=float,
+        self.pricing_model_registry.register(
             name="th live driver price",
             instruments=self.etf_isins,
             model=DriverPricingModel(
@@ -342,8 +338,7 @@ class EtfFiPriceEngine(StrategyUI):
                 forecast_aggregator=pc.forecast_aggregator_driver,
             )
         )
-        self.theoretical_price_manager.add_pricing(
-            dtype=float,
+        self.pricing_model_registry.register(
             name="th live cluster credit futures price",
             instruments=self.credit_futures_contracts + self.index_drivers,
             model=ClusterPricingModel(
@@ -356,8 +351,7 @@ class EtfFiPriceEngine(StrategyUI):
                 disable_warning=True,
             )
         )
-        self.theoretical_price_manager.add_pricing(
-            dtype=float,
+        self.pricing_model_registry.register(
             name="th live brother credit futures price",
             instruments=self.credit_futures_contracts,
             model=ClusterPricingModel(
@@ -383,8 +377,7 @@ class EtfFiPriceEngine(StrategyUI):
         self.credit_futures_proxy['Expiry'] = self.credit_futures_contracts_data['EXPIRY_DATE']
         self.credit_futures_proxy['Proxy Expiry'] = self.credit_futures_contracts_data['PREVIOUS_CONTRACT_EXPIRY_DATE']
 
-        self.theoretical_price_manager.add_pricing(
-            dtype=float,
+        self.pricing_model_registry.register(
             name="th live spread credit futures price",
             instruments=self.credit_futures_contracts,
             model=CreditFuturesCalendarSpreadPricingModel(
@@ -394,8 +387,7 @@ class EtfFiPriceEngine(StrategyUI):
                 irp_manager=self.irp_manager,
             )
         )
-        self.theoretical_price_manager.add_pricing(
-            dtype=float,
+        self.pricing_model_registry.register(
             name="th live ir credit futures price",
             instruments=self.credit_futures_contracts,
             model=CreditFuturesInterestRatePricingModel(
@@ -407,47 +399,47 @@ class EtfFiPriceEngine(StrategyUI):
         )
 
     def calculate_theoretical_prices(self):
-        self.theoretical_price_manager.calculate_theorical_prices(self.book_mid, self.corrected_returns)
+        self.pricing_model_registry.calculate_theoretical_prices(self.book_mid, self.corrected_returns)
 
     def _publish_prices(self) -> None:
         """Export all theoretical prices and book mid to Redis."""
-        pm = self.theoretical_price_manager
+        pm = self.pricing_model_registry
         rtt = self.round_series_to_tick
         now = dt.datetime.now().isoformat()
 
         self.gui_redis.export_message(
             "th_live_cluster_price",
-            rtt(pm.get_theoretical_prices("th live cluster price"), TICK_SIZE),
+            rtt(pm.get_prices("th live cluster price"), TICK_SIZE),
             skip_if_unchanged=True
         )
         self.gui_redis.export_message(
             "th_live_driver_price",
-            rtt(pm.get_theoretical_prices("th live driver price"), TICK_SIZE),
+            rtt(pm.get_prices("th live driver price"), TICK_SIZE),
             skip_if_unchanged=True
         )
         self.gui_redis.export_message(
             "th_live_brother_price",
-            rtt(pm.get_theoretical_prices("th live brother price"), TICK_SIZE),
+            rtt(pm.get_prices("th live brother price"), TICK_SIZE),
             skip_if_unchanged=True
         )
         self.gui_redis.export_message(
             "th_live_credit_futures_cluster_price",
-            pm.get_theoretical_prices("th live cluster credit futures price"),
+            pm.get_prices("th live cluster credit futures price"),
             skip_if_unchanged=True
         )
         self.gui_redis.export_message(
             "th_live_credit_futures_brother_price",
-            pm.get_theoretical_prices("th live brother credit futures price"),
+            pm.get_prices("th live brother credit futures price"),
             skip_if_unchanged=True
         )
         self.gui_redis.export_message(
             "th_live_credit_futures_spread_price",
-            pm.get_theoretical_prices("th live spread credit futures price").dropna(),
+            pm.get_prices("th live spread credit futures price").dropna(),
             skip_if_unchanged=True
         )
         self.gui_redis.export_message(
             "th_live_credit_futures_ir_price",
-            pm.get_theoretical_prices("th live ir credit futures price").dropna(),
+            pm.get_prices("th live ir credit futures price").dropna(),
             skip_if_unchanged=True
         )
         self.gui_redis.export_message("mid", self.book_mid, skip_if_unchanged=True)

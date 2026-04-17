@@ -33,7 +33,7 @@ class DataFetchingConfig:
 
 @dataclass
 class PricingConfig:
-    """Parameters consumed by TheoreticalPriceManager and pricing models.
+    """Parameters consumed by PricingModelRegistry and pricing models.
 
     Captures the calibrated model inputs: hedge ratios, cluster / brothers
     topology, and forecast aggregation functions for each model type.
