@@ -43,42 +43,50 @@ class InputParamsFI(InputParams):
         self._sql_db_manager: InstrumentDbManager | None = None
         self._pcf_db_manager: OracleDynamicDataQuery | None = None
 
-        # Data containers
+        # Runtime config
         self.use_cache_ts: bool = True
         self.outlier_percentage_NAV: None | float = None
-        self._YTM_mapping: pd.DataFrame = pd.DataFrame()
-        self.cluster_anagraphic: pd.DataFrame = pd.DataFrame()
-        self._hedge_ratios_cluster: pd.DataFrame = pd.DataFrame()
-        self._hedge_ratios_drivers: pd.DataFrame = pd.DataFrame()
-        self._hedge_ratios_brothers: pd.DataFrame = pd.DataFrame()
-        self._hedge_ratios_credit_futures_cluster: pd.DataFrame = pd.DataFrame()
-        self._hedge_ratios_credit_futures_brothers: pd.DataFrame = pd.DataFrame()
-        self._currency_exposure: pd.DataFrame = pd.DataFrame()
-        self._currency_weights: pd.DataFrame = pd.DataFrame()
-        self._forecast_aggregator_driver: ForecastAggregator | None = None
-        self._forecast_aggregator_cluster: ForecastAggregator | None = None
-        self._forecast_aggregator_brother: ForecastAggregator | None = None
-        self._forecast_aggregator_nav: ForecastAggregator | None = None
-
-        # Instrument lists
-        self.etf_isins: List[str] = []
-        self.all_instruments: List[str] = []
-        self.drivers: pd.DataFrame = pd.DataFrame()
-
-        # Scalar config (overrideable from YAML via _set_config_parameters)
         self.book_storage_size: int | None = None
         self.number_of_days: int | None = None
-        self.min_ctv_to_show_trades: float = 0
         self.trade_export_cell: str | None = None
         self.trade_export_sheet: str | None = None
-        self.output_trade_columns: List[str] | None = None
-        self.halflife_ewma_cluster: float | None = None
-        self.halflife_ewma_nav: float | None = None
-        self.halflife_ewma_driver: float | None = None
         self.output_prices_cell: str | None = None
         self.output_prices_sheet: str | None = None
 
-        # Date/time (computed after _set_config_parameters so YAML values are applied first)
+        # Instrument data (populated by _load_inputs)
+        self.etf_isins: List[str] = []
+        self.drivers: pd.DataFrame = pd.DataFrame()
+        self.credit_futures_data: pd.DataFrame = pd.DataFrame()
+        self.index_data: pd.DataFrame = pd.DataFrame()
+        self.irs_data: pd.DataFrame = pd.DataFrame()
+        self.irp_data: pd.DataFrame = pd.DataFrame()
+        self.brothers: pd.DataFrame = pd.DataFrame()
+        self.cluster_anagraphic: pd.DataFrame = pd.DataFrame()
+        self.trading_currency: pd.DataFrame = pd.DataFrame()
+        self.price_multiplier: pd.DataFrame = pd.DataFrame()
+
+        # Hedge ratios (populated by _load_inputs)
+        self.hedge_ratios_cluster: pd.DataFrame = pd.DataFrame()
+        self.hedge_ratios_drivers: pd.DataFrame = pd.DataFrame()
+        self.hedge_ratios_brothers: pd.DataFrame = pd.DataFrame()
+        self.hedge_ratios_credit_futures_cluster: pd.DataFrame = pd.DataFrame()
+        self.hedge_ratios_credit_futures_brothers: pd.DataFrame = pd.DataFrame()
+
+        # FX (populated by _load_inputs + _elaborate_inputs)
+        self._currency_exposure: pd.DataFrame = pd.DataFrame()
+        self.currency_weights: pd.DataFrame = pd.DataFrame()
+        self.currencies_EUR_ccy: List[str] = []
+
+        # Forecast aggregators (populated via pricing setter)
+        self.forecast_aggregator_driver: ForecastAggregator | None = None
+        self.forecast_aggregator_cluster: ForecastAggregator | None = None
+        self.forecast_aggregator_brother: ForecastAggregator | None = None
+        self.forecast_aggregator_nav: ForecastAggregator | None = None
+
+        # YTM (populated by _load_inputs, used by PricesProvider)
+        self.YTM_mapping: pd.DataFrame = pd.DataFrame()
+
+        # Date/time (computed after _set_config_parameters)
         self.today: pd.Timestamp = pd.Timestamp.today()
         self.yesterday = (self.today - CustomBDay).date()
         self._set_config_parameters()
@@ -128,16 +136,17 @@ class InputParamsFI(InputParams):
         self.cluster_anagraphic = self._sql_db_manager.read_data(
             table='StatModelHyperparameters', columns=['INSTRUMENT_ID', 'CLUSTER_ID']
         ).set_index('INSTRUMENT_ID')
-        brothers = self._sql_db_manager.read_data(
+        self.brothers = self._sql_db_manager.read_data(
             table='StatModelHyperparameters', columns=['INSTRUMENT_ID', 'BROTHER_ID']
         ).set_index('INSTRUMENT_ID')
 
-        self.hedge_ratios_drivers = self._sql_db_manager.read_data(
+        hr_drivers_raw = self._sql_db_manager.read_data(
             table='BetaDriver', columns=['INSTRUMENT_ID', 'DRIVER', 'BETA'],
             where_clause="WHERE DATE = (SELECT MAX(DATE) FROM BetaDriver)"
         ).pivot(index="INSTRUMENT_ID", columns="DRIVER", values="BETA").fillna(0).reindex(
             columns=self.drivers.index, fill_value=0
         )
+        self.hedge_ratios_drivers = hr_drivers_raw.loc[self.etf_isins]
 
         self.hedge_ratios_cluster = self._sql_db_manager.read_data(
             table='BetaCluster', columns=['INSTRUMENT_ID', 'REFERENCE_INSTRUMENT_ID', 'BETA'],
@@ -157,7 +166,7 @@ class InputParamsFI(InputParams):
         self.hedge_ratios_credit_futures_cluster = pd.concat([self.hedge_ratios_credit_futures_cluster, new_rows])
         self._check_hedge_ratios(self.hedge_ratios_credit_futures_cluster)
 
-        self.hedge_ratios_brothers = self._create_hedge_ratios_brothers(brothers)
+        self.hedge_ratios_brothers = self._create_hedge_ratios_brothers(self.brothers)
         self.hedge_ratios_credit_futures_brothers = self._sql_db_manager.read_data(
             table='CreditFuturesFinancialConfig', columns=['INSTRUMENT_ID', 'DRIVER_INSTRUMENT_ID', 'WEIGHT']
         ).pivot(index="INSTRUMENT_ID", columns="DRIVER_INSTRUMENT_ID", values="WEIGHT").fillna(0)
@@ -180,14 +189,15 @@ class InputParamsFI(InputParams):
         price_multiplier = self._get_price_multipliers(self.drivers.index.tolist())
         self.price_multiplier = pd.concat([
             price_multiplier,
-            self.credit_futures_data.merge(price_multiplier, how="left", left_on="INSTRUMENT", right_index=True)['CONTRACT_SIZE']
+            self.credit_futures_data.merge(
+                price_multiplier, how="left", left_on="INSTRUMENT", right_index=True
+            )['CONTRACT_SIZE']
         ])
 
     def _elaborate_inputs(self) -> None:
-        """Post-process loaded data: add EUR prefix to FX columns and build all_instruments list."""
+        """Add EUR prefix to FX columns and build currencies list."""
         self._currency_exposure.columns = ["EUR" + c for c in self._currency_exposure.columns]
         self.currencies_EUR_ccy: List[str] = self._currency_exposure.columns.tolist()
-        self.all_instruments = self.etf_isins + self.drivers.index.tolist()
 
     # -------------------------------------------------------------------------
     # Drivers data loading (split by instrument type)
@@ -233,9 +243,7 @@ class InputParamsFI(InputParams):
         drivers_data['MARKET_CODE'] = ''
         for price_source_market in drivers_price_source['PRICE_SOURCE_MARKET'].unique():
             mask = drivers_data['PRICE_SOURCE_MARKET'] == price_source_market
-            if price_source_market == 'EUREX':
-                drivers_data.loc[mask, 'MARKET_CODE'] = drivers_data.index[mask].astype(str)
-            elif price_source_market == 'EURONEXT':
+            if price_source_market in ('EUREX', 'EURONEXT'):
                 drivers_data.loc[mask, 'MARKET_CODE'] = drivers_data.index[mask].astype(str)
             else:
                 raise Exception(
@@ -293,7 +301,9 @@ class InputParamsFI(InputParams):
             table="MeetingDatesRateCuts", columns=["MEETING_DATE", "REGION"]
         )
         irp_data = irp_raw.merge(meeting_dates, on="REGION", how="left")
-        irp_data = irp_data.groupby("INSTRUMENT_ID").agg(REGION=("REGION", "first"), MEETING_DATE=("MEETING_DATE", list))
+        irp_data = irp_data.groupby("INSTRUMENT_ID").agg(
+            REGION=("REGION", "first"), MEETING_DATE=("MEETING_DATE", list)
+        )
         irp_data["MEETING_DATE"] = irp_data["MEETING_DATE"].apply(
             lambda lst: [pd.to_datetime(x, format="%d/%m/%Y").date() for x in lst if pd.notna(x)]
         )
@@ -304,10 +314,9 @@ class InputParamsFI(InputParams):
     # -------------------------------------------------------------------------
 
     def _get_currency_data(self, isins: List[str]) -> Tuple[pd.DataFrame, pd.DataFrame]:
-        fx_mapping = self._sql_db_manager.read_data(
+        fx_mapping_dict = self._sql_db_manager.read_data(
             table='FxMapping', columns=['INSTRUMENT_ID', 'MAPPING_INSTRUMENT_ID']
-        )
-        fx_mapping_dict = fx_mapping.set_index('INSTRUMENT_ID')['MAPPING_INSTRUMENT_ID'].to_dict()
+        ).set_index('INSTRUMENT_ID')['MAPPING_INSTRUMENT_ID'].to_dict()
 
         currency_exposure_oracle, currency_weights_oracle = self._get_currency_data_oracle(isins)
         currency_exposure_manual, currency_weights_manual = self._get_currency_data_manual(isins)
@@ -475,7 +484,7 @@ class InputParamsFI(InputParams):
             )
 
     # -------------------------------------------------------------------------
-    # Properties
+    # Properties (only those with actual logic)
     # -------------------------------------------------------------------------
 
     @property
@@ -491,45 +500,13 @@ class InputParamsFI(InputParams):
         for key in ["cluster", "driver", "nav"]:
             try:
                 params = kwargs[key]
-                setattr(self, f"_forecast_aggregator_{key}",
+                setattr(self, f"forecast_aggregator_{key}",
                         forecast_aggregation[params["forecast_aggregation"]](**params[params["forecast_aggregation"]]))
             except KeyError:
                 self.logger.critical(
                     f"forecast aggregator for {key} not implemented. available: {forecast_aggregation}"
                 )
                 raise KeyboardInterrupt
-
-    @property
-    def forecast_aggregator_cluster(self) -> ForecastAggregator | None:
-        return self._forecast_aggregator_cluster
-
-    @forecast_aggregator_cluster.setter
-    def forecast_aggregator_cluster(self, val):
-        self._forecast_aggregator_cluster = val
-
-    @property
-    def forecast_aggregator_nav(self) -> ForecastAggregator | None:
-        return self._forecast_aggregator_nav
-
-    @forecast_aggregator_nav.setter
-    def forecast_aggregator_nav(self, val):
-        self._forecast_aggregator_nav = val
-
-    @property
-    def forecast_aggregator_driver(self) -> ForecastAggregator | None:
-        return self._forecast_aggregator_driver
-
-    @forecast_aggregator_driver.setter
-    def forecast_aggregator_driver(self, val):
-        self._forecast_aggregator_driver = val
-
-    @property
-    def forecast_aggregator_brother(self) -> ForecastAggregator | None:
-        return self._forecast_aggregator_brother
-
-    @forecast_aggregator_brother.setter
-    def forecast_aggregator_brother(self, val):
-        self._forecast_aggregator_brother = val
 
     @property
     def currency_exposure(self) -> pd.DataFrame:
@@ -542,59 +519,3 @@ class InputParamsFI(InputParams):
     @currency_exposure.setter
     def currency_exposure(self, value: pd.DataFrame) -> None:
         self._currency_exposure = value
-
-    @property
-    def currency_weights(self) -> pd.DataFrame:
-        return self._currency_weights
-
-    @currency_weights.setter
-    def currency_weights(self, value: pd.DataFrame) -> None:
-        self._currency_weights = value
-
-    @property
-    def YTM_mapping(self) -> pd.DataFrame:
-        return self._YTM_mapping
-
-    @YTM_mapping.setter
-    def YTM_mapping(self, value: pd.DataFrame) -> None:
-        self._YTM_mapping = value
-
-    @property
-    def hedge_ratios_cluster(self) -> pd.DataFrame:
-        return self._hedge_ratios_cluster
-
-    @hedge_ratios_cluster.setter
-    def hedge_ratios_cluster(self, value: pd.DataFrame) -> None:
-        self._hedge_ratios_cluster = value
-
-    @property
-    def hedge_ratios_drivers(self) -> pd.DataFrame:
-        return self._hedge_ratios_drivers
-
-    @hedge_ratios_drivers.setter
-    def hedge_ratios_drivers(self, value: pd.DataFrame) -> None:
-        self._hedge_ratios_drivers = value.loc[self.etf_isins, self.drivers.index.tolist()]
-
-    @property
-    def hedge_ratios_brothers(self) -> pd.DataFrame:
-        return self._hedge_ratios_brothers
-
-    @hedge_ratios_brothers.setter
-    def hedge_ratios_brothers(self, value: pd.DataFrame) -> None:
-        self._hedge_ratios_brothers = value
-
-    @property
-    def hedge_ratios_credit_futures_brothers(self) -> pd.DataFrame:
-        return self._hedge_ratios_credit_futures_brothers
-
-    @hedge_ratios_credit_futures_brothers.setter
-    def hedge_ratios_credit_futures_brothers(self, value: pd.DataFrame) -> None:
-        self._hedge_ratios_credit_futures_brothers = value
-
-    @property
-    def hedge_ratios_credit_futures_cluster(self) -> pd.DataFrame:
-        return self._hedge_ratios_credit_futures_cluster
-
-    @hedge_ratios_credit_futures_cluster.setter
-    def hedge_ratios_credit_futures_cluster(self, value: pd.DataFrame) -> None:
-        self._hedge_ratios_credit_futures_cluster = value

@@ -10,7 +10,6 @@ import datetime as dt
 from market_monitor.publishers.redis_publisher import RedisMessaging
 from market_monitor.strategy.strategy_ui.StrategyUI import StrategyUI
 from user_strategy.utils import CustomBDay
-from sfm_data_provider.core.holidays.holiday_manager import HolidayManager
 from user_strategy.utils.pricing_models.DataFetching.PricesProviderFI import PricesProviderFI
 from user_strategy.utils.InputParamsFIQuoting import InputParamsFIQuoting
 from user_strategy.utils.pricing_models.PricingModel import ClusterPricingModel, DriverPricingModel, \
@@ -40,12 +39,8 @@ class EtfFiPriceEngine(StrategyUI):
         self.book_mid: pd.Series | None = None
         self.input_params = InputParamsFIQuoting(kwargs)
         self._cumulative_returns: bool = True
-        self.bloomberg_subscription_config_path = kwargs.get("bloomberg_subscription_config_path", None)
-        self.yesterday_misalignment_cluster: pd.Series = pd.Series(dtype=float)
-        self.last_export_time = 0
         self.book_storage: deque = deque(maxlen=self.input_params.book_storage_size)
         self.gui_redis = RedisMessaging()
-        self.holidays = HolidayManager()
 
         self._setup_instrument_universe()
         self._setup_pricing_models()
@@ -62,7 +57,6 @@ class EtfFiPriceEngine(StrategyUI):
         self.drivers_list = self.drivers_data.index.to_list()
 
         self.credit_futures_contracts_data = self.input_params.credit_futures_data
-        self.credit_futures = self.credit_futures_contracts_data['INSTRUMENT'].unique().tolist()
         self.credit_futures_contracts = self.credit_futures_contracts_data.index.tolist()
         self.index_drivers = self.input_params.index_data.index.to_list()
         cutoff_date = max(self.credit_futures_contracts_data['EXPIRY_DATE']) + dt.timedelta(days=97)
@@ -78,9 +72,8 @@ class EtfFiPriceEngine(StrategyUI):
         self.irp_contracts_data = self.irp_manager.get_contracts_list_data()
         self.irp_contracts_list = self.irp_contracts_data.index.to_list()
 
-        self.currency_exposure: pd.DataFrame = self.input_params.currency_exposure
         self.trading_currency: pd.DataFrame = self.input_params.trading_currency
-        self.fx_list = self.currency_exposure.columns.tolist()
+        self.fx_list = self.input_params.currency_exposure.columns.tolist()
 
         self._all_securities = (self.etf_isins + self.fx_list + self.drivers_list +
                                 self.credit_futures_contracts + self.irp_contracts_list)
