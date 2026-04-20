@@ -161,12 +161,15 @@ class EtfEquityPriceEngine(StrategyUI):
         snapshot_time = time(16, 45)
 
         fx_composition = self.API.info.get_fx_composition(
-            self.etfs, fx_fxfwrd='fx', reference_date=date(2026, 4, 2))
+            self.etfs, fx_fxfwrd='fx', reference_date=date(2026, 4, 15))
         fx_forward = self.API.info.get_fx_composition(
-            self.etfs, fx_fxfwrd="fxfwrd", reference_date=date(2026, 4, 2))
+            self.etfs, fx_fxfwrd="fxfwrd", reference_date=date(2026, 4, 15))
 
         for isin, isin_proxy in kwargs.get("fx_mapping", {}).items():
             fx_composition.loc[isin] = fx_composition.loc[isin_proxy]
+
+        logger.warning(f"missing composition for "
+                       f"{', '.join([self.isin_to_ticker.get(i, i) for i in fx_composition.loc[fx_composition.sum(axis=1) < 0.9].index])}")
 
         self.fx_prices = self.API.market.get_daily_currency(
             id=self.currencies, start=start, end=end, snapshot_time=snapshot_time,
@@ -174,13 +177,13 @@ class EtfEquityPriceEngine(StrategyUI):
         ).reindex(days)
 
         self.etf_prices = self.API.market.get_daily_etf(
-            id=self.etfs, start=start, end=end, snapshot_time=snapshot_time, timeout=10,
+            id=self.etfs, start=start, end=today(), snapshot_time=snapshot_time, timeout=10,
             fallbacks=[{"source": "bloomberg", "market": mkt} for mkt in ["IM", "FP", "NA"]],
         ).reindex(days)
 
         self.fx_prices_intraday = filter_outliers(
             self.API.market.get_intraday_fx(
-                id=self.currencies, start=start_intraday, end=end, frequency="15m",
+                id=self.currencies, start=start_intraday, end=today(), frequency="15m",
                 fallbacks=[{"source": "bloomberg"}])
             .between_time("10:00", "17:00"))
 
@@ -193,6 +196,8 @@ class EtfEquityPriceEngine(StrategyUI):
 
         self.etf_prices = self.etf_prices.interpolate("time")
         self.etf_prices_intraday = self.etf_prices_intraday.interpolate("time")
+        self.fx_prices = self.fx_prices.interpolate("time")
+        self.fx_prices_intraday = self.fx_prices_intraday.interpolate("time")
 
         fx_forward_prices = self.API.market.get_daily_fx_forward(
             quoted_currency=fx_forward.columns.tolist(), start=start, end=end)

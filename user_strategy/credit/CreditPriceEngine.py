@@ -13,7 +13,9 @@ from sfm_data_provider.analytics.adjustments.fx_spot import FxSpotComponent
 from sfm_data_provider.analytics.adjustments.ter import TerComponent
 from sfm_data_provider.analytics.adjustments.ytm import YtmComponent
 from sfm_data_provider.core.holidays.holiday_manager import HolidayManager
+from sfm_data_provider.core.instruments.instrument_factory import InstrumentFactory
 from sfm_data_provider.interface.bshdata import BshData
+
 
 from market_monitor.publishers.redis_publisher import RedisMessaging
 from market_monitor.strategy.strategy_ui.StrategyUI import StrategyUI
@@ -28,7 +30,7 @@ from user_strategy.utils.pricing_models.IRPManager import IRPManager
 from user_strategy.utils.enums import TICK_SIZE
 
 
-class EtfFiPriceEngine(StrategyUI):
+class CreditPriceEngine(StrategyUI):
     """
     Fixed income market monitor. Responsibilities:
     - Instrument subscription: _setup_instrument_universe, _build_subscription_dict, on_market_data_setting
@@ -47,14 +49,16 @@ class EtfFiPriceEngine(StrategyUI):
         self._cumulative_returns = True
         self.book_storage = deque(maxlen=20)
         self.gui_redis = RedisMessaging()
-        self._setup_instrument_universe()
         self.API = BshData(r"C:\AFMachineLearning\Libraries\MarketMonitor\etc\config\bshdata_config.yaml")
+        self._setup_instrument_universe()
         self._setup_historical_data()
         self._setup_pricing_models()
 
     # ── Subscription ──────────────────────────────────────────────────────────
 
     def _setup_instrument_universe(self) -> None:
+
+        factory = InstrumentFactory()
         dc = self.input_params.data_config
         self.etf_isins = dc.etf_isins
         self.drivers_data = dc.drivers
@@ -72,6 +76,8 @@ class EtfFiPriceEngine(StrategyUI):
             self.irs_data.loc[~self.irs_data.index.isin(["ESTR3M", "SOFR3M"])]
         )
         self.irp_contracts_data = self.irp_manager.get_contracts_list_data()
+        self.futures_list = [d for d in self.drivers_list if factory.classifier.future.matches(d)]
+        self.cds_list = [d for d in self.drivers_list if factory.classifier.cds.matches(d)]
         self.irp_contracts_list = self.irp_contracts_data.index.to_list()
 
         self.trading_currency = dc.trading_currency
@@ -139,6 +145,15 @@ class EtfFiPriceEngine(StrategyUI):
                                            source="timescale",
                                            start=self.start_date,
                                            end=self.end)
+
+        irp = self.API.market.get("index", self.start_date, self.end, self.irp_contracts_list,
+                                  snapshot_time=snapshot_time,
+                                  subscription=self.irp_contracts_list,
+                                  source='bloomberg')
+
+        irs = self.API.market.get_daily_repo_rates(start=self.start_date, end=self.end, id=self.irs_contracts_list)
+        futures = self.API.market.get_daily_future(self.start_date, self.end, id=self.futures_list, fallbacks=[{"source":"bloomberg"}])
+        cds = self.API.market.get_daily_cdx(self.start_date, self.end, id=self.cds_list)
 
         for isin, mapping in self.input_params.get_ytm_mapping().items():
             ytm[isin] = ytm[mapping]

@@ -1,6 +1,8 @@
 import logging
-from user_strategy.utils.pricing_models.AggregationFunctions import forecast_aggregation
+
 from user_strategy.utils.InputParamsFI import InputParamsFI
+from user_strategy.utils.pricing_models.AggregationFunctions import forecast_aggregation
+
 
 logger = logging.getLogger()
 

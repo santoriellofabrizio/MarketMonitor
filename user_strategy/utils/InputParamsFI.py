@@ -45,14 +45,8 @@ class InputParamsFI(InputParams):
         self._pcf_db_manager: OracleDynamicDataQuery | None = None
 
         # Runtime config
-        self.use_cache_ts: bool = True
         self.outlier_percentage_NAV: None | float = None
-        self.book_storage_size: int | None = None
         self.number_of_days: int | None = None
-        self.trade_export_cell: str | None = None
-        self.trade_export_sheet: str | None = None
-        self.output_prices_cell: str | None = None
-        self.output_prices_sheet: str | None = None
 
         # Instrument data (populated by _load_inputs)
         self.etf_isins: List[str] = []
@@ -151,6 +145,9 @@ class InputParamsFI(InputParams):
         )
         self.YTM_mapping = pd.concat([self.YTM_mapping, new_rows])
 
+    def get_ytm_mapping(self):
+        return self.YTM_mapping['MAPPING_INSTRUMENT_ID'].to_dict()
+
     def _load_cluster_config(self) -> None:
         self.cluster_anagraphic = self._sql_db_manager.read_data(
             table='StatModelHyperparameters', columns=['INSTRUMENT_ID', 'CLUSTER_ID']
@@ -236,7 +233,6 @@ class InputParamsFI(InputParams):
             trading_currency=self.trading_currency,
             price_snipping_time=self.price_snipping_time,
             number_of_days=self.number_of_days,
-            use_cache_ts=self.use_cache_ts,
         )
         self.pricing_config = PricingConfig(
             hedge_ratios_cluster=self.hedge_ratios_cluster,
@@ -371,9 +367,13 @@ class InputParamsFI(InputParams):
             table='FxMapping', columns=['INSTRUMENT_ID', 'MAPPING_INSTRUMENT_ID']
         ).set_index('INSTRUMENT_ID')['MAPPING_INSTRUMENT_ID'].to_dict()
 
+
         currency_exposure_oracle, currency_weights_oracle = self._get_currency_data_oracle(isins)
         currency_exposure_manual, currency_weights_manual = self._get_currency_data_manual(isins)
         currency_exposure_manual.reindex(columns=currency_exposure_oracle.columns, fill_value=0)
+
+        self.fx_mapping = fx_mapping_dict
+        self.fx_hard_coding = currency_exposure_manual
 
         missing_isins = [isin for isin in self.etf_isins if isin not in currency_exposure_oracle.index]
         for isin in reversed(missing_isins):
@@ -396,8 +396,8 @@ class InputParamsFI(InputParams):
                 currency_weights_oracle = pd.concat([currency_weights_oracle, rows_to_copy])
                 missing_isins.remove(isin)
 
-        if missing_isins:
-            raise Exception(f'Missing isins: {missing_isins}')
+        # if missing_isins:
+        #     raise Exception(f'Missing isins: {missing_isins}')
         return currency_exposure_oracle, currency_weights_oracle
 
     def _get_currency_data_oracle(self, isins: List[str]) -> Tuple[pd.DataFrame, pd.DataFrame]:

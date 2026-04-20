@@ -213,25 +213,30 @@ class CreditTradeAnalysis(StrategyUI):
         if valid.empty:
             return
 
-        mid = valid.mean(axis=1)
-
         grouped = {}
 
-        for instrument_id, price in mid.items():
+        for instrument_id in valid.index:
             _, isin = instrument_id.split("_", 1)
             ccy = self.market_data.currency_information.get(instrument_id, "EUR")
 
+            bid = valid.loc[instrument_id, "BID"]
+            ask = valid.loc[instrument_id, "ASK"]
+
             if isin not in grouped:
                 grouped[isin] = {}
+            if ccy not in grouped[isin]:
+                grouped[isin][ccy] = {"bids": [], "asks": []}
 
-            grouped[isin][ccy] = price
+            grouped[isin][ccy]["bids"].append(bid)
+            grouped[isin][ccy]["asks"].append(ask)
+
         for isin, ccy_prices in grouped.items():
             if isin not in self.mid:
                 self.mid[isin] = FairvaluePrice.by_currency(isin, {})
-            for currency, prices in ccy_prices.items():
-                self.mid[isin]._prices[currency] = sum(prices) / len(prices) if isinstance(prices, dict) else prices
-
-        self.book_storage.append(dict(self.mid))
+            for currency, book in ccy_prices.items():
+                best_bid = max(book["bids"])
+                best_ask = min(book["asks"])
+                self.mid[isin]._prices[currency] = (best_bid + best_ask) / 2
 
     def on_stop(self):
         self.trade_manager.close()

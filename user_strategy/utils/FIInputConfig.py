@@ -28,7 +28,6 @@ class DataFetchingConfig:
     trading_currency: pd.DataFrame
     price_snipping_time: time
     number_of_days: int
-    use_cache_ts: bool
 
 
 @dataclass
