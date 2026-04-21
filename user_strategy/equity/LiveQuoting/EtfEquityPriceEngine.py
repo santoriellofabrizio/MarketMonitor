@@ -26,6 +26,7 @@ from user_strategy.utils.pricing_models.AggregationFunctions import EwmaOutlier
 from user_strategy.utils.pricing_models.PricingModel import ClusterPricingModel
 from user_strategy.utils.pricing_models.PricingModelRegistry import PricingModelRegistry
 from user_strategy.utils.bloomberg_subscription_utils.SubscriptionManager import SubscriptionManager
+from user_strategy.utils.pricing_models.cluster_correction import calculate_cluster_correction
 
 logger = logging.getLogger(__name__)
 
@@ -228,7 +229,7 @@ class EtfEquityPriceEngine(BasePriceEngine):
             beta=beta_cluster,
             returns=self.corrected_return_intraday,
             forecast_aggregator=EwmaOutlier(**self.kwargs['pricing']['cluster']['ewma_outlier']),
-            cluster_correction=ClusterPricingModel.calculate_cluster_correction(beta_cluster, 0),
+            cluster_correction=calculate_cluster_correction(beta_cluster, 0),
             name="theoretical_live_cluster_price",
         ), returns_source=self.corrected_return_intraday)
 

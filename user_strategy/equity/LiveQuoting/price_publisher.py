@@ -24,7 +24,6 @@ class PricePublisherHub:
 
     _TS_FIELD_META: Dict[str, Dict[str, str]] = {
         'mid': {'type': 'MID'},
-        'normalized_mid': {'type': 'MISALIGNMENT'},
         'live_idx': {'type': 'MODEL_PRICE', 'model': 'index_cluster'},
         'live_clust': {'type': 'MODEL_PRICE', 'model': 'cluster'},
         'intraday': {'type': 'MODEL_PRICE', 'model': 'intraday_cluster'},
@@ -92,14 +91,15 @@ class PricePublisherHub:
         """Export normalized prices via pub/sub (Redis or RabbitMQ)."""
         for channel, price_key in self._GUI_CHANNELS.items():
             try:
-                self.gui.export_message(
-                    channel,
-                    normalized_prices[price_key],
-                    skip_if_unchanged=True,
-                    flat_mode=True,
-                )
+                if price := normalized_prices.get(price_key):
+                    self.gui.export_message(
+                        channel,
+                        price,
+                        skip_if_unchanged=True,
+                        flat_mode=True,
+                    )
             except Exception as e:
-                logger.error(f"export_message failed for {channel}: {e}", exc_info=True)
+                logger.info(f"export_message failed for {channel}: {e}", exc_info=True)
 
     def publish_returns(self, last_return: pd.Series, last_return_intraday: pd.Series) -> None:
         """Publish live return_0 and intraday_return_0."""

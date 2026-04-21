@@ -1,149 +1,60 @@
 from collections import deque
 from datetime import datetime
 from typing import Optional, Any
-from dataclasses import dataclass
+from enum import Enum, auto
+
+
+class PriceKeyType(Enum):
+    SCALAR = auto()
+    CURRENCY = auto()
+    MARKET = auto()
 
 
 class FairvaluePrice:
-    """
-    Rappresenta il prezzo mid di un singolo strumento finanziario, con supporto
-    a tre modalità di indicizzazione: scalare, isin valuta, isin mercato.
-
-    Il tipo di chiave viene fissato alla costruzione tramite i classmethod factory
-    e non può essere modificato in seguito. Questo garantisce che ogni istanza abbia
-    una semantica chiara e prevedibile.
-
-    Attributes:
-        isin (str): Identificativo dello strumento (tipicamente ISIN, ma può essere
-            qualsiasi chiave usata nel sistema).
-
-    Examples:
-        >>> # Prezzo unico, indipendente da valuta/mercato
-        >>> p = FairvaluePrice.scalar("IT0001234567", 102.3)
-        >>> p.get()
-        102.3
-
-        >>> # Prezzo diverso per valuta
-        >>> p = FairvaluePrice.by_currency("IE00B4L5Y983", {"EUR": 98.5, "USD": 99.1})
-        >>> p.get(currency="EUR")
-        98.5
-
-        >>> # Prezzo diverso per mercato
-        >>> p = FairvaluePrice.by_market("IE00B4L5Y983", {"MIL": 98.4, "LSE": 98.6})
-        >>> p.get(market="LSE")
-        98.6
-    """
-
     __slots__ = ("isin", "_prices", "_key_type")
 
-    def __init__(self, isin: str, prices: dict, key_type: str):
-        """
-        Costruttore interno. Preferire i classmethod factory:
-        :meth:`scalar`, :meth:`by_currency`, :meth:`by_market`.
-
-        Args:
-            isin: Identificativo dello strumento.
-            prices: Dizionario interno dei prezzi. Per ``scalar`` usa la chiave
-                riservata ``"_scalar"``.
-            key_type: Uno tra ``"scalar"``, ``"currency"``, ``"market"``.
-        """
+    def __init__(self, isin: str, prices: dict, key_type: PriceKeyType):
         self.isin = isin
         self._prices = prices
         self._key_type = key_type
 
     @classmethod
-    def scalar(cls, isin: str | Any, value: float) -> "FairvaluePrice":
-        """
-        Crea un MidPrice con un singolo valore numerico, indipendente da
-        valuta o mercato.
-
-        Args:
-            isin: Identificativo dello strumento.
-            value: Prezzo mid.
-
-        Returns:
-            Istanza MidPrice di tipo ``scalar``.
-        """
-        return cls(isin=isin, prices={"_scalar": value}, key_type="scalar")
+    def scalar(cls, isin: str, value: float) -> "FairvaluePrice":
+        return cls(isin, {"_scalar": value}, PriceKeyType.SCALAR)
 
     @classmethod
     def by_currency(cls, isin: str, prices: dict[str, float]) -> "FairvaluePrice":
-        """
-        Crea un MidPrice con prezzi differenziati per valuta.
-
-        Utile quando lo stesso strumento quota prezzi diversi in EUR, USD, ecc.
-
-        Args:
-            isin: Identificativo dello strumento.
-            prices: Mappa ``{currency_code: mid_price}``.
-                Esempio: ``{"EUR": 98.5, "USD": 99.1}``.
-
-        Returns:
-            Istanza MidPrice di tipo ``currency``.
-        """
-        return cls(isin=isin, prices=prices, key_type="currency")
+        return cls(isin, prices, PriceKeyType.CURRENCY)
 
     @classmethod
     def by_market(cls, isin: str, prices: dict[str, float]) -> "FairvaluePrice":
-        """
-        Crea un MidPrice con prezzi differenziati per mercato/sede di negoziazione.
+        return cls(isin, prices, PriceKeyType.MARKET)
 
-        Utile quando lo stesso strumento quota su più exchange con prezzi distinti.
-
-        Args:
-            isin: Identificativo dello strumento.
-            prices: Mappa ``{market_id: mid_price}``.
-                Esempio: ``{"XPAR": 98.4, "XAMS": 98.6}``.
-
-        Returns:
-            Istanza MidPrice di tipo ``market``.
-        """
-        return cls(isin=isin, prices=prices, key_type="market")
+    def update_price(self, value: float, currency: str = None, market: str = None):
+        """Aggiorna in modo sicuro un prezzo esistente o ne aggiunge uno nuovo."""
+        if self._key_type == PriceKeyType.SCALAR:
+            self._prices["_scalar"] = value
+        elif self._key_type == PriceKeyType.CURRENCY:
+            if not currency: raise ValueError("Currency richiesta")
+            self._prices[currency] = value
+        elif self._key_type == PriceKeyType.MARKET:
+            if not market: raise ValueError("Market richiesto")
+            self._prices[market] = value
 
     def get(self, currency: str | None = None, market: str | None = None) -> float | None:
-        """
-        Restituisce il prezzo mid per la chiave specificata.
-
-        Il parametro da passare dipende dal tipo dell'istanza:
-
-        - ``scalar``: nessun argomento necessario.
-        - ``currency``: passare ``currency``.
-        - ``market``: passare ``market``.
-
-        Args:
-            currency: Codice valuta (es. ``"EUR"``). Obbligatorio per istanze
-                ``by_currency``, ignorato altrimenti.
-            market: Identificativo mercato (es. ``"MIL"``). Obbligatorio per
-                istanze ``by_market``, ignorato altrimenti.
-
-        Returns:
-            Il prezzo mid come ``float``, oppure ``None`` se la chiave non
-            è presente nel dizionario interno.
-
-        Raises:
-            ValueError: Se l'istanza è ``by_currency`` e ``currency`` è ``None``,
-                oppure se è ``by_market`` e ``market`` è ``None``.
-        """
-        if self._key_type == "scalar":
+        if self._key_type == PriceKeyType.SCALAR:
             return self._prices.get("_scalar")
-        elif self._key_type == "currency":
-            if currency is None:
-                raise ValueError(f"[{self.isin}] key_type='currency' ma currency=None")
-            return self._prices.get(currency)
-        elif self._key_type == "market":
-            if market is None:
-                raise ValueError(f"[{self.isin}] key_type='market' ma market=None")
-            return self._prices.get(market)
+
+        # Dispatching basato sul tipo di chiave
+        key = currency if self._key_type == PriceKeyType.CURRENCY else market
+        if key is None:
+            raise ValueError(f"[{self.isin}] Manca parametro per {self._key_type.name}")
+
+        return self._prices.get(key)
 
     @property
-    def prices(self) -> dict:
-        """
-        Accesso in sola lettura al dizionario interno dei prezzi.
-
-        Per istanze ``scalar`` contiene ``{"_scalar": value}``.
-        Per ``currency`` e ``market`` contiene la mappa originale passata al factory.
-        """
-        return self._prices
+    def key_type(self) -> PriceKeyType:
+        return self._key_type
 
 
 # Alias chiaro per uno snapshot completo

@@ -48,7 +48,7 @@ class StrategyUIAsync(ABC):
              storage (DataStorageUI): Interface for data storage.
              **kwargs: Additional configuration arguments. Read config for other info's.
          """
-        self.input_params = None
+
         self.q_trade: None | Queue | asyncio.Queue = q_trade
         self.synchronous_trade_handling: bool = True
         self.GUIs: dict[str, GUI] = {}

@@ -112,8 +112,6 @@ class EtfEquityLiveAnalysis(TradeAnalysisBase):
                                                                      "BID_SIZE": "bidBestLevel.quantity",
                                                                      "ASK_SIZE": "askBestLevel.quantity"})
         self.subscribe_kafka_trades()
-        self.global_subscription_service.subscribe_orders_kafka(id="FEHY", symbol_filter="FEHY JUN26", symbol_field='instrument.symbol', topic='COALESCENT_DUMA.XEUR.Order')
-
         self.global_subscription_service.subscribe_redis(channel="market:theoretical_live_intraday_price",
                                                          store='market')
 

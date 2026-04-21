@@ -158,9 +158,6 @@ class ClusterPricingModel(MultiPeriodLinearPricingModel):
 
         return all_predictions
 
-    def calculate_cluster_correction(self, threshold: float = 0.5):
-        self.cluster_correction = calculate_cluster_correction(self.beta, threshold)
-
 
 class DriverPricingModel(MultiPeriodLinearPricingModel):
 

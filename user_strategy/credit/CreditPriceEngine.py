@@ -42,7 +42,7 @@ class CreditPriceEngine(BasePriceEngine):
     """
 
     def __init__(self, *args, **kwargs):
-        self.end = today().date()
+        self.end = None
         self.start_date = None          # set properly in _setup_instrument_universe (needs holidays)
         self.book_mid: pd.Series | None = None
         self.input_params = InputParamsFIQuoting(kwargs)
@@ -56,6 +56,7 @@ class CreditPriceEngine(BasePriceEngine):
 
     def _setup_instrument_universe(self) -> None:
         self.start_date = self.holidays.subtract_business_days(today(), self.kwargs.get('number_of_days', 10))
+        self.end = self.holidays.subtract_business_days(today(), 1, 'ETFP')
 
         self.factory = InstrumentFactory()
         dc = self.input_params.data_config
@@ -75,10 +76,11 @@ class CreditPriceEngine(BasePriceEngine):
             self.irs_data.loc[~self.irs_data.index.isin(["ESTR3M", "SOFR3M"])]
         )
         self.irp_contracts_data = self.irp_manager.get_contracts_list_data()
-        self.futures_list = [d for d in self.drivers_list if self.factory.classifier.future.matches(d)]
-        self.cds_list = [d for d in self.drivers_list if self.factory.classifier.cds.matches(d)]
-        self.swap_list = [d for d in self.drivers_list if self.factory.classifier.swap.matches(d)]
-        self.irp_contracts_list = self.irp_contracts_data.index.to_list()
+        self.futures_list = [d.upper() for d in self.drivers_list if self.factory.classifier.future.matches(d)]
+        self.cds_list = [d.upper() for d in self.drivers_list if self.factory.classifier.cds.matches(d)]
+        self.swap_list = [d.upper() for d in self.drivers_list if self.factory.classifier.swap.matches(d)]
+        self.irp_contracts_list = [d.upper() for d in self.irp_contracts_data.index]
+        self.indexes_list = [d.upper() for d in self.irp_contracts_list + self.index_drivers]
 
         self.trading_currency = dc.trading_currency
         self.fx_list = dc.currency_exposure.columns.tolist()
@@ -123,7 +125,7 @@ class CreditPriceEngine(BasePriceEngine):
 
     def _register_instruments(self) -> None:
         self.index_instruments = [self.market_api.build_instrument(i, type='INDEX', autocomplete=True) for i in
-                                  self.irp_contracts_list + self.irs_contracts_list]
+                                  self.indexes_list + self.irs_contracts_list]
         self.cds_instruments = [self.market_api.build_instrument(i, type='CDXINDEX', autocomplete=True) for i in
                                 self.cds_list]
         self.etf_instruments = [self.market_api.build_instrument(i, type='ETP', autocomplete=True) for i in
@@ -132,6 +134,8 @@ class CreditPriceEngine(BasePriceEngine):
                                    self.futures_list]
         self.fx_instruments = [self.market_api.build_instrument(i, type='CURRENCYPAIR', autocomplete=True) for i in
                                self.fx_list]
+        self.rates_instruments = [self.market_api.build_instrument(i, type='INDEX', autocomplete=True) for i in
+                                 self.irs_contracts_list]
         self.swap_instruments = [self.market_api.build_instrument(i, type='SWAP', autocomplete=True) for i in
                                  self.swap_list]
 
@@ -139,6 +143,7 @@ class CreditPriceEngine(BasePriceEngine):
             inst.id: inst
             for inst in [*self.index_instruments,
                          *self.etf_instruments,
+                         *self.rates_instruments,
                          *self.cds_instruments,
                          *self.future_instruments,
                          *self.swap_instruments,
@@ -149,7 +154,8 @@ class CreditPriceEngine(BasePriceEngine):
 
     def _fetch_market_prices(self, days, snapshot_time) -> None:
 
-        index_prices = self.API.market.get_daily_index(self.start_date, self.end, self.irs_contracts_list)
+        rates_prices = self.market_api.get_daily_repo_rates(self.start_date, self.end, id=self.irs_contracts_list)
+        index_prices = self.API.market.get_daily_index(self.start_date, self.end, self.indexes_list)
 
         future_prices = self.API.market.get_daily_future(self.start_date, self.end, id=self.futures_list,
                                                          fallbacks=[{"source": "bloomberg"}])
@@ -169,7 +175,7 @@ class CreditPriceEngine(BasePriceEngine):
         )
 
         self.historical_prices = pd.concat(
-            [self.etf_prices, cds_prices, index_prices, future_prices, swap_prices], axis=1
+            [self.etf_prices, cds_prices, index_prices, future_prices, swap_prices, rates_prices], axis=1
         ).reindex(days).interpolate("time")
 
     def _fetch_info_data(self) -> None:
@@ -253,6 +259,8 @@ class CreditPriceEngine(BasePriceEngine):
     def _retry_failed_subscriptions(self) -> None:
         failed = {s.get("id") for s in self.global_subscription_service.get_failed_subscriptions() if
                   s.get("id") in self.etf_isins}
+        for sub in failed:
+            self.global_subscription_service.unsubscribe(sub, 'bloomberg')
         for market in _RETRY_MARKETS:
             for isin in failed:
                 self.global_subscription_service.subscribe_bloomberg(isin, f"{isin} {market} EQUITY", ["BID", "ASK"])

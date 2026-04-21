@@ -142,39 +142,35 @@ class CreditTradeAnalysis(TradeAnalysisBase):
         if raw is None or raw.empty:
             return
 
-        raw = raw.dropna(subset=["BID", "ASK"])
-        if raw.empty:
-            return
-
-        self.book_filter.update(raw)
-        valid = self.book_filter.get_valid_book(raw)
+        # Filtro rapido e validazione
+        valid = self.book_filter.get_valid_book(raw.dropna(subset=["BID", "ASK"]))
         if valid.empty:
             return
 
         grouped = {}
+        for inst_id, row in valid.iterrows():
+            # Split ottimizzato: se sai che è sempre il secondo elemento
+            isin = inst_id.split("_", 1)[1]
+            ccy = self.market_data.currency_information.get(inst_id, "EUR")
 
-        for instrument_id in valid.index:
-            _, isin = instrument_id.split("_", 1)
-            ccy = self.market_data.currency_information.get(instrument_id, "EUR")
+            # Aggregazione compatta
+            d = grouped.setdefault(isin, {}).setdefault(ccy, {"bids": [], "asks": []})
+            d["bids"].append(row["BID"])
+            d["asks"].append(row["ASK"])
 
-            bid = valid.loc[instrument_id, "BID"]
-            ask = valid.loc[instrument_id, "ASK"]
-
-            if isin not in grouped:
-                grouped[isin] = {}
-            if ccy not in grouped[isin]:
-                grouped[isin][ccy] = {"bids": [], "asks": []}
-
-            grouped[isin][ccy]["bids"].append(bid)
-            grouped[isin][ccy]["asks"].append(ask)
-
+        # Aggiornamento FairvaluePrice
         for isin, ccy_prices in grouped.items():
-            if isin not in self.mid:
-                self.mid[isin] = FairvaluePrice.by_currency(isin, {})
-            for currency, book in ccy_prices.items():
-                best_bid = max(book["bids"])
-                best_ask = min(book["asks"])
-                self.mid[isin]._prices[currency] = (best_bid + best_ask) / 2
+            tracker = self.mid.setdefault(isin, FairvaluePrice.by_currency(isin, {}))
+            for ccy, book in ccy_prices.items():
+                b, a = book["bids"], book["asks"]
+                if b and a:
+                    tracker.update_price((max(b) + min(a)) / 2, currency=ccy)
+
+        # Append dello stato attuale
+        self.book_storage.append(self.mid.copy())
+
+    def _post_trade_processing(self, processed: pd.DataFrame) -> None:
+        self.publish_trades_on_dashboard(self.trade_manager.get_trades_to_publish())
 
     @property
     def instruments(self) -> list:

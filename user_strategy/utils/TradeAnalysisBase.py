@@ -21,7 +21,7 @@ class TradeAnalysisBase(StrategyUI, ABC):
     Provides the full trade pipeline as a Template Method:
         on_trade → _enrich_trades → trade_manager → _post_trade_processing → publish
 
-    Shared concrete behaviour:
+    Shared concrete behavior:
         - Dashboard messaging init (Redis + Rabbit)
         - publish_trades_on_dashboard
         - on_start_strategy  (calls _pre_start_setup hook, then publishes last trades)
@@ -98,9 +98,10 @@ class TradeAnalysisBase(StrategyUI, ABC):
         new_trades = self._enrich_trades(new_trades)
         processed = self.trade_manager.on_trade(new_trades)
         self._post_trade_processing(processed)
-        self.publish_trades_on_dashboard(self.trade_manager.get_trades_to_publish())
 
-    def _enrich_trades(self, trades: pd.DataFrame) -> pd.DataFrame:
+
+    @staticmethod
+    def _enrich_trades(trades: pd.DataFrame) -> pd.DataFrame:
         """Override to add domain-specific columns before trade_manager ingestion."""
         return trades
 
