@@ -6,26 +6,20 @@ from pathlib import Path
 from time import sleep
 from typing import Literal
 
-
 import pandas as pd
 
-from market_monitor.publishers.rabbit_publisher import RabbitMessaging
-from market_monitor.publishers.redis_publisher import RedisMessaging
-from market_monitor.strategy.common.trade_manager.book_memory import BookStorage, BookSnapshot, FairvaluePrice
-from market_monitor.strategy.common.trade_manager.trade_manager import TradeManager
-from market_monitor.strategy.strategy_ui.StrategyUI import StrategyUI
+from market_monitor.strategy.common.trade_manager.book_memory import FairvaluePrice
 from market_monitor.utils.book_utils import SpreadEWMA, PriceEWMA
+from user_strategy.utils.TradeAnalysisBase import TradeAnalysisBase
 
 logger = logging.getLogger(__name__)
 
-class CreditTradeAnalysis(StrategyUI):
+
+class CreditTradeAnalysis(TradeAnalysisBase):
 
     def __init__(self, **kwargs) -> None:
+        book_filter_params = kwargs.pop("book_filter_params", {})
         super().__init__(**kwargs)
-        self.price_source: Literal['bloomberg', 'kafka'] = kwargs.get('price_source', 'kafka')
-        self.book_filter = SpreadEWMA(**kwargs.pop("book_filter_params", {}))
-        self.rabbit_trade_dashboard_messaging: RabbitMessaging | None = None
-        self.redis_trade_dashboard_messaging: RedisMessaging | None = None
 
         path_str = kwargs.get("instruments_list_path")
         excel_path = Path(path_str) if path_str else None
@@ -53,31 +47,9 @@ class CreditTradeAnalysis(StrategyUI):
         self.trade_isin_multiplier_mapping = self.instruments_df["multiplier"].to_dict()
         self.trade_isin_description_mapping = self.instruments_df["description"].to_dict()
         # -------------------------------------- BOOK & PRICE SECTION --------------------------------------------------
-        self.book_storage: BookStorage = BookStorage()
-
-        self.book_filter = SpreadEWMA(**kwargs.pop("book_filter_params", {}))
+        self.book_filter = SpreadEWMA(**book_filter_params)
         # -------------------------------------- SETTING INSTRUMENTS ---------------------------------------------------
         self.columns_dashboard = kwargs.get("columns_dashboard")
-
-        rabbit_cfg = kwargs.get('rabbit_data_export', {})
-
-        if rabbit_cfg.get('activate', False):
-            rabbit_params = rabbit_cfg.get('rabbit_params', {})
-            self.rabbit_trade_dashboard_messaging = RabbitMessaging(**rabbit_params)
-            self.rabbit_exporting_channel = rabbit_cfg.get('channel', "rabbit_export_channel")
-            sep = "=" * 80
-            print(f"""{sep} \n ==== Rabbit export -> channel: {self.rabbit_exporting_channel} ==== \n {sep}""".strip())
-
-        redis_export_cfg = kwargs.get('redis_data_export', {})
-
-        if redis_export_cfg.get('activate', False):
-            redis_params = redis_export_cfg.get('redis_export_params', {})
-            self.redis_trade_dashboard_messaging = RedisMessaging(**redis_params)
-            self.redis_exporting_channel = redis_export_cfg.get('channel', "redis_export_channel")
-            sep = "=" * 80
-            print(f"""{sep} \n ==== Redis export -> channel: {self.redis_exporting_channel} ==== \n {sep}""".strip())
-
-        self.trade_manager = TradeManager(self.book_storage, **kwargs["trade_manager"])
 
     def wait_for_book_initialization(self):
         while datetime.today().time() < dt.time(8, 50):
@@ -90,8 +62,7 @@ class CreditTradeAnalysis(StrategyUI):
         self.on_start_strategy()
         return True
 
-    def on_start_strategy(self):
-
+    def _pre_start_setup(self) -> None:
         for market in self.etf_markets:
             for etf in self.etf_isins:
                 self.id_for_each_isin[etf].append(f"{market}_{etf}")
@@ -101,13 +72,7 @@ class CreditTradeAnalysis(StrategyUI):
                 currency = self.market_data.currency_information.get(bond, "EUR")
                 self.id_for_each_isin[f"{bond}_EUR"].append(f"{market}_{bond}")
 
-        last_trades = self.trade_manager.get_trades()
-        if not last_trades.empty:
-            self.publish_trades_on_dashboard(last_trades)
-
     def on_market_data_setting(self) -> None:
-        # Subscribe to original channel names with market: prefix
-
         if self.price_source == 'kafka':
             self.subscribe_kafka()
         else:
@@ -165,45 +130,18 @@ class CreditTradeAnalysis(StrategyUI):
                             id=f"{m}_{s}:{ev}",
                             symbol_filter=s,
                             topic=f"{base}.{ev}"
-
                         )
 
-    def update_LF(self) -> None:
-        try:
-            self.publish_trades_on_dashboard(self.trade_manager.get_trades())
-        except Exception as e:
-            logging.error(e)
-
-    def update_HF(self):
-        if datetime.today().time() < dt.time(17, 29, 40):
-            self.get_live_data()
-
-    def on_trade(self, new_trades):
-        new_trades["price_multiplier"] = new_trades["isin"].map(self.trade_isin_multiplier_mapping)
-        new_trades["description"] = new_trades["isin"].map(self.trade_isin_description_mapping)
-        self.trade_manager.on_trade(new_trades)
-        trades_to_publish = self.trade_manager.get_trades_to_publish()
-        self.publish_trades_on_dashboard(trades_to_publish)
-
-    def publish_trades_on_dashboard(self, new_trades):
-
-        if self.redis_trade_dashboard_messaging:
-            self.redis_trade_dashboard_messaging.export_message(channel=self.redis_exporting_channel,
-                                                                value=new_trades,
-                                                                date_format='iso',
-                                                                orient="records")
-        if self.rabbit_trade_dashboard_messaging:
-            self.rabbit_trade_dashboard_messaging.export_message(channel=self.rabbit_exporting_channel,
-                                                                 value=new_trades,
-                                                                 date_format='iso',
-                                                                 orient="records")
+    def _enrich_trades(self, trades: pd.DataFrame) -> pd.DataFrame:
+        trades["price_multiplier"] = trades["isin"].map(self.trade_isin_multiplier_mapping)
+        trades["description"] = trades["isin"].map(self.trade_isin_description_mapping)
+        return trades
 
     def get_live_data(self):
         raw = self.market_data.get_data_field(field=["BID", "ASK"])
         if raw is None or raw.empty:
             return
 
-        # scarta righe senza book ancora
         raw = raw.dropna(subset=["BID", "ASK"])
         if raw.empty:
             return
@@ -238,9 +176,6 @@ class CreditTradeAnalysis(StrategyUI):
                 best_ask = min(book["asks"])
                 self.mid[isin]._prices[currency] = (best_bid + best_ask) / 2
 
-    def on_stop(self):
-        self.trade_manager.close()
-
     @property
     def instruments(self) -> list:
         return self._instruments
@@ -252,4 +187,3 @@ class CreditTradeAnalysis(StrategyUI):
     @instruments.getter
     def instruments(self) -> list[str]:
         return self._instruments
-

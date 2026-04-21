@@ -8,22 +8,17 @@ import numpy as np
 import pandas as pd
 from sfm_data_provider.interface.bshdata import BshData
 
-from market_monitor.publishers.redis_publisher import RedisMessaging
-from market_monitor.publishers.rabbit_publisher import RabbitMessaging
-from market_monitor.strategy.common.trade_manager.trade_manager import TradeManager
-from market_monitor.strategy.strategy_ui.StrategyUI import StrategyUI
-
-from market_monitor.strategy.common.trade_manager.book_memory import BookStorage, FairvaluePrice
+from market_monitor.strategy.common.trade_manager.book_memory import FairvaluePrice
 from market_monitor.strategy.common.trade_manager.flow_detector import FlowDetector
+from user_strategy.utils.TradeAnalysisBase import TradeAnalysisBase
 
 
-class EtfEquityLiveAnalysis(StrategyUI):
+class EtfEquityLiveAnalysis(TradeAnalysisBase):
 
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
 
         self.quoting_instances = []
-        self.price_source = kwargs.get("price_source", "kafka")
 
         self.API = BshData(config_path=r"C:\AFMachineLearning\Libraries\MarketMonitor\etc\config\bshdata_config.yaml")
         self.all_isins = self.API.general.get(fields=["etp_isins"],
@@ -46,7 +41,6 @@ class EtfEquityLiveAnalysis(StrategyUI):
 
         self.ticker_to_isin = {ticker: isin for isin, ticker in self.isin_to_ticker.items()}
 
-        self.book_storage: BookStorage = BookStorage()
         self.flow_detector = FlowDetector()
 
         # -------------------------------------- SETTING INSTRUMENTS ---------------------------------------------------
@@ -54,12 +48,8 @@ class EtfEquityLiveAnalysis(StrategyUI):
         self.mid = pd.Series(index=self.all_isins, name="mid")
         self.model_price: pd.Series = pd.Series(np.nan, index=self.all_isins, name='model_price')
 
-        self._init_redis_dashboard(**kwargs)
-        self._init_rabbit_dashboard(**kwargs)
-
-        self.trade_manager = TradeManager(self.book_storage, **kwargs.get("trade_manager", {}))
         self.quoting_instances = [instance for instance, _bool
-                                  in self.redis_dashboard.get_key('quoting_instances').items() if _bool]
+                                  in self.redis_publisher.get_key('quoting_instances').items() if _bool]
         self.isin_cluster_mapping: dict = self.get_clusters(path=kwargs.get('path_db'),
                                                             cluster_layer=kwargs.get('cluster_layer',
                                                                                      'FINAL_CLUSTER'))
@@ -82,25 +72,6 @@ class EtfEquityLiveAnalysis(StrategyUI):
             ).set_index('isin')['cluster_value'].to_dict()
 
         return isin_cluster_mapping
-
-    def _init_rabbit_dashboard(self, **kwargs):
-        rabbit_cfg = kwargs.get('rabbit_data_export', {})
-
-        if rabbit_cfg.get('activate', False):
-            rabbit_params = rabbit_cfg.get('rabbit_params', {})
-            self.channel_rabbit = rabbit_params.get("channel_rabbit", "trades_rabbit")
-            self.rabbit_dashboard = RabbitMessaging(**rabbit_params)
-        else:
-            self.rabbit_dashboard = None
-
-    def _init_redis_dashboard(self, **kwargs):
-        redis_cfg = kwargs.get('redis_data_export', {})
-        if redis_cfg.get('activate', False):
-            redis_params = redis_cfg.get('redis_params', {})
-            self.channel_redis = redis_cfg.get("channel_redis", "trades_redis")
-            self.redis_dashboard = RedisMessaging(**redis_params)
-        else:
-            self.redis_dashboard = None
 
     def wait_for_book_initialization(self):
 
@@ -126,11 +97,6 @@ class EtfEquityLiveAnalysis(StrategyUI):
 
         return True
 
-    def on_start_strategy(self):
-        last_trades = self.trade_manager.get_trades()
-        if not last_trades.empty:
-            self.publish_trades_on_dashboard(last_trades)
-
     def on_market_data_setting(self) -> None:
 
         for isin in self.all_isins:
@@ -152,7 +118,7 @@ class EtfEquityLiveAnalysis(StrategyUI):
                                                          store='market')
 
         self.quoting_instances = [instances for instances, _bool
-                                  in self.redis_dashboard.get_key('quoting_instances').items() if _bool]
+                                  in self.redis_publisher.get_key('quoting_instances').items() if _bool]
 
     def from_kafka_to_bloomberg(self):
 
@@ -200,11 +166,9 @@ class EtfEquityLiveAnalysis(StrategyUI):
 
     def update_LF(self) -> None:
         try:
-            # Drain progressive horizon updates first (thread-safe, non-blocking)
             horizon_updates = self.trade_manager.get_horizon_updates()
             if not horizon_updates.empty:
                 self.publish_trades_on_dashboard(horizon_updates)
-            # Full snapshot for consistency
             self.publish_trades_on_dashboard(self.trade_manager.get_trades())
         except Exception as e:
             logging.error(e)
@@ -214,26 +178,19 @@ class EtfEquityLiveAnalysis(StrategyUI):
             self.get_live_data()
             self.publish_trades_on_excel()
 
-    def on_trade(self, new_trades):
-
-        new_trades = self._enrich_trades(new_trades)
-        processed_new = self.trade_manager.on_trade(new_trades)
-
-        self.flow_detector.process_trades(processed_new)
-        if self.flow_detector.has_new_flows():
-            for flow in self.flow_detector.get_new_flows():
-                for dashboard in [self.rabbit_dashboard, self.rabbit_dashboard]:
-                    if dashboard: dashboard.export_flow_detected(channel="trades_rabbit", flow=flow)
-
-        trades_to_publish = self.trade_manager.get_trades_to_publish()
-        self.publish_trades_on_dashboard(trades_to_publish)
-
     def _enrich_trades(self, trades) -> pd.DataFrame:
         trades['model_price'] = trades['isin'].map(self.model_price)
         trades['quoting'] = trades.apply(lambda row: f"{row.exchange}-{row.name}" in self.quoting_instances, axis=1)
         if self.isin_cluster_mapping:
             trades['cluster'] = trades['isin'].map(self.isin_cluster_mapping)
         return trades
+
+    def _post_trade_processing(self, processed: pd.DataFrame) -> None:
+        self.flow_detector.process_trades(processed)
+        if self.flow_detector.has_new_flows():
+            for flow in self.flow_detector.get_new_flows():
+                for dashboard in [self.rabbit_publisher, self.rabbit_publisher]:
+                    if dashboard: dashboard.export_flow_detected(channel="trades_rabbit", flow=flow)
 
     def publish_trades_on_excel(self):
 
@@ -256,23 +213,10 @@ class EtfEquityLiveAnalysis(StrategyUI):
                                                                f"{row.exchange}-{row.name}" in self.quoting_instances,
                                                                axis=1)
 
-        self.redis_dashboard.export_message(channel=f"{self.channel_redis}_excel",
+        self.redis_publisher.export_message(channel=f"{self.redis_channel}_excel",
                                             value=trades_to_publish,
                                             date_format='iso',
                                             orient="records")
-
-    def publish_trades_on_dashboard(self, new_trades):
-
-        if self.redis_dashboard:
-            self.redis_dashboard.export_message(channel=self.channel_redis,
-                                                value=new_trades,
-                                                date_format='iso',
-                                                orient="records")
-        if self.rabbit_dashboard:
-            self.rabbit_dashboard.export_message(channel=self.channel_rabbit,
-                                                 value=new_trades,
-                                                 date_format='iso',
-                                                 orient="records")
 
     def on_command(self, action: str, payload: dict):
         logging.warning('command arrived: {}'.format(action))
@@ -295,6 +239,3 @@ class EtfEquityLiveAnalysis(StrategyUI):
             for isin, price in raw.mean(axis=1).items()
         }
         self.book_storage.append(snapshot)
-
-    def on_stop(self):
-        self.trade_manager.close()
