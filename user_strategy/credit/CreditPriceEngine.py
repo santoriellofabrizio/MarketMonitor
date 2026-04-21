@@ -31,6 +31,7 @@ from user_strategy.utils.enums import TICK_SIZE
 
 ON_RATES = {'EUR': 'ESTRON', 'USD': 'SOFRRATE', 'GBP': 'SONIO/N', 'JPY': 'MUTKCALM', 'CHF': 'SRFXON1'}
 
+
 class CreditPriceEngine(StrategyUI):
     """
     Fixed income market monitor. Responsibilities:
@@ -143,14 +144,15 @@ class CreditPriceEngine(StrategyUI):
 
     def _register_instruments(self) -> None:
         self.index_instruments = [self.market_api.build_instrument(i, type='INDEX', autocomplete=True) for i in
-                             self.irp_contracts_list + self.irs_contracts_list]
+                                  self.irp_contracts_list + self.irs_contracts_list]
         self.cds_instruments = [self.market_api.build_instrument(i, type='CDXINDEX', autocomplete=True) for i in
-                             self.cds_list]
-        self.etf_instruments = [self.market_api.build_instrument(i, type='ETP', autocomplete=True) for i in self.etf_isins]
+                                self.cds_list]
+        self.etf_instruments = [self.market_api.build_instrument(i, type='ETP', autocomplete=True) for i in
+                                self.etf_isins]
         self.future_instruments = [self.market_api.build_instrument(i, type='FUTURE', autocomplete=True) for i in
-                              self.futures_list]
+                                   self.futures_list]
         self.fx_instruments = [self.market_api.build_instrument(i, type='CURRENCYPAIR', autocomplete=True) for i in
-                          self.fx_list]
+                               self.fx_list]
 
         self.instruments = {
             inst.id: inst
@@ -197,8 +199,8 @@ class CreditPriceEngine(StrategyUI):
         )
         self.dividends = self.API.info.get_dividends(id=self.etf_isins, start=self.start_date)
         self.repo_per_currency = self.market_api.get_daily_repo_rates(start=self.start_date,
-                                                     end=self.end,
-                                                     currencies=['EUR','USD','JPY','CHF'])
+                                                                      end=self.end,
+                                                                      currencies=['EUR', 'USD', 'JPY', 'CHF'])
 
     def _apply_overrides(self) -> None:
         self.fx_composition = self.API.info.get_fx_composition(self.etf_isins, fx_fxfwrd='fx')
@@ -226,10 +228,10 @@ class CreditPriceEngine(StrategyUI):
             .add(FxForwardCarryComponent(self.fx_forward, self.fx_forward_prices, "1M", self.fx_prices))
             .add(DividendComponent(self.dividends, self.etf_prices, fx_prices=self.fx_prices))
             .add(YtmComponent(self.ytm)
-            # .add(SpecialtyEtfCarryComponent(self.repo_per_currency, self.fx_prices))
-            .add(RepoComponent(self.repo_per_currency,
-                               'currency',
-                               {i.id: i.currency for i in self.future_instruments})))
+                 # .add(SpecialtyEtfCarryComponent(self.repo_per_currency, self.fx_prices))
+                 .add(RepoComponent(self.repo_per_currency,
+                                    'currency',
+                                    {i.id: i.currency for i in self.future_instruments})))
         )
 
     # ── Book management ───────────────────────────────────────────────────────
