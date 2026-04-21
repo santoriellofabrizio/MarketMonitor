@@ -17,13 +17,14 @@ from sfm_data_provider.core.holidays.holiday_manager import HolidayManager
 from sfm_data_provider.core.instruments.instrument_factory import InstrumentFactory
 from sfm_data_provider.interface.bshdata import BshData
 
-from market_monitor.publishers.redis_publisher import RedisMessaging
 from market_monitor.strategy.strategy_ui.StrategyUI import StrategyUI
 
+from user_strategy.equity.LiveQuoting.price_publisher import PricePublisherHub
 from user_strategy.utils.InputParamsFIQuoting import InputParamsFIQuoting
 from user_strategy.utils.pricing_models.PricingModel import (
     ClusterPricingModel, DriverPricingModel,
-    CreditFuturesCalendarSpreadPricingModel, CreditFuturesInterestRatePricingModel, NavPricingModel
+    CreditFuturesCalendarSpreadPricingModel, CreditFuturesInterestRatePricingModel, NavPricingModel,
+    calculate_cluster_correction, round_series_to_tick,
 )
 from user_strategy.utils.pricing_models.PricingModelRegistry import PricingModelRegistry
 from user_strategy.utils.pricing_models.IRPManager import IRPManager
@@ -50,11 +51,11 @@ class CreditPriceEngine(StrategyUI):
         self.input_params = InputParamsFIQuoting(kwargs)
         self._cumulative_returns = True
         self.book_storage = deque(maxlen=20)
-        self.gui_redis = RedisMessaging()
         self.API = BshData(r"C:\AFMachineLearning\Libraries\MarketMonitor\etc\config\bshdata_config.yaml")
         self.market_api = self.API.market
         self.info_api = self.API.info
         self._setup_instrument_universe()
+        self.publisher = PricePublisherHub.from_config(kwargs, {})
         self._setup_historical_data()
         self._setup_pricing_models()
 
@@ -268,8 +269,8 @@ class CreditPriceEngine(StrategyUI):
 
     def _setup_pricing_models(self) -> None:
         pc = self.input_params.pricing_config
-        self.cluster_correction = self._calculate_cluster_correction(pc.hedge_ratios_cluster)
-        self.brothers_correction = self._calculate_cluster_correction(pc.hedge_ratios_brothers)
+        self.cluster_correction = calculate_cluster_correction(pc.hedge_ratios_cluster)
+        self.brothers_correction = calculate_cluster_correction(pc.hedge_ratios_brothers)
         self.pricing_model_registry = PricingModelRegistry()
 
         def reg(name, instruments, model):
@@ -337,11 +338,10 @@ class CreditPriceEngine(StrategyUI):
 
     def _publish_prices(self) -> None:
         pm = self.pricing_model_registry
-        rtt = self.round_series_to_tick
-        export = self.gui_redis.export_message
+        export = self.publisher.gui.export_message
 
         for key, name, do_round, dropna in [
-            ("th_live_cluster_price", "th live cluster price", False, False),  # ← usa get_prices
+            ("th_live_cluster_price", "th live cluster price", False, False),
             ("th_live_driver_price", "th live driver price", True, False),
             ("th_live_brother_price", "th live brother price", True, False),
             ("th_live_credit_futures_cluster_price", "th live cluster credit futures price", False, False),
@@ -350,7 +350,7 @@ class CreditPriceEngine(StrategyUI):
             ("th_live_credit_futures_ir_price", "th live ir credit futures price", False, True),
         ]:
             prices = pm.get_prices(name)
-            if do_round: prices = rtt(prices, TICK_SIZE)
+            if do_round: prices = round_series_to_tick(prices, TICK_SIZE)
             if dropna:   prices = prices.dropna()
             export(key, prices, skip_if_unchanged=True)
 
@@ -358,23 +358,6 @@ class CreditPriceEngine(StrategyUI):
         self.get_mid()
         self.calculate_theoretical_prices()
         self._publish_prices()
-
-    # ── Utility ───────────────────────────────────────────────────────────────
-
-    @staticmethod
-    def _calculate_cluster_correction(cluster_betas: pd.DataFrame, threshold: float = 0.5) -> pd.Series:
-        cluster_betas = cluster_betas.sort_index(axis=1).sort_index(axis=0).copy()
-        for label in cluster_betas.index:
-            cluster_betas.loc[label, label] = 0
-        cluster_threshold = threshold / (cluster_betas != 0).sum(axis=1)
-        cluster_sizes = cluster_betas.gt(cluster_threshold, axis=0).sum(axis=1) + 1
-        return cluster_sizes.where(cluster_sizes == 1, (cluster_sizes - 1) / cluster_sizes)
-
-    @staticmethod
-    def round_series_to_tick(series, tick_dict, default_tick=0.001):
-        ticks = np.array([tick_dict.get(idx, default_tick) for idx in series.index])
-        values = series.fillna(0).values.astype(float)
-        return pd.Series(np.round(np.round(values / ticks) * ticks, 10), index=series.index).fillna(0)
 
     def stop(self):
         pass

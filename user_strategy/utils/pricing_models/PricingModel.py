@@ -9,6 +9,8 @@ import datetime as dt
 
 from user_strategy.utils.pricing_models.AggregationFunctions import ForecastAggregator, EwmaOutlier
 from user_strategy.utils.pricing_models.IRPManager import IRPManager
+from user_strategy.utils.pricing_models.cluster_correction import calculate_cluster_correction
+from user_strategy.utils.pricing_utils import round_series_to_tick
 
 
 @runtime_checkable
@@ -156,9 +158,8 @@ class ClusterPricingModel(MultiPeriodLinearPricingModel):
 
         return all_predictions
 
-    def calculate_cluster_correction(self):
-        n_el_clusters = self.beta.apply(lambda row: (row != 0).sum(), axis=1)
-        self.cluster_correction = n_el_clusters.apply(lambda x: max(x - 1, 1)) / n_el_clusters
+    def calculate_cluster_correction(self, threshold: float = 0.5):
+        self.cluster_correction = calculate_cluster_correction(self.beta, threshold)
 
 
 class DriverPricingModel(MultiPeriodLinearPricingModel):
