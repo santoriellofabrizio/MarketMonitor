@@ -11,7 +11,7 @@ from pandas._libs.tslibs.offsets import BDay
 from user_strategy.fixed_income.InstrumentDbManager.InstrumentDbManager import InstrumentDbManager
 from user_strategy.utils import CustomBDay
 from user_strategy.utils.FIInputConfig import DataFetchingConfig, PricingConfig
-from user_strategy.utils.pricing_models.AggregationFunctions import ForecastAggregator, forecast_aggregation
+from user_strategy.utils.pricing_models.AggregationFunctions import ForecastAggregator
 from user_strategy.utils.SvnDownloader import download_fxdincomedb_from_svn
 from user_strategy.utils.InputParams import InputParams
 from sfm_datalibrary.queries import OracleDynamicDataQuery
@@ -229,7 +229,7 @@ class InputParamsFI(InputParams):
             YTM_mapping=self.YTM_mapping,
             currencies_EUR_ccy=self.currencies_EUR_ccy,
             currency_weights=self.currency_weights,
-            currency_exposure=self.currency_exposure,  # property validates completeness
+            currency_exposure=self.currency_exposure,
             trading_currency=self.trading_currency,
             price_snipping_time=self.price_snipping_time,
             number_of_days=self.number_of_days,
@@ -367,7 +367,6 @@ class InputParamsFI(InputParams):
             table='FxMapping', columns=['INSTRUMENT_ID', 'MAPPING_INSTRUMENT_ID']
         ).set_index('INSTRUMENT_ID')['MAPPING_INSTRUMENT_ID'].to_dict()
 
-
         currency_exposure_oracle, currency_weights_oracle = self._get_currency_data_oracle(isins)
         currency_exposure_manual, currency_weights_manual = self._get_currency_data_manual(isins)
         currency_exposure_manual.reindex(columns=currency_exposure_oracle.columns, fill_value=0)
@@ -396,8 +395,6 @@ class InputParamsFI(InputParams):
                 currency_weights_oracle = pd.concat([currency_weights_oracle, rows_to_copy])
                 missing_isins.remove(isin)
 
-        # if missing_isins:
-        #     raise Exception(f'Missing isins: {missing_isins}')
         return currency_exposure_oracle, currency_weights_oracle
 
     def _get_currency_data_oracle(self, isins: List[str]) -> Tuple[pd.DataFrame, pd.DataFrame]:
@@ -554,16 +551,7 @@ class InputParamsFI(InputParams):
         self.set_forecast_aggregation_func(kwargs)
 
     def set_forecast_aggregation_func(self, kwargs: dict) -> None:
-        for key in ["cluster", "driver", "nav"]:
-            try:
-                params = kwargs[key]
-                setattr(self, f"forecast_aggregator_{key}",
-                        forecast_aggregation[params["forecast_aggregation"]](**params[params["forecast_aggregation"]]))
-            except KeyError:
-                self.logger.critical(
-                    f"forecast aggregator for {key} not implemented. available: {forecast_aggregation}"
-                )
-                raise KeyboardInterrupt
+        super().set_forecast_aggregation_func(kwargs, ["cluster", "driver", "nav"])
 
     @property
     def currency_exposure(self) -> pd.DataFrame:
