@@ -512,7 +512,8 @@ class InputParamsFI(InputParams):
     # Hedge ratio helpers
     # -------------------------------------------------------------------------
 
-    def _create_hedge_ratios_brothers(self, brothers_df: pd.DataFrame) -> pd.DataFrame:
+    @staticmethod
+    def _create_hedge_ratios_brothers(brothers_df: pd.DataFrame) -> pd.DataFrame:
         isins = brothers_df.index
         hr_brothers = pd.DataFrame(0., index=isins, columns=isins, dtype=float)
         for _, group in brothers_df.groupby('BROTHER_ID'):
@@ -555,8 +556,8 @@ class InputParamsFI(InputParams):
     def currency_exposure(self) -> pd.DataFrame:
         if (missing := self._currency_exposure.index.symmetric_difference(self.etf_isins)).__len__():
             self.logger.critical(f"Missing currency exposure for {', '.join(missing)}")
-            if input("Do you want to continue? [Y/N] ").lower() != "y":
-                raise KeyError
+            # if input("Do you want to continue? [Y/N] ").lower() != "y":
+            #     raise KeyError
         return self._currency_exposure
 
     @currency_exposure.setter

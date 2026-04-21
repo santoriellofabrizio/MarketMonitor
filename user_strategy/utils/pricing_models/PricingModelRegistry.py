@@ -8,8 +8,6 @@ from user_strategy.utils.pricing_models.PricingModel import PricingModel
 logger = logging.getLogger(__name__)
 
 
-
-
 class _ModelEntry:
     __slots__ = ('model', 'returns_source')
 
@@ -44,12 +42,12 @@ class PricingModelRegistry:
     # ── Registration ──────────────────────────────────────────────────────────
 
     def register(
-        self,
-        name: str,
-        model: PricingModel,
-        instruments: Optional[List[str]] = None,
-        returns_source: Optional[pd.DataFrame] = None,
-        dtype: Type = float,
+            self,
+            name: str,
+            model: PricingModel,
+            instruments: Optional[List[str]] = None,
+            returns_source: Optional[pd.DataFrame] = None,
+            dtype: Type = float,
     ) -> "PricingModelRegistry":
         """Register a pricing model.
 
@@ -79,7 +77,7 @@ class PricingModelRegistry:
     # ── Prediction ────────────────────────────────────────────────────────────
 
     def predict_all(
-        self, mid: pd.Series, all_returns: Optional[pd.DataFrame] = None
+            self, mid: pd.Series, all_returns: Optional[pd.DataFrame] = None
     ) -> Dict[str, Optional[pd.Series]]:
         """Run all registered models and return {name: prediction}.
 
@@ -101,7 +99,7 @@ class PricingModelRegistry:
         return dict(self._predictions)
 
     def calculate_theoretical_prices(
-        self, book: pd.Series, all_returns: pd.DataFrame
+            self, book: pd.Series, all_returns: pd.DataFrame
     ) -> None:
         """Alias of predict_all for backward compatibility with the credit engine."""
         self.predict_all(book, all_returns)
