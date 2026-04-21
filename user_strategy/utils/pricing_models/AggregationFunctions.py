@@ -5,7 +5,6 @@ import pandas as pd
 from dateutil.utils import today
 from scipy.stats import trim_mean
 
-from user_strategy.utils import CustomBDay
 
 
 class ForecastAggregator:
@@ -25,7 +24,6 @@ class Ewma(ForecastAggregator):
 
     def __init__(self, halflife: int | float, *args, **kwargs):
         self.halflife = halflife
-        self.yesterday: date = (today() - CustomBDay).date()
 
     def __call__(self, all_predictions: pd.DataFrame):
         return (all_predictions
@@ -47,7 +45,6 @@ class EwmaOutlier(ForecastAggregator):
         self.outlier_threshold = outlier_std
         self.use_time = use_time
 
-        self.yesterday: date = (pd.Timestamp.today() - CustomBDay).date()
 
     def remove_outliers(self, data: pd.DataFrame):
         if self.outlier_threshold is not None:

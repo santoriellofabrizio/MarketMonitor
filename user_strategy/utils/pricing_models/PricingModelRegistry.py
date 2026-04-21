@@ -8,14 +8,6 @@ from user_strategy.utils.pricing_models.PricingModel import PricingModel
 logger = logging.getLogger(__name__)
 
 
-@runtime_checkable
-class PricePredictor(Protocol):
-    """Any object that can predict prices given mid prices and returns."""
-    name: str
-
-    def get_price_prediction(self, mid: pd.Series, returns: pd.DataFrame) -> pd.Series: ...
-    def set_beta(self, beta: pd.DataFrame) -> None: ...
-    def set_cluster_correction(self, correction: pd.Series) -> None: ...
 
 
 class _ModelEntry:

@@ -554,21 +554,10 @@ class EtfEquityPriceEngine(StrategyUI):
 
                 # Calcolo dei prezzi normalizzati
                 normalized_prices = {
-                    # Arrotondamento con riempimento dei None/NaN a 0
-                    'live_idx': round_series_to_tick(idx_series.fillna(0), self.reference_tick_size),
-
-                    'live_clust': round_series_to_tick(clust_series.fillna(0), self.reference_tick_size),
-
                     'intraday': round_series_to_tick(intraday_series.fillna(0), self.reference_tick_size),
-
-                    # Gestione del mid_eur se fosse None
                     'mid': round_series_to_tick(
                         (self.mid_eur if self.mid_eur is not None else pd.Series([0])).fillna(0),
                         self.reference_tick_size),
-
-                    # Protezione per la divisione: se etf_prices è None o vuoto, restituisce 0 o NaN
-                    'normalized_mid': (self.mid_eur / self.etf_prices.iloc[-1]) if (
-                            self.etf_prices is not None and not self.etf_prices.empty) else 0,
                 }
 
             with _timer("publish_gui", self.logger):

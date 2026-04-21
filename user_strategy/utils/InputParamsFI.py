@@ -9,7 +9,6 @@ from dateutil.relativedelta import relativedelta
 from pandas._libs.tslibs.offsets import BDay
 
 from user_strategy.fixed_income.InstrumentDbManager.InstrumentDbManager import InstrumentDbManager
-from user_strategy.utils import CustomBDay
 from user_strategy.utils.FIInputConfig import DataFetchingConfig, PricingConfig
 from user_strategy.utils.pricing_models.AggregationFunctions import ForecastAggregator
 from user_strategy.utils.SvnDownloader import download_fxdincomedb_from_svn
@@ -83,7 +82,6 @@ class InputParamsFI(InputParams):
 
         # Date/time (computed after _set_config_parameters)
         self.today: pd.Timestamp = pd.Timestamp.today()
-        self.yesterday = (self.today - CustomBDay).date()
         self._set_config_parameters()
 
         if self.number_of_days is not None:

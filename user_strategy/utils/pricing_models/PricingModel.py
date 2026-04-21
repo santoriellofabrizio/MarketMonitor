@@ -1,26 +1,33 @@
 import logging
 from abc import ABC
-from typing import List
+from typing import List, runtime_checkable, Protocol
 
 import pandas as pd
 from dateutil.utils import today
 from scipy.sparse import csr_matrix
 import datetime as dt
 
-from user_strategy.equity.LiveQuoting.pricing_engine import PricePredictor
-from user_strategy.utils import CustomBDay
 from user_strategy.utils.pricing_models.AggregationFunctions import ForecastAggregator, EwmaOutlier
 from user_strategy.utils.pricing_models.IRPManager import IRPManager
+
+
+@runtime_checkable
+class PricePredictor(Protocol):
+    """Any object that can predict prices given mid prices and returns."""
+    name: str
+
+    def get_price_prediction(self, mid: pd.Series, returns: pd.DataFrame) -> pd.Series: ...
+
+    def set_beta(self, beta: pd.DataFrame) -> None: ...
+
+    def set_cluster_correction(self, correction: pd.Series) -> None: ...
 
 
 class PricingModel(PricePredictor):
 
     def __init__(self, returns: pd.DataFrame | None = None, *args, **kwargs):
         self.returns: pd.DataFrame = returns
-
         if returns is not None:  self.timestamps = returns.index
-
-        self.yesterday: dt.date = (today() - CustomBDay).date()
 
     def predict_price(self, predicted_returns: pd.DataFrame, *args, **kwargs):
         pass
@@ -221,8 +228,8 @@ class CreditFuturesCalendarSpreadPricingModel(RatePricingModel):
         self._calculate_rate(book)
         book.name = 'Value'
         proxy_prices = \
-        self._variables_proxy.loc[self._target_variables].merge(book, left_on='Future Proxy', right_index=True)[
-            book.name]
+            self._variables_proxy.loc[self._target_variables].merge(book, left_on='Future Proxy', right_index=True)[
+                book.name]
         all_predictions = (1 + self._rate.loc[self._target_variables]).mul(proxy_prices, axis=0)
         return all_predictions.T
 
@@ -261,7 +268,6 @@ class NavPricingModel(PricingModel):
     def get_price_prediction(self,
                              prices: pd.DataFrame,
                              all_returns: pd.DataFrame) -> pd.Series:
-
         return self._theoretical_prices
 
     def _calculate_theoretical_prices(self):
