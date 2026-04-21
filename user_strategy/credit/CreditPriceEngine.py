@@ -18,9 +18,7 @@ from sfm_data_provider.core.instruments.instrument_factory import InstrumentFact
 from sfm_data_provider.core.requests.subscriptions import BloombergSubscriptionBuilder
 from sfm_data_provider.interface.bshdata import BshData
 
-from market_monitor.strategy.strategy_ui.StrategyUI import StrategyUI
-
-from user_strategy.equity.LiveQuoting.price_publisher import PricePublisherHub
+from user_strategy.utils.BasePriceEngine import BasePriceEngine
 from user_strategy.utils.InputParamsFIQuoting import InputParamsFIQuoting
 from user_strategy.utils.pricing_models.PricingModel import (
     ClusterPricingModel, DriverPricingModel,
@@ -35,7 +33,7 @@ _RETRY_MARKETS = ("NA", "FP")
 _MAX_FAILED_RATIO = 1 / 100
 
 
-class CreditPriceEngine(StrategyUI):
+class CreditPriceEngine(BasePriceEngine):
     """
     Fixed income market monitor. Responsibilities:
     - Instrument subscription: _setup_instrument_universe, _build_subscription_dict, on_market_data_setting
@@ -44,25 +42,20 @@ class CreditPriceEngine(StrategyUI):
     """
 
     def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.corrected_returns = pd.DataFrame()
         self.end = today().date()
-        self.holidays = HolidayManager()
-        self.start_date = self.holidays.subtract_business_days(today(), kwargs.get('number_of_days', 10))
+        self.start_date = None          # set properly in _setup_instrument_universe (needs holidays)
         self.book_mid: pd.Series | None = None
         self.input_params = InputParamsFIQuoting(kwargs)
         self._cumulative_returns = True
         self.API = BshData(r"C:\AFMachineLearning\Libraries\MarketMonitor\etc\config\bshdata_config.yaml")
         self.market_api = self.API.market
         self.info_api = self.API.info
-        self._setup_instrument_universe()
-        self.publisher = PricePublisherHub.from_config(kwargs, {})
-        self._setup_historical_data()
-        self._setup_pricing_models()
+        super().__init__(*args, **kwargs)   # triggers the setup phase sequence
 
     # ── Subscription ──────────────────────────────────────────────────────────
 
     def _setup_instrument_universe(self) -> None:
+        self.start_date = self.holidays.subtract_business_days(today(), self.kwargs.get('number_of_days', 10))
 
         self.factory = InstrumentFactory()
         dc = self.input_params.data_config
@@ -240,8 +233,8 @@ class CreditPriceEngine(StrategyUI):
         with self.adjuster.live_update(self.book_mid[self._all_securities], fx_prices=self.book_mid[self.fx_list]):
             self.corrected_returns = self.adjuster.get_clean_returns(cumulative=True).T
 
-        for name in self.pricing_model_registry.model_names:
-            self.pricing_model_registry.set_returns_source(name, self.corrected_returns)
+        for name in self.models.model_names:
+            self.models.set_returns_source(name, self.corrected_returns)
 
         return self.book_mid
 
@@ -278,14 +271,12 @@ class CreditPriceEngine(StrategyUI):
         pc = self.input_params.pricing_config
         self.cluster_correction = calculate_cluster_correction(pc.hedge_ratios_cluster)
         self.brothers_correction = calculate_cluster_correction(pc.hedge_ratios_brothers)
-        self.pricing_model_registry = PricingModelRegistry()
+        self.models = PricingModelRegistry()
 
         rs = self.corrected_returns
 
         def reg(name, instruments, model):
-            self.pricing_model_registry.register(
-                name=name, instruments=instruments, model=model, returns_source=rs,
-            )
+            self.models.register(name=name, instruments=instruments, model=model, returns_source=rs)
 
         reg("th live cluster price", self.etf_isins, ClusterPricingModel(
             name="th live cluster price", beta=pc.hedge_ratios_cluster,
@@ -345,10 +336,9 @@ class CreditPriceEngine(StrategyUI):
         ))
 
     def calculate_theoretical_prices(self):
-        self.pricing_model_registry.predict_all(self.book_mid)
+        self.models.predict_all(self.book_mid)
 
     def _publish_prices(self) -> None:
-        pm = self.pricing_model_registry
         export = self.publisher.gui.export_message
 
         for key, name, do_round, dropna in [
@@ -360,7 +350,7 @@ class CreditPriceEngine(StrategyUI):
             ("th_live_credit_futures_spread_price", "th live spread credit futures price", False, True),
             ("th_live_credit_futures_ir_price", "th live ir credit futures price", False, True),
         ]:
-            prices = pm.get_prices(name)
+            prices = self.models.get_prices(name)
             if do_round: prices = round_series_to_tick(prices, TICK_SIZE)
             if dropna:   prices = prices.dropna()
             export(key, prices, skip_if_unchanged=True)
