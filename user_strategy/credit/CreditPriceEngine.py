@@ -6,13 +6,15 @@ import pandas as pd
 from dateutil.utils import today
 import datetime as dt
 
-from sfm_data_provider.analytics.adjustments import Adjuster
+from sfm_data_provider.analytics.adjustments import Adjuster, SpecialtyEtfCarryComponent
 from sfm_data_provider.analytics.adjustments.dividend import DividendComponent
 from sfm_data_provider.analytics.adjustments.fx_forward_carry import FxForwardCarryComponent
 from sfm_data_provider.analytics.adjustments.fx_spot import FxSpotComponent
+from sfm_data_provider.analytics.adjustments.repo import RepoComponent
 from sfm_data_provider.analytics.adjustments.ter import TerComponent
 from sfm_data_provider.analytics.adjustments.ytm import YtmComponent
 from sfm_data_provider.core.holidays.holiday_manager import HolidayManager
+from sfm_data_provider.core.instruments.instrument_factory import InstrumentFactory
 from sfm_data_provider.interface.bshdata import BshData
 
 from market_monitor.publishers.redis_publisher import RedisMessaging
@@ -27,8 +29,10 @@ from user_strategy.utils.pricing_models.PricingModelRegistry import PricingModel
 from user_strategy.utils.pricing_models.IRPManager import IRPManager
 from user_strategy.utils.enums import TICK_SIZE
 
+ON_RATES = {'EUR': 'ESTRON', 'USD': 'SOFRRATE', 'GBP': 'SONIO/N', 'JPY': 'MUTKCALM', 'CHF': 'SRFXON1'}
 
-class EtfFiPriceEngine(StrategyUI):
+
+class CreditPriceEngine(StrategyUI):
     """
     Fixed income market monitor. Responsibilities:
     - Instrument subscription: _setup_instrument_universe, _build_subscription_dict, on_market_data_setting
@@ -47,14 +51,18 @@ class EtfFiPriceEngine(StrategyUI):
         self._cumulative_returns = True
         self.book_storage = deque(maxlen=20)
         self.gui_redis = RedisMessaging()
-        self._setup_instrument_universe()
         self.API = BshData(r"C:\AFMachineLearning\Libraries\MarketMonitor\etc\config\bshdata_config.yaml")
+        self.market_api = self.API.market
+        self.info_api = self.API.info
+        self._setup_instrument_universe()
         self._setup_historical_data()
         self._setup_pricing_models()
 
     # ── Subscription ──────────────────────────────────────────────────────────
 
     def _setup_instrument_universe(self) -> None:
+
+        self.factory = InstrumentFactory()
         dc = self.input_params.data_config
         self.etf_isins = dc.etf_isins
         self.drivers_data = dc.drivers
@@ -72,6 +80,8 @@ class EtfFiPriceEngine(StrategyUI):
             self.irs_data.loc[~self.irs_data.index.isin(["ESTR3M", "SOFR3M"])]
         )
         self.irp_contracts_data = self.irp_manager.get_contracts_list_data()
+        self.futures_list = [d for d in self.drivers_list if self.factory.classifier.future.matches(d)]
+        self.cds_list = [d for d in self.drivers_list if self.factory.classifier.cds.matches(d)]
         self.irp_contracts_list = self.irp_contracts_data.index.to_list()
 
         self.trading_currency = dc.trading_currency
@@ -107,7 +117,7 @@ class EtfFiPriceEngine(StrategyUI):
 
     def _seed_initial_prices(self) -> None:
         yesterday_price = pd.concat([
-            self.etf_prices.iloc[-1],
+            self.historical_prices.iloc[-1],
             self.fx_prices.iloc[-1]
         ])
         for isin, price in yesterday_price.items():
@@ -117,65 +127,112 @@ class EtfFiPriceEngine(StrategyUI):
     # ── Historical data ───────────────────────────────────────────────────────
 
     def _setup_historical_data(self) -> None:
-
         days = self.holidays.get_business_days(start=self.start_date, end=self.end)
         snapshot_time = dt.time(16, 45)
 
-        fx_composition = self.API.info.get_fx_composition(
-            self.etf_isins, fx_fxfwrd='fx', reference_date=dt.date(2026, 4, 2))
+        self._register_instruments()
+        self._fetch_market_prices(days, snapshot_time)
+        self._fetch_info_data()
+        self._apply_overrides()
+        self._build_adjuster()
 
-        fx_forward = self.API.info.get_fx_composition(
-            self.etf_isins, fx_fxfwrd="fxfwrd", reference_date=dt.date(2026, 4, 2))
+        self.corrected_return = pd.DataFrame(
+            index=self.historical_prices.index,
+            columns=self.historical_prices.columns,
+            dtype=float,
+        )
 
-        for fx in [fx_composition, fx_forward]:
-            for isin, hard_coding_currency in self.input_params.fx_hard_coding.items():
-                fx[isin] = hard_coding_currency
+    def _register_instruments(self) -> None:
+        self.index_instruments = [self.market_api.build_instrument(i, type='INDEX', autocomplete=True) for i in
+                                  self.irp_contracts_list + self.irs_contracts_list]
+        self.cds_instruments = [self.market_api.build_instrument(i, type='CDXINDEX', autocomplete=True) for i in
+                                self.cds_list]
+        self.etf_instruments = [self.market_api.build_instrument(i, type='ETP', autocomplete=True) for i in
+                                self.etf_isins]
+        self.future_instruments = [self.market_api.build_instrument(i, type='FUTURE', autocomplete=True) for i in
+                                   self.futures_list]
+        self.fx_instruments = [self.market_api.build_instrument(i, type='CURRENCYPAIR', autocomplete=True) for i in
+                               self.fx_list]
 
-            for isin, isin_proxy in self.input_params.fx_mapping.items():
-                fx.loc[isin] = fx.loc[isin_proxy]
+        self.instruments = {
+            inst.id: inst
+            for inst in [*self.index_instruments,
+                         *self.etf_instruments,
+                         *self.cds_instruments,
+                         *self.future_instruments,
+                         *self.fx_instruments]
+        }
+        for inst in self.instruments.values():
+            self.market_api.register(inst)
 
-        ytm = self.API.info.get_etp_fields('ytm',
-                                           isin=self.etf_isins,
-                                           source="timescale",
-                                           start=self.start_date,
-                                           end=self.end)
-
-        for isin, mapping in self.input_params.get_ytm_mapping().items():
-            ytm[isin] = ytm[mapping]
-
+    def _fetch_market_prices(self, days, snapshot_time) -> None:
+        index_prices = self.API.market.get_daily_repo_rates(start=self.start_date, end=self.end,
+                                                            id=self.irs_contracts_list)
+        future_prices = self.API.market.get_daily_future(self.start_date, self.end, id=self.futures_list,
+                                                         fallbacks=[{"source": "bloomberg"}])
+        cds_prices = self.API.market.get_daily_cdx(self.start_date, self.end, id=self.cds_list)
+        self.etf_prices = self.API.market.get_daily_etf(
+            id=self.etf_isins, start=self.start_date, end=self.end,
+            snapshot_time=snapshot_time, timeout=10,
+            fallbacks=[{"source": "bloomberg", "market": mkt} for mkt in ["IM", "FP", "NA"]],
+        ).reindex(days)
         self.fx_prices = self.API.market.get_daily_currency(
-            id=self.fx_list, start=self.start_date, end=self.end, snapshot_time=snapshot_time,
+            id=self.fx_list, start=self.start_date, end=self.end,
+            snapshot_time=snapshot_time,
             fallbacks=[{"source": "bloomberg"}],
         ).reindex(days)
 
-        self.etf_prices = self.API.market.get_daily_etf(
-            id=self.etf_isins, start=self.start_date, end=self.end, snapshot_time=snapshot_time, timeout=10,
-            fallbacks=[{"source": "bloomberg", "market": mkt} for mkt in ["IM", "FP", "NA"]],
-        ).reindex(days)
+        self.historical_prices = pd.concat(
+            [self.etf_prices, cds_prices, index_prices, future_prices], axis=1
+        ).interpolate("time")
 
-        self.etf_prices = self.etf_prices
+    def _fetch_info_data(self) -> None:
+        self.nav = self.API.info.get_etp_fields(
+            start=self.start_date, isin=self.etf_isins,
+            source="oracle", fields='NAV',
+            fallbacks=[{"source": "bloomberg"}],
+        )
+        self.ter = self.API.info.get_ter(id=self.etf_isins) / 100
+        self.ytm = self.API.info.get_etp_fields(
+            'ytm', isin=self.etf_isins, source="timescale",
+            start=self.start_date, end=self.end,
+        )
+        self.dividends = self.API.info.get_dividends(id=self.etf_isins, start=self.start_date)
+        self.repo_per_currency = self.market_api.get_daily_repo_rates(start=self.start_date,
+                                                                      end=self.end,
+                                                                      currencies=['EUR', 'USD', 'JPY', 'CHF'])
 
-        fx_forward_prices = self.API.market.get_daily_fx_forward(
-            quoted_currency=fx_forward.columns.tolist(), start=self.start_date, end=self.end)
+    def _apply_overrides(self) -> None:
+        self.fx_composition = self.API.info.get_fx_composition(self.etf_isins, fx_fxfwrd='fx')
+        self.fx_forward = self.API.info.get_fx_composition(self.etf_isins, fx_fxfwrd="fxfwrd")
 
-        dividends = self.API.info.get_dividends(id=self.etf_isins, start=self.start_date)
-        ter = self.API.info.get_ter(id=self.etf_isins) / 100
+        for fx in [self.fx_composition, self.fx_forward]:
+            for isin, hard_coding_currency in self.input_params.fx_hard_coding.items():
+                fx[isin] = hard_coding_currency
+            for isin, isin_proxy in self.input_params.fx_mapping.items():
+                fx.loc[isin] = fx.loc[isin_proxy]
 
-        self.adjuster = (
-            Adjuster(self.etf_prices)
-            .add(TerComponent(ter))
-            .add(FxSpotComponent(fx_composition, self.fx_prices))
-            .add(FxForwardCarryComponent(fx_forward, fx_forward_prices, "1M", self.fx_prices))
-            .add(DividendComponent(dividends, self.etf_prices, fx_prices=self.fx_prices))
-            .add(YtmComponent(ytm))
+        for isin, mapping in self.input_params.get_ytm_mapping().items():
+            self.ytm[isin] = self.ytm[mapping]
+
+        self.fx_forward_prices = self.API.market.get_daily_fx_forward(
+            quoted_currency=self.fx_forward.columns.tolist(),
+            start=self.start_date, end=self.end,
         )
 
-        self.corrected_return = pd.DataFrame(
-            index=self.etf_prices.index, columns=self.etf_prices.columns, dtype=float)
-
-        self.nav_data = self.API.info.get_nav(start=self.start_date,
-                                              isin=self.etf_isins,
-                                              source="oracle")
+    def _build_adjuster(self) -> None:
+        self.adjuster = (
+            Adjuster(self.historical_prices, instruments=self.instruments)
+            .add(TerComponent(self.ter))
+            .add(FxSpotComponent(self.fx_composition, self.fx_prices))
+            .add(FxForwardCarryComponent(self.fx_forward, self.fx_forward_prices, "1M", self.fx_prices))
+            .add(DividendComponent(self.dividends, self.etf_prices, fx_prices=self.fx_prices))
+            .add(YtmComponent(self.ytm)
+                 # .add(SpecialtyEtfCarryComponent(self.repo_per_currency, self.fx_prices))
+                 .add(RepoComponent(self.repo_per_currency,
+                                    'currency',
+                                    {i.id: i.currency for i in self.future_instruments})))
+        )
 
     # ── Book management ───────────────────────────────────────────────────────
 
@@ -253,7 +310,7 @@ class EtfFiPriceEngine(StrategyUI):
             instruments=self.etf_isins,
             model=NavPricingModel(
                 name="th live nav price", target_variables=self.etf_isins,
-                irs_data=self.irs_data, nav_data=self.nav_data,
+                irs_data=self.irs_data, nav_data=self.nav,
             )
         )
 
@@ -296,7 +353,6 @@ class EtfFiPriceEngine(StrategyUI):
             if do_round: prices = rtt(prices, TICK_SIZE)
             if dropna:   prices = prices.dropna()
             export(key, prices, skip_if_unchanged=True)
-
 
     def update_HF(self):
         self.get_mid()

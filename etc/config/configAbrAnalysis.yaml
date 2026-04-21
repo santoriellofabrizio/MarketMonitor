@@ -1,0 +1,72 @@
+load_strategy_info:
+      package_path: C:\AFMachineLearning\Libraries\MarketMonitor\user_strategy\abr
+      module_name: AbrAnalysis
+      class_name: AbrAnalysis
+
+
+
+market_monitor:
+
+  trade_manager:
+    time_zero_lags: [10, 20, 30, 40]
+
+  tasks:
+    update_HF:
+      activate: true
+      frequency: 1
+    update_LF:
+      activate: true
+      frequency: 60
+    trade:
+      activate: true
+      synchronous: true
+      frequency: 1
+    dynamic_params:
+      activate: false
+      dynamic_config_path: "configFolder/dynamicEquityQuoting.yaml"
+      frequency: 1
+
+  rabbit_data_export:
+    activate: true      # Impostare true (e redis activate: false) per usare RabbitMQ
+    channel: trades_rabbit_abr
+    rabbit_params_export:
+      rabbit_host: 'rabbitmq.af.tst'
+      rabbit_port: 5672
+      rabbit_user: 'mqclient'
+      rabbit_password: 'Mqclient-00'
+      rabbit_vhost: TestCredEQEtf
+
+  redis_data_export:
+    activate: true
+    channel: trades_redis_abr
+    redis_export_params:
+      host: localhost
+      port: 6379
+
+bloomberg_data_distributor:
+  activate: false
+
+kafka_data_distributor:
+  activate: true
+  kafka_params:
+    bootstrap_servers: "aftstserver51.af.pre:9092,aftstserver52.af.pre:9092"#,aftstserver53.af.tst:9092"
+    schema_registry_url: "http://aftstserver51.af.pre:8081"
+    start_mode: "latest"  # oppure "earliest"
+
+trade_distributor:
+  activate: true
+  path: C:\AreaFinanza\Market Trades Viewer 2.0.0\DB\market_viewer.db
+
+redis_data_distributor:
+  activate: false
+  redis_params:
+    redis_host: 'localhost'
+    redis_port: 6379
+    redis_db: 0
+
+logging:
+  log_level: INFO
+  log_level_console: WARNING
+  log_name: AbsAnalysis.log
+
+

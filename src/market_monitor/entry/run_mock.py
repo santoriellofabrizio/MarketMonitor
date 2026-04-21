@@ -103,9 +103,9 @@ class MockRunner(BaseRunner):
         
         # Start
         for t in self.threads:
-            t.start()
+            t.start_date()
         
-        self.monitor.start()
+        self.monitor.start_date()
         
         config_name = self.config.get('name', 'N/A')
         print(f"\n✅ Mock attivo. [Config: {config_name}]")

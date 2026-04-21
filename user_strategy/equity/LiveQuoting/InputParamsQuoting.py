@@ -4,11 +4,7 @@ from typing import List, Optional
 
 import pandas as pd
 
-
-from user_strategy.utils.pricing_models.AggregationFunctions import forecast_aggregation
 from user_strategy.utils.InputParams import InputParams
-from market_monitor.live_data_hub.real_time_data_hub import EUR_SYNONYM
-from user_strategy.utils.enums import ISIN_TO_TICKER
 
 logger = logging.getLogger()
 
@@ -26,7 +22,6 @@ class InputParamsQuoting(InputParams):
         self._isin_nav = []
         self.isins = []
         self._isin_quoting = []
-        # self._pcf_db_manager: Optional[PCFDBManager] = None
         self.forecast_aggregator_driver = None
         self.forecast_aggregator_cluster = None
         self.r2_cluster = None
@@ -37,8 +32,6 @@ class InputParamsQuoting(InputParams):
         self._beta_cluster = pd.DataFrame()
         self._beta_cluster_index = pd.DataFrame()
         self.load_inputs_db(path_db)
-        # self._load_inputs_excel(file_path)
-
 
     @property
     def beta_cluster(self):
@@ -46,12 +39,10 @@ class InputParamsQuoting(InputParams):
 
     @beta_cluster.setter
     def beta_cluster(self, value: pd.DataFrame):
-
         value = value.loc[value.sum(axis=1) != 0, value.sum() != 0]
         for etf in value.index:
             if etf not in self._isin_cluster:
                 self._isin_cluster.append(etf)
-
         self._beta_cluster = value
 
     @beta_cluster.getter
@@ -66,17 +57,8 @@ class InputParamsQuoting(InputParams):
     def beta_cluster_index(self):
         return self._beta_cluster_index
 
-    def set_forecast_aggregation_func(self, kwargs):
-
-        for key in ["cluster"]:
-            try:
-                params = kwargs[key]
-                self.__setattr__(f"_forecast_aggregator_{key}",
-                                 forecast_aggregation[params["forecast_aggregation"]](
-                                     **params[params["forecast_aggregation"]]))
-
-            except KeyError:
-                self.logger.error(f"forecast aggregator for {key} not implemented.")
+    def set_forecast_aggregation_func(self, kwargs: dict) -> None:
+        super().set_forecast_aggregation_func(kwargs, ["cluster"])
 
     @beta_cluster_index.setter
     def beta_cluster_index(self, value):
@@ -84,14 +66,10 @@ class InputParamsQuoting(InputParams):
         for etf in value.index:
             if etf not in self._isin_cluster:
                 self._isin_cluster.append(etf)
-
         self._beta_cluster_index = value
 
     def load_inputs_db(self, db_path):
-
-        # Connessione al database
         conn = sqlite3.connect(db_path)
-        # Mapping: nome tabella DB -> nome attributo classe
         table_mapping = {
             "beta_large_cluster": "beta_cluster",
             "beta_index_cluster": "beta_cluster_index"
@@ -106,19 +84,15 @@ class InputParamsQuoting(InputParams):
                                 GROUP BY ISIN
                             )
                             """
-
-            # Caricamento dei dati in un DataFrame
             df = pd.read_sql(query, conn)
             beta_matrix = df.pivot_table(index='ISIN',
                                          columns='DRIVER',
                                          values='BETA',
                                          aggfunc='sum').fillna(0)
-
             setattr(self, attr_name, beta_matrix)
 
-        self.inactive_instrument_db = pd.read_sql(f"""
+        self.inactive_instrument_db = pd.read_sql("""
                         SELECT *
                         FROM market_status
                         """, conn)
-
         conn.close()
