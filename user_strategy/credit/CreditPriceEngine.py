@@ -258,6 +258,10 @@ class CreditPriceEngine(StrategyUI):
 
         with self.adjuster.live_update(self.book_mid[self._all_securities], fx_prices=self.book_mid[self.fx_list]):
             self.corrected_returns = self.adjuster.get_clean_returns(cumulative=True).T
+
+        for name in self.pricing_model_registry.model_names:
+            self.pricing_model_registry.set_returns_source(name, self.corrected_returns)
+
         self.book_storage.append(self.book_mid)
         return self.book_mid
 
@@ -273,22 +277,26 @@ class CreditPriceEngine(StrategyUI):
         self.brothers_correction = calculate_cluster_correction(pc.hedge_ratios_brothers)
         self.pricing_model_registry = PricingModelRegistry()
 
+        rs = self.corrected_returns
+
         def reg(name, instruments, model):
-            self.pricing_model_registry.register(name=name, instruments=instruments, model=model)
+            self.pricing_model_registry.register(
+                name=name, instruments=instruments, model=model, returns_source=rs,
+            )
 
         reg("th live cluster price", self.etf_isins, ClusterPricingModel(
             name="th live cluster price", beta=pc.hedge_ratios_cluster,
-            returns=self.corrected_returns, forecast_aggregator=pc.forecast_aggregator_cluster,
+            returns=rs, forecast_aggregator=pc.forecast_aggregator_cluster,
             cluster_correction=self.cluster_correction,
         ))
         reg("th live brother price", self.etf_isins, ClusterPricingModel(
             name="th live brother price", beta=pc.hedge_ratios_brothers,
-            returns=self.corrected_returns, forecast_aggregator=pc.forecast_aggregator_brother,
+            returns=rs, forecast_aggregator=pc.forecast_aggregator_brother,
             cluster_correction=self.brothers_correction,
         ))
         reg("th live driver price", self.etf_isins, DriverPricingModel(
             name="th live driver price", beta=pc.hedge_ratios_drivers,
-            returns=self.corrected_returns, forecast_aggregator=pc.forecast_aggregator_driver,
+            returns=rs, forecast_aggregator=pc.forecast_aggregator_driver,
         ))
 
         cf = self.credit_futures_contracts
@@ -296,13 +304,13 @@ class CreditPriceEngine(StrategyUI):
         reg("th live cluster credit futures price", cf_idx, ClusterPricingModel(
             name="th live cluster credit futures price",
             beta=pc.hedge_ratios_credit_futures_cluster.loc[cf_idx],
-            returns=self.corrected_returns, forecast_aggregator=pc.forecast_aggregator_cluster,
+            returns=rs, forecast_aggregator=pc.forecast_aggregator_cluster,
             disable_warning=True,
         ))
         reg("th live brother credit futures price", cf, ClusterPricingModel(
             name="th live brother credit futures price",
             beta=pc.hedge_ratios_credit_futures_brothers.loc[cf],
-            returns=self.corrected_returns, forecast_aggregator=pc.forecast_aggregator_brother,
+            returns=rs, forecast_aggregator=pc.forecast_aggregator_brother,
             disable_warning=True,
         ))
 
@@ -334,7 +342,7 @@ class CreditPriceEngine(StrategyUI):
         ))
 
     def calculate_theoretical_prices(self):
-        self.pricing_model_registry.calculate_theoretical_prices(self.book_mid, self.corrected_returns)
+        self.pricing_model_registry.predict_all(self.book_mid)
 
     def _publish_prices(self) -> None:
         pm = self.pricing_model_registry
