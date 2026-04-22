@@ -43,14 +43,14 @@ class CreditPriceEngine(BasePriceEngine):
 
     def __init__(self, *args, **kwargs):
         self.end = None
-        self.start_date = None          # set properly in _setup_instrument_universe (needs holidays)
+        self.start_date = None  # set properly in _setup_instrument_universe (needs holidays)
         self.book_mid: pd.Series | None = None
         self.input_params = InputParamsFIQuoting(kwargs)
         self._cumulative_returns = True
         self.API = BshData(r"C:\AFMachineLearning\Libraries\MarketMonitor\etc\config\bshdata_config.yaml")
         self.market_api = self.API.market
         self.info_api = self.API.info
-        super().__init__(*args, **kwargs)   # triggers the setup phase sequence
+        super().__init__(*args, **kwargs)  # triggers the setup phase sequence
 
     # ── Subscription ──────────────────────────────────────────────────────────
 
@@ -135,7 +135,7 @@ class CreditPriceEngine(BasePriceEngine):
         self.fx_instruments = [self.market_api.build_instrument(i, type='CURRENCYPAIR', autocomplete=True) for i in
                                self.fx_list]
         self.rates_instruments = [self.market_api.build_instrument(i, type='INDEX', autocomplete=True) for i in
-                                 self.irs_contracts_list]
+                                  self.irs_contracts_list]
         self.swap_instruments = [self.market_api.build_instrument(i, type='SWAP', autocomplete=True) for i in
                                  self.swap_list]
 
@@ -230,10 +230,10 @@ class CreditPriceEngine(BasePriceEngine):
 
     def get_mid(self) -> pd.Series:
 
-        last_book = self.market_data.get_data_field(field=["BID", "ASK","LAST_PRICE"])
+        last_book = self.market_data.get_data_field(field=["BID", "ASK", "LAST_PRICE"])
         bid = last_book["BID"].replace({0: np.nan})
         ask = last_book["ASK"].replace({0: np.nan})
-        mid = ((bid+ask)/2).fillna(last_book["LAST_PRICE"])
+        mid = ((bid + ask) / 2).fillna(last_book["LAST_PRICE"])
         self.book_mid.update(mid)
 
         with self.adjuster.live_update(self.book_mid[self._all_securities], fx_prices=self.book_mid[self.fx_list]):

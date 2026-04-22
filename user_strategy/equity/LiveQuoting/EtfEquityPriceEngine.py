@@ -1,6 +1,6 @@
 import os
 import sqlite3
-import time as sleep_time
+from time import sleep as sleep_time
 
 from collections import deque
 from contextlib import contextmanager
@@ -31,7 +31,7 @@ from user_strategy.utils.pricing_models.cluster_correction import calculate_clus
 logger = logging.getLogger(__name__)
 
 DB_ANAGRPHIC_PATH = r"V:\EquityETF\etf_equity_anagraphic_db.sqlite"
-
+_RETRY_MARKETS = ("NA", "FP")
 
 class EtfEquityPriceEngine(BasePriceEngine):
 
@@ -217,13 +217,6 @@ class EtfEquityPriceEngine(BasePriceEngine):
         beta_cluster_index = self._prepare_beta_matrix(self.input_params.beta_cluster_index)
 
         self.models = PricingModelRegistry()
-        # self.models.register("cluster", ClusterPricingModel(
-        #     beta=beta_cluster,
-        #     returns=self.corrected_return,
-        #     forecast_aggregator=self.input_params.forecast_aggregator_cluster,
-        #     cluster_correction=ClusterPricingModel.calculate_cluster_correction(beta_cluster, 0),
-        #     name="theoretical_live_cluster_price",
-        # ), returns_source=self.corrected_return)
 
         self.models.register("intraday", ClusterPricingModel(
             beta=beta_cluster,
@@ -233,13 +226,7 @@ class EtfEquityPriceEngine(BasePriceEngine):
             name="theoretical_live_cluster_price",
         ), returns_source=self.corrected_return_intraday)
 
-        # self.models.register("index_cluster", ClusterPricingModel(
-        #     beta=beta_cluster_index,
-        #     returns=self.corrected_return,
-        #     forecast_aggregator=self.input_params.forecast_aggregator_cluster,
-        #     cluster_correction=ClusterPricingModel.calculate_cluster_correction(beta_cluster_index, 0),
-        #     name="theoretical_live_index_cluster_price",
-        # ), returns_source=self.corrected_return)
+
 
     def _finalize_setup(self) -> None:
         self._init_bloomberg()
@@ -473,34 +460,34 @@ class EtfEquityPriceEngine(BasePriceEngine):
                 params={"interval": 1}
             )
 
-    def wait_for_book_initialization(self):
-        """Attende l'inizializzazione del book e gestisce strumenti con dati mancanti."""
-        while datetime.today().time() < time(9, 5):
-            return False
+    def wait_for_book_initialization(self) -> bool:
+        return datetime.today().time() > time(9, 5) and self._initialize_bloomberg_subscriptions()
 
-        while not self.wait_for_bloomberg_initialization():
-            sleep_time.sleep(1)
+    def _initialize_bloomberg_subscriptions(self) -> bool:
+        self._wait_pending_subscriptions()
+        self._retry_failed_subscriptions()
+        return self._is_failure_rate_acceptable(self._collect_bad_sec_isins())
 
-        return True
+    def _collect_bad_sec_isins(self) -> list[str]:
+        return [s.get("id") for s in self.global_subscription_service.get_failed_subscriptions() if
+                s.get("last_error") == "BAD_SEC"]
 
-    def wait_for_bloomberg_initialization(self):
+    def _is_failure_rate_acceptable(self, failed: list[str]) -> bool:
+        return bool(self._instruments) and len(failed) / len(self._instruments) < 0.1
+
+    def _wait_pending_subscriptions(self) -> None:
         while self.market_data.get_pending_subscriptions("bloomberg"):
-            sleep_time.sleep(1)
+            sleep_time(1)
 
-        for sub in self.global_subscription_service.get_failed_subscriptions():
-            isin = sub.get("id")
-            if isin in self.etfs:
-                ticker = self.isin_to_ticker.get(isin)
-                self.global_subscription_service.subscribe_bloomberg(isin, f"{ticker} IM EQUITY", ["BID", "ASK"])
-
-        sleep_time.sleep(5)
-
-        for sub in self.global_subscription_service.get_failed_subscriptions():
-            isin = sub.get("id")
-            logger.warning(f"failed subscription: '{isin} IM EQUITY' ({self.isin_to_ticker.get(isin)})")
-            self.failed_isin.append(isin)
-
-        return True
+    def _retry_failed_subscriptions(self) -> None:
+        failed = {s.get("id") for s in self.global_subscription_service.get_failed_subscriptions() if
+                  s.get("id") in self.etfs}
+        for sub in failed:
+            self.global_subscription_service.unsubscribe(sub, 'bloomberg')
+        for market in _RETRY_MARKETS:
+            for isin in failed:
+                self.global_subscription_service.subscribe_bloomberg(isin, f"{isin} {market} EQUITY", ["BID", "ASK"])
+            sleep_time(5)
 
     # =========================================================================
     # Loop ad alta frequenza
@@ -523,14 +510,6 @@ class EtfEquityPriceEngine(BasePriceEngine):
                             predictions[key] = self.alpha * pred + (1.0 - self.alpha) * self.mid_eur
 
             with _timer("round_prices", self.logger):
-                idx_series = predictions.get("index_cluster")
-                if idx_series is None:
-                    idx_series = pd.Series(dtype=float)
-
-                clust_series = predictions.get("cluster")
-                if clust_series is None:
-                    clust_series = pd.Series(dtype=float)
-
                 intraday_series = predictions.get("intraday")
                 if intraday_series is None:
                     intraday_series = pd.Series(dtype=float)
