@@ -224,13 +224,8 @@ class InputParamsFI(InputParams):
             credit_futures_data=self.credit_futures_data,
             irs_data=self.irs_data,
             irp_data=self.irp_data,
-            YTM_mapping=self.YTM_mapping,
-            currencies_EUR_ccy=self.currencies_EUR_ccy,
-            currency_weights=self.currency_weights,
             currency_exposure=self.currency_exposure,
             trading_currency=self.trading_currency,
-            price_snipping_time=self.price_snipping_time,
-            number_of_days=self.number_of_days,
         )
         self.pricing_config = PricingConfig(
             hedge_ratios_cluster=self.hedge_ratios_cluster,
@@ -238,11 +233,8 @@ class InputParamsFI(InputParams):
             hedge_ratios_brothers=self.hedge_ratios_brothers,
             hedge_ratios_credit_futures_cluster=self.hedge_ratios_credit_futures_cluster,
             hedge_ratios_credit_futures_brothers=self.hedge_ratios_credit_futures_brothers,
-            cluster_anagraphic=self.cluster_anagraphic,
-            brothers=self.brothers,
             forecast_aggregator_cluster=self.forecast_aggregator_cluster,
             forecast_aggregator_driver=self.forecast_aggregator_driver,
-            forecast_aggregator_nav=self.forecast_aggregator_nav,
             forecast_aggregator_brother=self.forecast_aggregator_brother,
         )
 

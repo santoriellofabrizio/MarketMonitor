@@ -1,5 +1,5 @@
 import logging
-from typing import Dict, List, Optional, Protocol, Type, runtime_checkable
+from typing import Dict, List, Optional, Type
 
 import pandas as pd
 
@@ -18,6 +18,8 @@ class _ModelEntry:
 
 class PricingModelRegistry:
     """Registry that holds and runs all pricing models.
+
+    Model names are case-insensitive: "Cluster" and "cluster" refer to the same model.
 
     Supports two usage patterns:
 
@@ -39,6 +41,10 @@ class PricingModelRegistry:
         self._entries: Dict[str, _ModelEntry] = {}
         self._predictions: Dict[str, Optional[pd.Series]] = {}
 
+    @staticmethod
+    def _key(name: str) -> str:
+        return name.lower()
+
     # ── Registration ──────────────────────────────────────────────────────────
 
     def register(
@@ -52,7 +58,7 @@ class PricingModelRegistry:
         """Register a pricing model.
 
         Args:
-            name: Unique model key.
+            name: Unique model key (case-insensitive).
             model: The pricing model instance.
             instruments: Optional list of instrument IDs; pre-allocates the output Series.
             returns_source: Optional DataFrame stored per-model for the equity pattern.
@@ -60,19 +66,21 @@ class PricingModelRegistry:
 
         Returns self for chaining.
         """
-        if name in self._entries:
+        key = self._key(name)
+        if key in self._entries:
             raise ValueError(f"Model '{name}' is already registered.")
-        self._entries[name] = _ModelEntry(model, returns_source)
-        self._predictions[name] = (
-            pd.Series(dtype=dtype, name=name, index=instruments)
+        self._entries[key] = _ModelEntry(model, returns_source)
+        self._predictions[key] = (
+            pd.Series(dtype=dtype, name=key, index=instruments)
             if instruments is not None
             else None
         )
         return self
 
     def unregister(self, name: str) -> None:
-        self._entries.pop(name, None)
-        self._predictions.pop(name, None)
+        key = self._key(name)
+        self._entries.pop(key, None)
+        self._predictions.pop(key, None)
 
     # ── Prediction ────────────────────────────────────────────────────────────
 
@@ -107,11 +115,11 @@ class PricingModelRegistry:
     # ── Accessors ─────────────────────────────────────────────────────────────
 
     def get_prediction(self, name: str) -> Optional[pd.Series]:
-        return self._predictions.get(name)
+        return self._predictions.get(self._key(name))
 
     def get_prices(self, name: str) -> pd.Series:
         """Alias of get_prediction (credit-pattern accessor)."""
-        result = self._predictions.get(name)
+        result = self._predictions.get(self._key(name))
         if result is None:
             raise ValueError(
                 f"Model '{name}' not found or not yet predicted. "
@@ -123,13 +131,13 @@ class PricingModelRegistry:
 
     def set_returns_source(self, name: str, returns_source: pd.DataFrame) -> None:
         """Update the returns DataFrame for a model."""
-        entry = self._entries.get(name)
+        entry = self._entries.get(self._key(name))
         if entry is not None:
             entry.returns_source = returns_source
 
     def update_beta(self, name: str, beta: pd.DataFrame, correction: pd.Series) -> None:
         """Update a model's beta matrix and cluster correction."""
-        entry = self._entries.get(name)
+        entry = self._entries.get(self._key(name))
         if entry is None:
             logger.error(f"Model '{name}' not found")
             return
@@ -148,7 +156,7 @@ class PricingModelRegistry:
 
     def update_forecaster(self, name: str, forecaster) -> None:
         """Replace the forecast aggregator of a model at runtime."""
-        entry = self._entries.get(name)
+        entry = self._entries.get(self._key(name))
         if entry is None:
             logger.error(f"Model '{name}' not found in registry")
             return
@@ -168,4 +176,4 @@ class PricingModelRegistry:
         return len(self._entries)
 
     def __contains__(self, name: str) -> bool:
-        return name in self._entries
+        return self._key(name) in self._entries
