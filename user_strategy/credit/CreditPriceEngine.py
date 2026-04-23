@@ -155,7 +155,12 @@ class CreditPriceEngine(BasePriceEngine):
         self.live_book_etf = LiveBook(default_method="best_bid_ask")
         for mkt, etfs in self.etfs_by_market.items():
             for isin in etfs:
-                self.live_book_etf.register(sub_id=f"{mkt}:{isin}", instrument_id=isin)
+                self.live_book_etf.register(
+                    sub_id=f"{mkt}:{isin}",
+                    instrument_id=isin,
+                    market=mkt,
+                    currency=self.currency_per_isin_market.get((isin, mkt)),
+                )
         self.live_book_etf.add_filter(self.book_filter)
 
         # Non-ETF book: 1-to-1 sub_id == instrument_id

@@ -40,6 +40,7 @@ class LiveBook:
         self._default_method = default_method
 
         self._sub_to_instr: dict[str, str] = {}
+        self._sub_metadata: dict[str, tuple[str | None, str | None]] = {}  # sub_id → (market, currency)
         self._instr_series: pd.Series | None = None  # built lazily, index=sub_id, values=instrument_id
 
         # (filter_obj, frozenset_of_sub_ids | None); None scope = global
@@ -54,12 +55,21 @@ class LiveBook:
     def register(
         self,
         sub_id: str,
-        instrument_id: str | None = None,
+        instrument_id: str,
         market: str | None = None,
         currency: str | None = None,
     ) -> "LiveBook":
-        """Register one subscription. instrument_id defaults to sub_id."""
-        self._sub_to_instr[sub_id] = instrument_id if instrument_id is not None else sub_id
+        """Register one subscription.
+
+        Parameters
+        ----------
+        sub_id        : key used by market_data (e.g. "IM:IE00B4L5Y983").
+        instrument_id : canonical security identifier (required).
+        market        : optional market / venue metadata.
+        currency      : optional currency metadata.
+        """
+        self._sub_to_instr[sub_id] = instrument_id
+        self._sub_metadata[sub_id] = (market, currency)
         self._instr_series = None
         return self
 
@@ -67,12 +77,12 @@ class LiveBook:
         """
         Bulk-register from a {sub_id: instr_obj} dict.
 
-        instrument_id is taken from instr_obj.id (falls back to sub_id).
+        Reads instr_obj.id (required), instr_obj.market and instr_obj.currency (optional).
         """
         for sub_id, instr in instruments.items():
             self.register(
                 sub_id=sub_id,
-                instrument_id=getattr(instr, "id", sub_id),
+                instrument_id=instr.id,
                 market=getattr(instr, "market", None),
                 currency=getattr(instr, "currency", None),
             )
