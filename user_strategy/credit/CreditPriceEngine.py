@@ -25,7 +25,6 @@ from sfm_data_provider.core.instruments.instruments import Instrument
 from sfm_data_provider.core.requests.subscriptions import BloombergSubscriptionBuilder
 from sfm_data_provider.interface.bshdata import BshData
 
-from market_monitor.strategy.common.trade_manager.book_memory import FairvaluePrice
 from market_monitor.utils.book_utils import SpreadEWMA
 from user_strategy.utils.BasePriceEngine import BasePriceEngine
 from user_strategy.utils.InputParamsFIQuoting import InputParamsFIQuoting
@@ -151,6 +150,15 @@ class CreditPriceEngine(BasePriceEngine):
 
     def _setup_live_book(self) -> None:
         from user_strategy.utils.live_book import LiveBook
+
+        # ETF book: sub_id is "{mkt}:{isin}", instrument_id is isin
+        self.live_book_etf = LiveBook(default_method="best_bid_ask")
+        for mkt, etfs in self.etfs_by_market.items():
+            for isin in etfs:
+                self.live_book_etf.register(sub_id=f"{mkt}:{isin}", instrument_id=isin)
+        self.live_book_etf.add_filter(self.book_filter)
+
+        # Non-ETF book: 1-to-1 sub_id == instrument_id
         non_etf_instruments = {
             i.id: i for i in self.factored_instruments
             if i.id not in self.all_etf_isin
@@ -331,46 +339,13 @@ class CreditPriceEngine(BasePriceEngine):
     # ── helpers ───────────────────────────────────────────────────────────────────
 
     def _update_etf_mids(self) -> None:
-        """Aggiorna book_mid per gli ETF aggregando bid/ask per ISIN e valuta."""
-        raw_etfs_book = self.market_data.get_data_field(
-            field=["BID", "ASK"]
-        ).loc[self.all_etf_isin]
-
-        etfs_with_valid_quotes = raw_etfs_book.dropna(subset=["BID", "ASK"])
-        valid_etfs_book = self.book_filter.get_valid_book(etfs_with_valid_quotes)
-
-        grouped = self._group_etf_quotes(valid_etfs_book)
-
-        for isin, ccy_prices in grouped.items():
-            if isin not in self.book_mid.index:
-                self.book_mid[isin] = FairvaluePrice.by_currency(isin, {})
-            tracker = self.book_mid[isin]
-
-            for ccy, quotes in ccy_prices.items():
-                bids, asks = quotes["bids"], quotes["asks"]
-                if bids and asks:
-                    mid_price = (max(bids) + min(asks)) / 2
-                    tracker.update_price(mid_price, currency=ccy)
-
-    def _group_etf_quotes(self, valid_etfs_book: pd.DataFrame) -> dict:
-        """
-        Raggruppa bid e ask per ISIN e valuta.
-        Struttura: { isin: { ccy: { "bids": [...], "asks": [...] } } }
-        """
-        grouped = {}
-        for inst_id, row in valid_etfs_book.iterrows():
-            isin = inst_id.split(":", 1)[1]
-            ccy = self.market_data.currency_information.get(inst_id, "EUR")
-
-            if isin not in grouped:
-                grouped[isin] = {}
-            if ccy not in grouped[isin]:
-                grouped[isin][ccy] = {"bids": [], "asks": []}
-
-            grouped[isin][ccy]["bids"].append(row["BID"])
-            grouped[isin][ccy]["asks"].append(row["ASK"])
-
-        return grouped
+        """Aggiorna book_mid per gli ETF aggregando bid/ask per ISIN via LiveBook."""
+        raw_book = self.market_data.get_data_field(field=["BID", "ASK"])
+        etf_sub_ids = [f"{mkt}:{isin}"
+                       for mkt, etfs in self.etfs_by_market.items()
+                       for isin in etfs]
+        self.live_book_etf.update(raw_book.reindex(etf_sub_ids))
+        self.book_mid.update(self.live_book_etf.get_mid())
 
     def _update_non_etf_mids(self) -> None:
         """Aggiorna book_mid per i non-ETF usando mid oppure LAST_PRICE come fallback."""
@@ -378,7 +353,7 @@ class CreditPriceEngine(BasePriceEngine):
         non_etfs = last_book.loc[~last_book.index.isin(self.all_etf_isin)]
         self.live_book.update(non_etfs[["BID", "ASK"]])
         non_etfs_mid = self.live_book.get_mid().combine_first(non_etfs["LAST_PRICE"])
-        self.book_mid.update_price(non_etfs_mid)
+        self.book_mid.update(non_etfs_mid)
 
     def _refresh_corrected_returns(self) -> None:
         """Ricalcola i rendimenti corretti (adjusted) a partire dai prezzi mid aggiornati."""
