@@ -189,6 +189,7 @@ class EtfEquityLiveAnalysis(TradeAnalysisBase):
             for flow in self.flow_detector.get_new_flows():
                 for dashboard in [self.rabbit_publisher, self.rabbit_publisher]:
                     if dashboard: dashboard.export_flow_detected(channel="trades_rabbit", flow=flow)
+        self.publish_trades_on_dashboard(self.trade_manager.get_trades_to_publish())
 
     def publish_trades_on_excel(self):
 
@@ -236,4 +237,5 @@ class EtfEquityLiveAnalysis(TradeAnalysisBase):
             isin: FairvaluePrice.scalar(isin, price)
             for isin, price in raw.mean(axis=1).items()
         }
-        self.book_storage.append(snapshot)
+
+        self.save_mid(snapshot)

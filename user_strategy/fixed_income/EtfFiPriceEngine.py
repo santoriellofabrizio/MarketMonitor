@@ -56,7 +56,7 @@ class EtfFiPriceEngine(StrategyUI):
 
     def _setup_instrument_universe(self) -> None:
         dc = self.input_params.data_config
-        self.etf_isins = dc.etf_isins
+        self.etf_isins = dc.etf_list
         self.drivers_data = dc.drivers
         self.drivers_list = self.drivers_data.index.to_list()
         self.credit_futures_contracts_data = dc.credit_futures_data

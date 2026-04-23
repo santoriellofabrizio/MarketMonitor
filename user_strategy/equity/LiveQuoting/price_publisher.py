@@ -91,7 +91,7 @@ class PricePublisherHub:
         """Export normalized prices via pub/sub (Redis or RabbitMQ)."""
         for channel, price_key in self._GUI_CHANNELS.items():
             try:
-                if price := normalized_prices.get(price_key):
+                if (price := normalized_prices.get(price_key)) is not None:
                     self.gui.export_message(
                         channel,
                         price,
@@ -147,15 +147,7 @@ class PricePublisherHub:
 
         mid_prices = normalized_prices['mid']
         price_fields = [
-            ('live_idx', normalized_prices['live_idx']),
-            ('live_clust', normalized_prices['live_clust']),
             ('intraday', normalized_prices['intraday']),
-            ('normalized_mid', normalized_prices['normalized_mid']),
-        ]
-        mis_fields = [
-            ('live_idx_mis', normalized_prices['live_idx']),
-            ('live_clust_mis', normalized_prices['live_clust']),
-            ('intraday_mis', normalized_prices['intraday']),
         ]
 
         count = 0
@@ -174,14 +166,6 @@ class PricePublisherHub:
                         val = series.get(isin)
                         if val is not None and not np.isnan(val):
                             batch.add(isin, field, float(val),
-                                      labels=self._build_ts_labels(isin, field))
-                            count += 1
-
-                    for field, series in mis_fields:
-                        val = series.get(isin)
-                        if val is not None and not np.isnan(val):
-                            mis = float(np.round(val / mid_val - 1, 6))
-                            batch.add(isin, field, mis,
                                       labels=self._build_ts_labels(isin, field))
                             count += 1
 

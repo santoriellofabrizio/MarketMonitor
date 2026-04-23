@@ -2,12 +2,13 @@ import logging
 from abc import ABC, abstractmethod
 from datetime import datetime
 import datetime as dt
+from typing import final
 
 import pandas as pd
 
 from market_monitor.publishers.rabbit_publisher import RabbitMessaging
 from market_monitor.publishers.redis_publisher import RedisMessaging
-from market_monitor.strategy.common.trade_manager.book_memory import BookStorage
+from market_monitor.strategy.common.trade_manager.book_memory import BookStorage, BookSnapshot
 from market_monitor.strategy.common.trade_manager.trade_manager import TradeManager
 from market_monitor.strategy.strategy_ui.StrategyUI import StrategyUI
 
@@ -109,6 +110,10 @@ class TradeAnalysisBase(StrategyUI, ABC):
         """Hook called after trade_manager.on_trade(). Override for flow
         detection or other post-processing."""
         pass
+
+    @final
+    def save_mid(self, snapshot: BookSnapshot, time_snapshot: datetime | None = None) -> None:
+        self.book_storage.append(snapshot.copy(), time_snapshot)
 
     def publish_trades_on_dashboard(self, trades: pd.DataFrame) -> None:
         if self.redis_publisher:

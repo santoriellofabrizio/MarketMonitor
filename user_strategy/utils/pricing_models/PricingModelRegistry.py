@@ -172,6 +172,13 @@ class PricingModelRegistry:
     def model_names(self) -> list:
         return list(self._entries.keys())
 
+    @property
+    def model_instruments(self) -> set[str]:
+        needed_instruments = set()
+        for entry in self._entries.values():
+            needed_instruments.add(entry.model.declare_instruments())
+        return needed_instruments
+
     def __len__(self):
         return len(self._entries)
 

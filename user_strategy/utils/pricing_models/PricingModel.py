@@ -37,6 +37,9 @@ class PricingModel(PricePredictor):
     def predict_returns(self, all_returns: pd.DataFrame) -> pd.DataFrame:
         pass
 
+    def declare_instruments(self) -> set:
+        pass
+
 
 class LinearPricingModel(PricingModel, ABC):
     def __init__(self,
@@ -49,6 +52,9 @@ class LinearPricingModel(PricingModel, ABC):
             self.beta)
         self.target_variables = beta.index.tolist()
         self.regressor = beta.columns.tolist()
+
+    def declare_instruments(self) -> set:
+        return set(self.target_variables + self.regressor)
 
 
 class MultiPeriodLinearPricingModel(LinearPricingModel, ABC):

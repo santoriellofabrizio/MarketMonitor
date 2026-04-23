@@ -62,7 +62,7 @@ class StrategyUIAsync(ABC):
 
     def start(self):
         """ Starts the strategy"""
-        logger.warning("Entering start method.")
+        logger.info("Entering start method.")
         asyncio.run(self._async_run())
 
     def _schedule_tasks(self) -> list[Coroutine[Any, Any, None]] | None:

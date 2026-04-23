@@ -1,6 +1,6 @@
 from collections import deque
 from datetime import datetime
-from typing import Optional, Any
+from typing import Optional, Hashable
 from enum import Enum, auto
 
 
@@ -13,13 +13,13 @@ class PriceKeyType(Enum):
 class FairvaluePrice:
     __slots__ = ("isin", "_prices", "_key_type")
 
-    def __init__(self, isin: str, prices: dict, key_type: PriceKeyType):
+    def __init__(self, isin: Hashable, prices: dict, key_type: PriceKeyType):
         self.isin = isin
         self._prices = prices
         self._key_type = key_type
 
     @classmethod
-    def scalar(cls, isin: str, value: float) -> "FairvaluePrice":
+    def scalar(cls, isin: Hashable, value: float) -> "FairvaluePrice":
         return cls(isin, {"_scalar": value}, PriceKeyType.SCALAR)
 
     @classmethod
@@ -58,7 +58,7 @@ class FairvaluePrice:
 
 
 # Alias chiaro per uno snapshot completo
-BookSnapshot = dict[str, FairvaluePrice]  # isin -> MidPrice
+BookSnapshot = dict[Hashable, FairvaluePrice]  # isin -> MidPrice
 """
 Tipo alias per uno snapshot istantaneo del book.
 

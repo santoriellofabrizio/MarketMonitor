@@ -33,6 +33,7 @@ logger = logging.getLogger(__name__)
 DB_ANAGRPHIC_PATH = r"V:\EquityETF\etf_equity_anagraphic_db.sqlite"
 _RETRY_MARKETS = ("NA", "FP")
 
+
 class EtfEquityPriceEngine(BasePriceEngine):
 
     def __init__(self, **kwargs) -> None:
@@ -94,7 +95,7 @@ class EtfEquityPriceEngine(BasePriceEngine):
         self.position: Optional[pd.Series] = None
         self.return_to_publish: list = [1, 2, 3, 4, 5, 6, 7, 8]
         self.today = pd.Timestamp.today().normalize()
-        self.yesterday = self.holidays.previous_business_day(self.today, market='ETFP')
+        self.yesterday = self.calendar.previous_business_day(self.today, market='ETFP')
 
     def _filter_active_etps(self, isin_list: list) -> list:
         """
@@ -141,10 +142,10 @@ class EtfEquityPriceEngine(BasePriceEngine):
 
     def _setup_historical_data(self) -> None:
         """Carica prezzi storici e adjusters."""
-        start = self.holidays.subtract_business_days(today(), self.number_of_days)
-        start_intraday = self.holidays.subtract_business_days(today(), self.number_of_days_intraday)
-        end = self.holidays.previous_business_day(today())
-        days = self.holidays.get_business_days(start=start, end=end)
+        start = self.calendar.subtract_business_days(today(), self.number_of_days)
+        start_intraday = self.calendar.subtract_business_days(today(), self.number_of_days_intraday)
+        end = self.calendar.previous_business_day(today())
+        days = self.calendar.get_business_days(start=start, end=end)
         snapshot_time = time(16, 45)
 
         fx_composition = self.API.info.get_fx_composition(
@@ -178,7 +179,7 @@ class EtfEquityPriceEngine(BasePriceEngine):
             self.API.market.get_intraday_etf(
                 id=self.etfs, start=start_intraday, end=end, frequency="15m",
                 source='timescale',
-                fallbacks=[{"source": "bloomberg", "market": mkt} for mkt in ["IM", "FP", "NA"]])
+                fallbacks=[{"source": "bloomberg", "market": mkt} for mkt in ["IM"]])
             .between_time("10:00", "17:00"), name="etf_intraday")
 
         self.etf_prices = self.etf_prices.interpolate("time")
@@ -225,8 +226,6 @@ class EtfEquityPriceEngine(BasePriceEngine):
             cluster_correction=calculate_cluster_correction(beta_cluster, 0),
             name="theoretical_live_cluster_price",
         ), returns_source=self.corrected_return_intraday)
-
-
 
     def _finalize_setup(self) -> None:
         self._init_bloomberg()
@@ -496,36 +495,30 @@ class EtfEquityPriceEngine(BasePriceEngine):
     def update_HF(self):
         if datetime.today().time() < time(17, 30):
 
-            with _timer("get_mid", self.logger):
-                self.get_mid()
+            self.get_mid()
 
-            with _timer("predict_all", self.logger):
-                predictions = self.models.predict_all(self.mid_eur) or pd.DataFrame()
+            predictions = self.models.predict_all(self.mid_eur) or pd.DataFrame()
 
             if self.alpha < 1.0:
-                with _timer("alpha_blend", self.logger):
-                    for key in ("cluster", "intraday", "index_cluster"):
-                        pred = predictions.get(key)
-                        if pred is not None:
-                            predictions[key] = self.alpha * pred + (1.0 - self.alpha) * self.mid_eur
+                for key in ("cluster", "intraday", "index_cluster"):
+                    pred = predictions.get(key)
+                    if pred is not None:
+                        predictions[key] = self.alpha * pred + (1.0 - self.alpha) * self.mid_eur
 
-            with _timer("round_prices", self.logger):
-                intraday_series = predictions.get("intraday")
-                if intraday_series is None:
-                    intraday_series = pd.Series(dtype=float)
+            intraday_series = predictions.get("intraday")
+            if intraday_series is None:
+                intraday_series = pd.Series(dtype=float)
 
-                normalized_prices = {
-                    'intraday': round_series_to_tick(intraday_series.fillna(0), self.reference_tick_size),
-                    'mid': round_series_to_tick(
-                        (self.mid_eur if self.mid_eur is not None else pd.Series([0])).fillna(0),
-                        self.reference_tick_size),
-                }
+            normalized_prices = {
+                'intraday': round_series_to_tick(intraday_series.fillna(0), self.reference_tick_size),
+                'mid': round_series_to_tick(
+                    (self.mid_eur if self.mid_eur is not None else pd.Series([0])).fillna(0),
+                    self.reference_tick_size),
+            }
 
-            with _timer("publish_gui", self.logger):
-                self.publisher.publish_prices_to_gui(normalized_prices)
+            self.publisher.publish_prices_to_gui(normalized_prices)
 
-            with _timer("publish_ts", self.logger):
-                self.publisher.publish_to_timeseries(normalized_prices, datetime.now(), predictions)
+            self.publisher.publish_to_timeseries(normalized_prices, datetime.now(), predictions)
 
     def update_LF(self):
         """Aggiornamento a bassa frequenza: pubblica i ritorni intraday storici."""
@@ -554,22 +547,19 @@ class EtfEquityPriceEngine(BasePriceEngine):
         else:
             self.mid_eur = last_mid
 
-        with _timer("get_mid.adjuster_daily", self.logger):
-            with self.adjuster.live_update(fx_prices=last_mid[self.currencies], prices=last_mid):
-                self.corrected_return = self.adjuster.get_clean_returns(cumulative=True).T
-                last_return = self.corrected_return.iloc[:, -1]
+        with self.adjuster.live_update(fx_prices=last_mid[self.currencies], prices=last_mid):
+            self.corrected_return = self.adjuster.get_clean_returns(cumulative=True).T
+            last_return = self.corrected_return.iloc[:, -1]
 
-        with _timer("get_mid.adjuster_intraday", self.logger):
-            with self.intraday_adjuster.live_update(fx_prices=last_mid[self.currencies], prices=last_mid):
-                self.corrected_return_intraday = self.intraday_adjuster.get_clean_returns(cumulative=True).T
-                last_return_intraday = self.corrected_return_intraday.iloc[:, -1]
+        with self.intraday_adjuster.live_update(fx_prices=last_mid[self.currencies], prices=last_mid):
+            self.corrected_return_intraday = self.intraday_adjuster.get_clean_returns(cumulative=True).T
+            last_return_intraday = self.corrected_return_intraday.iloc[:, -1]
 
         self.models.set_returns_source("cluster", self.corrected_return)
         self.models.set_returns_source("index_cluster", self.corrected_return)
         self.models.set_returns_source("intraday", self.corrected_return_intraday)
 
-        with _timer("get_mid.publish_returns", self.logger):
-            self.publisher.publish_returns(last_return, last_return_intraday)
+        self.publisher.publish_returns(last_return, last_return_intraday)
 
         self.book_storage.append(last_mid)
         return last_mid
@@ -586,7 +576,7 @@ class EtfEquityPriceEngine(BasePriceEngine):
 
         for name, beta in [("cluster", beta_cluster), ("intraday", beta_cluster),
                            ("index_cluster", beta_cluster_index)]:
-            correction = ClusterPricingModel.calculate_cluster_correction(beta, 0)
+            correction = calculate_cluster_correction(beta, 0)
             self.models.update_beta(name, beta, correction)
 
         logger.info(f"  - Cluster beta shape: {beta_cluster.shape}, "
@@ -682,11 +672,3 @@ class EtfEquityPriceEngine(BasePriceEngine):
             logger.debug(f"Outliers in {name}: {outliers.sum().sum()} values, saved to {out_dir}")
         df[outliers] = np.nan
         return df
-
-
-@contextmanager
-def _timer(label: str, log: logging.Logger = logger):
-    t0 = sleep_time.perf_counter()
-    yield
-    elapsed_ms = (sleep_time.perf_counter() - t0) * 1000
-    log.debug(f"[TIMER] {label}: {elapsed_ms:.1f} ms")

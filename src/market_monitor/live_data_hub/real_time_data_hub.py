@@ -14,7 +14,7 @@ import logging
 import warnings
 from datetime import datetime
 from threading import Lock
-from typing import Any, Union, List, Dict, Optional
+from typing import Any, Union, List, Dict, Optional, Hashable
 from collections import OrderedDict
 
 import numpy as np
@@ -523,7 +523,7 @@ class RTData:
     # ========================================================================
 
     @property
-    def currency_information(self) -> Dict[str, str]:
+    def currency_information(self) -> Dict[Hashable, str]:
         """
         Get currency information for all instruments.
 

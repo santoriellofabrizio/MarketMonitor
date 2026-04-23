@@ -1,7 +1,8 @@
 import logging
 import datetime as dt
+import sqlite3
 from datetime import time
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Literal, Union
 import pandas as pd
 import os
 import calendar
@@ -17,6 +18,14 @@ from sfm_datalibrary.queries import OracleDynamicDataQuery
 from sfm_datalibrary.connections.db_connections import DbConnectionParameters, OracleConnectionParameters, OracleConnection
 
 logger = logging.getLogger()
+
+
+INSTRUMENT_TYPES = Literal[
+   'ETF', 'IRS', 'CDS', 'STIR FUTURE', 'ZCIS', 'XCCY SWAP',
+   'FX SPOT', 'FX SWAP', 'FX FORWARD', 'PERPETUAL BOND FUTURE',
+   'GENERIC TREASURY YIELD', 'ON FINANCING RATE', 'PERPETUAL CDS',
+   'PERPETUAL EQUITY FUTURE', 'INDEX', 'IRP'
+]
 
 
 class InputParamsFI(InputParams):
@@ -37,9 +46,44 @@ class InputParamsFI(InputParams):
         self.logger = logging.getLogger()
         self.params = params
 
+        self.declared_instrument_types = (
+           'ETF',
+           'IRS',
+           'CDS',
+           # 'BOND FUTURE',
+           # 'EQUITY FUTURE',
+           'STIR FUTURE',
+           'ZCIS',
+           'XCCY SWAP',
+           'FX SPOT',
+           'FX SWAP',
+           'FX FORWARD',
+           'PERPETUAL BOND FUTURE',
+           'GENERIC TREASURY YIELD',
+           'ON FINANCING RATE',
+           'PERPETUAL CDS',
+           'PERPETUAL EQUITY FUTURE',
+           'INDEX',
+           'IRP',
+        )
+
+
         # DB connections (lazy-initialized)
         self.Oracle_DB_connection: OracleConnection | None = None
         self.sql_db_fi_file: str | None = None
+
+        types_placeholder = self.declared_instrument_types
+
+        with sqlite3.connect(params["sql_db_fi_file"]) as conn:
+            # Nota: Usiamo l'operatore IN con la tupla formattata correttamente
+            query = f"""
+                SELECT * FROM InstrumentsAnagraphic 
+                WHERE INSTRUMENT_TYPE IN {types_placeholder}
+            """
+
+            self._instruments_anagraphic = pd.read_sql(query, conn).set_index("INSTRUMENT_ID")
+            self._instruments = self._instruments_anagraphic.index.tolist()
+
         self._sql_db_manager: InstrumentDbManager | None = None
         self._pcf_db_manager: OracleDynamicDataQuery | None = None
 
@@ -241,6 +285,15 @@ class InputParamsFI(InputParams):
     # -------------------------------------------------------------------------
     # Instrument drivers (split by type)
     # -------------------------------------------------------------------------
+
+    def get_subscribed_instruments(self, inst_type: Optional[Union[INSTRUMENT_TYPES, list[INSTRUMENT_TYPES]]]= None) -> pd.DataFrame:
+        if inst_type is None:
+            return self._instruments
+        if isinstance(inst_type, str): inst_type = [inst_type]
+
+        return (self._instruments_anagraphic.loc[
+            self._instruments_anagraphic["INSTRUMENT_TYPE"].isin(inst_type)]
+                .index.to_list())
 
     def get_drivers_data(self) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
         """Load all driver-type instruments and return (drivers, credit_futures, index, irs, irp)."""

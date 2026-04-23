@@ -1,5 +1,6 @@
 import datetime as dt
 import logging
+from abc import abstractmethod
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
@@ -167,7 +168,7 @@ class CreditTradeAnalysis(TradeAnalysisBase):
                     tracker.update_price((max(b) + min(a)) / 2, currency=ccy)
 
         # Append dello stato attuale
-        self.book_storage.append(self.mid.copy())
+        self.save_mid(self.mid.copy())
 
     def _post_trade_processing(self, processed: pd.DataFrame) -> None:
         self.publish_trades_on_dashboard(self.trade_manager.get_trades_to_publish())

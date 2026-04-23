@@ -23,7 +23,7 @@ class BasePriceEngine(StrategyUI, ABC):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.holidays: HolidayManager = HolidayManager()
+        self.calendar: HolidayManager = HolidayManager()
         self.corrected_returns: pd.DataFrame = pd.DataFrame()
         self.models: PricingModelRegistry | None = None
 

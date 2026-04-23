@@ -21,7 +21,7 @@ client:
 api:
   log_level:
   log_file: logs/bshapi.log
-  log_level_file: DEBUG
+  log_level_file: INFO
   autocomplete: True
   cache: True
   cache_path: cache
