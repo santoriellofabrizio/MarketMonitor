@@ -4,7 +4,6 @@ from collections import deque, defaultdict
 from typing import Set, Literal
 from unittest import case
 
-import numpy as np
 import pandas as pd
 from PyQt5.uic.Compiler.qtproxies import LiteralProxyClass
 from dateutil.utils import today
@@ -102,6 +101,7 @@ class CreditPriceEngine(BasePriceEngine):
         self._fetch_market_prices(snapshot_time)
         self._apply_overrides()
         self._build_adjuster()
+        self._setup_live_book()
 
         self.corrected_return = pd.DataFrame(
             index=self.historical_prices.index,
@@ -125,6 +125,17 @@ class CreditPriceEngine(BasePriceEngine):
         with (sqlite3.connect(self.db_path) as conn):
             return pd.read_sql("SELECT * FROM YasMapping", conn).set_index("INSTRUMENT_ID")[
                 "MAPPING_INSTRUMENT_ID"].to_dict()
+
+    def _setup_live_book(self) -> None:
+        from user_strategy.utils.live_book import LiveBook
+        non_etf_instruments = {
+            i.id: i for i in self.factored_instruments
+            if i.id not in self.all_etf_isin
+        }
+        self.live_book = (
+            LiveBook(default_method="best_bid_ask")
+            .register_from_instruments(non_etf_instruments)
+        )
 
     def _load_fx_override(self):
         with (sqlite3.connect(self.db_path) as conn):
@@ -340,13 +351,9 @@ class CreditPriceEngine(BasePriceEngine):
     def _update_non_etf_mids(self) -> None:
         """Aggiorna book_mid per i non-ETF usando mid oppure LAST_PRICE come fallback."""
         last_book = self.market_data.get_data_field(field=["BID", "ASK", "LAST_PRICE"])
-        non_etfs_book = last_book.loc[
-            ~last_book.index.isin(self.all_etf_isin), ["BID", "ASK", "LAST_PRICE"]
-        ]
-        non_etfs_mid = (
-                (non_etfs_book["BID"] + non_etfs_book["ASK"]) / 2
-        ).fillna(non_etfs_book["LAST_PRICE"])
-
+        non_etfs = last_book.loc[~last_book.index.isin(self.all_etf_isin)]
+        self.live_book.update(non_etfs[["BID", "ASK"]])
+        non_etfs_mid = self.live_book.get_mid().combine_first(non_etfs["LAST_PRICE"])
         self.book_mid.update_price(non_etfs_mid)
 
     def _refresh_corrected_returns(self) -> None:
