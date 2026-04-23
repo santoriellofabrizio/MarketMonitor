@@ -40,6 +40,7 @@ from user_strategy.utils.enums import TICK_SIZE
 
 _RETRY_MARKETS = ("NA", "FP")
 _MAX_FAILED_RATIO = 1 / 100
+_KAFKA_MAPPING = {"IM": "ETFP", "NA": "XAMS", "FP": "XPAR"}
 
 
 class CreditPriceEngine(BasePriceEngine):
@@ -68,14 +69,8 @@ class CreditPriceEngine(BasePriceEngine):
 
     def _setup_instrument_universe(self) -> None:
 
-        etf_loader = lambda mkt: self.API.general.get(
-            fields=["etp_isins"],
-            segments=[mkt],
-            currency="EUR",
-            underlying="FIXED INCOME",
-            source="oracle")["etp_isins"]
+        self._load_etf_universe_from_oracle()
 
-        self.etfs_by_market = {mkt: etf_loader(mkt) for mkt in ["NA", "FP", "IM"]}
         self.all_etf_isin = list(sorted({isin for sublist in self.etfs_by_market.values() for isin in sublist}))
         self.isin_ticker = self.API.info.get_etp_fields("TICKER", isin=self.all_etf_isin)["TICKER"].to_dict()
 
@@ -85,14 +80,42 @@ class CreditPriceEngine(BasePriceEngine):
         self.factored_instruments: list[Instrument] = []
 
         total = len(self.all_instruments)
-        for i, id in enumerate(self.all_instruments):
-            inst: Instrument = self.API.market.build_instrument(id, autocomplete=True)
+        instruments = self.API.market.build_instruments(
+            list(self.all_instruments), autocomplete=True
+        )
+        for i, inst in enumerate(instruments):
+            self.instruments_by_type[inst.type].append(inst)
+            self.factored_instruments.append(inst)
             self.instruments_by_type[inst.type].append(inst)
             self.factored_instruments.append(inst)
             self.API.market.register(inst)
             print(f"\rBuilding {i}/{total} inst. | {'█' * (i * 20 // total):20} | {i / total:>4.0%}", end="", flush=True)
 
         a = 0
+
+    def _load_etf_universe_from_oracle(self):
+
+        etf_loader = lambda mkt: self.API.general.get(
+            fields=["etp_isins"],
+            segments=[mkt],
+            currency="EUR",
+            underlying=["FIXED INCOME", "MONEY MARKET"],
+            extra_fields=["CURRENCY"],
+            source="oracle")["etp_isins"]
+
+        self.etfs_by_market = {mkt: [] for mkt in ["NA", "FP", "IM"]}
+        self.currency_per_isin_market: dict[tuple, str] = {}
+
+        for mkt in ["NA", "FP", "IM"]:
+            for isin, field_dict in etf_loader(mkt).items():
+                for field, value in field_dict.items():
+                    if field == "CURRENCY":
+                        self.currency_per_isin_market[(isin, mkt)] = value
+                self.etfs_by_market[mkt].append(isin)
+
+    def _set_fx_information(self):
+        for (isin, mkt), currency in self.currency_per_isin_market.items():
+            self.market_data.set_currency_for_id(f"{isin}:{mkt}", currency)
 
     def _setup_historical_data(self) -> None:
 
@@ -133,7 +156,7 @@ class CreditPriceEngine(BasePriceEngine):
             if i.id not in self.all_etf_isin
         }
         self.live_book = (
-            LiveBook(default_method="best_bid_ask")
+            LiveBook()
             .register_from_instruments(non_etf_instruments)
         )
 
@@ -146,13 +169,14 @@ class CreditPriceEngine(BasePriceEngine):
 
         self.book_mid = pd.Series(index=self.all_instruments, dtype=float)
 
+        self._set_fx_information()
         self._subscribe_etfs('bloomberg')
         self._subscribe_futures('bloomberg')
         self._subscribe_fx()
         self._subscribe_stale()
 
     def _subscribe_etfs(self, price_source: Literal['kafka', 'bloomberg']):
-        _KAFKA_MAPPING = {"IM": "ETFP", "NA": "XAMS", "FP": "XPAR"}
+
         for mkt, etfs in self.etfs_by_market.items():
             for isin in etfs:
                 if price_source == 'bloomberg':
