@@ -175,6 +175,107 @@ class LiveBook:
     default_method : name of the AggregationRule used by get_mid() with no argument.
     rules          : aggregation rules applied on every update().
                      Defaults to [MAX_BID_MIN_ASK, MEAN_BID_ASK, MEAN_MIDS].
+
+    ---
+
+    USAGE GUIDE
+    ===========
+
+    1. Registration
+    ---------------
+    Every subscription (sub_id) must be mapped to a mandatory instrument_id.
+    market and currency are optional metadata stored for reference.
+
+        lb = LiveBook()
+
+        # one subscription → one instrument (1-to-1)
+        lb.register("IE00B4L5Y983", instrument_id="IE00B4L5Y983", market="IM", currency="EUR")
+
+        # multiple markets → same instrument (many-to-one aggregation)
+        for mkt in ["IM", "FP", "NA"]:
+            lb.register(f"{mkt}:IE00B4L5Y983", instrument_id="IE00B4L5Y983",
+                        market=mkt, currency="EUR")
+
+        # bulk registration from instrument objects (need .id, optionally .market/.currency)
+        lb.register_from_instruments({inst.id: inst for inst in my_instruments})
+
+        # all methods return self → chainable
+        lb = (
+            LiveBook()
+            .register("ITRAXX.S42.5Y", instrument_id="ITRAXX.S42.5Y")
+            .register("CDXIG.43.5Y",   instrument_id="CDXIG.43.5Y")
+        )
+
+    2. Filters
+    ----------
+    Filters conform to the BookFilter protocol (update + get_valid_book).
+    They are applied in registration order before aggregation.
+
+        from market_monitor.utils.book_utils import SpreadEWMA, PriceEWMA
+
+        # global filter — applied to every sub_id
+        lb.add_filter(SpreadEWMA(tau_seconds=600, max_multiplier=2.0))
+
+        # scoped filter — only for a subset of sub_ids
+        lb.add_filter(PriceEWMA(tau_seconds=300, max_ret=0.005),
+                      securities=["IM:IE00B4L5Y983", "FP:IE00B4L5Y983"])
+
+        # filters are chained: second filter sees output of first
+
+    3. Aggregation rules
+    --------------------
+    Three rules are registered by default (accessible via module-level presets):
+
+        MAX_BID_MIN_ASK  →  (max(BID) + min(ASK)) / 2  per instrument  ["best_bid_ask"]
+        MEAN_BID_ASK     →  (mean(BID) + mean(ASK)) / 2                ["mean_bid_ask"]
+        MEAN_MIDS        →  mean((BID + ASK) / 2)                      ["mean_mids"]
+
+    Add custom rules at construction or at runtime:
+
+        from user_strategy.utils.live_book import FieldAgg, BidAskMidAgg, MeanMidsAgg
+
+        # override default rules entirely
+        lb = LiveBook(rules=[MAX_BID_MIN_ASK])
+
+        # add a rule for any field/function
+        lb.add_aggregation(FieldAgg("LAST_PRICE", "last", name="last_price"))
+        lb.add_aggregation(FieldAgg("BID", "median", name="median_bid"))
+
+        # custom BidAsk mid with non-standard columns
+        lb.add_aggregation(BidAskMidAgg("mean", "mean",
+                                        bid_field="BID", ask_field="ASK",
+                                        name="my_mean_mid"))
+
+        # mean of per-subscription mids on non-standard columns
+        lb.add_aggregation(MeanMidsAgg(bid_field="BID", ask_field="ASK",
+                                       name="my_mean_mids"))
+
+        # check registered rule names
+        lb.available_methods  # → ["best_bid_ask", "mean_bid_ask", "mean_mids", "last_price", ...]
+
+    4. Hot path — update + get_mid
+    -------------------------------
+    Call update() every tick with a DataFrame indexed by sub_id.
+    Zeros are treated as NaN. Columns can be any fields (BID, ASK, LAST_PRICE, …).
+
+        raw = market_data.get_data_field(field=["BID", "ASK"])
+        lb.update(raw)
+
+        mid = lb.get_mid()                    # uses default_method ("best_bid_ask")
+        mid = lb.get_mid("mean_mids")         # explicit method name
+        mid = lb.get_mid("last_price")        # custom rule added earlier
+
+        # mid is a pd.Series indexed by instrument_id
+        self.book_mid.update(mid)
+
+        # LAST_PRICE fallback outside LiveBook
+        last = market_data.get_data_field(field="LAST_PRICE")
+        mid  = lb.get_mid().combine_first(last)
+
+    5. Per-instrument bid/ask
+    -------------------------
+        bid, ask = lb.get_bid_ask("IE00B4L5Y983")
+        # returns (float | None, float | None) — None if no valid quote
     """
 
     def __init__(
