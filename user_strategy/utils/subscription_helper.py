@@ -90,10 +90,11 @@ class SubscriptionHelper:
             instrument: Instrument,
             source: AvailableSources,
             fields: Optional[List[str]] = None,
+            book_id: Optional[str] = None,
             params: Optional[Dict[str, Any]] = None,
             subscription_string: Optional[str] = None,
-            market: str = 'GenericMarket',
-            currency: str = 'GenericCurrency',
+            market: str = 'dummy',
+            currency: str = 'dummy',
             **kwargs
     ) -> str:
 
@@ -103,7 +104,7 @@ class SubscriptionHelper:
         instrument.currency = currency
         instrument.market = market
 
-        id_sub = f"{market}:{instrument.id}:{currency}"
+        id_sub = book_id or f"{market}:{instrument.id}:{currency}"
         if source == "bloomberg":
             subscription_string = subscription_string or BloombergSubscriptionBuilder.build_subscription(instrument)
             if callable(subscription_string):

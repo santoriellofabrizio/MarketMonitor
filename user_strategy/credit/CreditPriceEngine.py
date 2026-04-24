@@ -59,7 +59,7 @@ class CreditPriceEngine(BasePriceEngine):
         self.API = BshData(r"C:\AFMachineLearning\Libraries\MarketMonitor\etc\config\bshdata_config.yaml")
         self.db_path = kwargs["sql_db_fi_file"]
         self.book_filter = SpreadEWMA(**kwargs.pop("book_filter_params", {}))
-        self.live_book = CompositeBook().add_filter(self.book_filter)
+        self.composite_book = CompositeBook().add_filter(self.book_filter)
 
         super().__init__(*args, **kwargs)
 
@@ -124,10 +124,6 @@ class CreditPriceEngine(BasePriceEngine):
             return pd.read_sql("SELECT * FROM YasMapping", conn).set_index("INSTRUMENT_ID")[
                 "MAPPING_INSTRUMENT_ID"].to_dict()
 
-    def _setup_live_book(self) -> None:
-        self.live_book_etf = CompositeBook().add_filter(self.book_filter)
-        self.live_book = CompositeBook()
-
     def _load_fx_override(self):
         with (sqlite3.connect(self.db_path) as conn):
             return pd.read_sql("SELECT * FROM FxMapping", conn).set_index("INSTRUMENT_ID")[
@@ -141,27 +137,28 @@ class CreditPriceEngine(BasePriceEngine):
             match inst.type:
                 case InstrumentType.ETP:
                     for m in ["IM", "FP", "NA"]:
-                        if inst.isin not in self.etfs_by_market[m]: continue
+                        if not inst.isin not in self.etfs_by_market[m]: continue
                         currency = self.currency_per_isin_market.get((m, inst.isin), "EUR")
                         id = live_sub.subscribe_instrument(inst,
                                                            'bloomberg',
                                                            ['BID', 'ASK'],
-                                                           {"option": 1},
+                                                           book_id=f"{m}:{inst.id}:{currency}",
+                                                           params={"option": 1},
                                                            currency=currency,
                                                            market=m)
-                        self.live_book.register(sub_id=id, instr_id=inst.id, currency=inst.currency, market=m)
+                        self.composite_book.register(sub_id=id, instr_id=inst.id, currency=inst.currency, market=m)
 
                 case InstrumentType.FUTURE:
                     id = live_sub.subscribe_instrument(inst, 'bloomberg', ['BID', 'ASK'], {"option": 1})
-                    self.live_book.register(sub_id=id, instr_id=inst.id, currency=inst.currency)
+                    self.composite_book.register(sub_id=inst.id, instr_id=inst.id, currency=inst.currency)
 
-                case InstrumentType.CURRENCY:
-                    id = live_sub.subscribe_instrument(inst, 'bloomberg', ['BID', 'ASK'], {"option": 1})
-                    self.live_book.register(sub_id=id, instr_id=inst.id)
+                case InstrumentType.CURRENCYPAIR:
+                    live_sub.subscribe_instrument(inst, 'bloomberg', ['BID', 'ASK'], {"option": 1})
+                    self.composite_book.register(sub_id=inst.id, instr_id=inst.id)
 
                 case _:
                     id = live_sub.subscribe_instrument(inst, 'bloomberg', ['LAST_PRICE'], {"option": 1})
-                    self.live_book.register(sub_id=id, instr_id=inst.id)
+                    self.composite_book.register(sub_id=inst.id, instr_id=inst.id)
 
     # ── Historical data ───────────────────────────────────────────────────────
 
@@ -265,39 +262,24 @@ class CreditPriceEngine(BasePriceEngine):
     # ── Book management ───────────────────────────────────────────────────────
 
     def get_mid(self) -> pd.Series:
-        self._update_etf_mids()
-        self._update_non_etf_mids()
+        self._update_mids()
         self._refresh_corrected_returns()
         self._update_models_returns()
         return self.book_mid
 
     # ── helpers ───────────────────────────────────────────────────────────────────
 
-    def _update_etf_mids(self) -> None:
+    def _update_mids(self) -> None:
         """Aggiorna book_mid per gli ETF aggregando bid/ask per ISIN via CompositeBook."""
-        raw_book = self.market_data.get_data_field(field=["BID", "ASK"])
-        etf_sub_ids = [f"{mkt}:{isin}"
-                       for mkt, etfs in self.etfs_by_market.items()
-                       for isin in etfs]
-        self.live_book_etf.update(raw_book.reindex(etf_sub_ids))
-        self.book_mid.update(
-            self.live_book_etf.agg(by=["MARKET", "CURRENCY"])
-            .get_field(["BID", "ASK"], best_bid_ask)
-            .as_series()
-        )
+        raw_book = self.market_data.get_data_field(field=["BID", "ASK","LAST_PRICE"])
+        fx_rates = raw_book.loc[self.fx_list]
+        self.composite_book.update(raw_book)
+        aggregated_mid = self.composite_book.agg(by=["CURRENCY","MARKET"], fx_rate=fx_rates)
+        bid = aggregated_mid.get_field('BID', max)
+        ask = aggregated_mid.get_field('ASK', min)
+        mids = ((bid + ask) / 2).fillna(aggregated_mid.get_field('LAST_PRICE'))
 
-    def _update_non_etf_mids(self) -> None:
-        """Aggiorna book_mid per i non-ETF usando mid oppure LAST_PRICE come fallback."""
-        last_book = self.market_data.get_data_field(field=["BID", "ASK", "LAST_PRICE"])
-        non_etfs = last_book.loc[~last_book.index.isin(self.all_etf_isin)]
-        self.live_book.update(non_etfs[["BID", "ASK"]])
-        non_etfs_mid = (
-            self.live_book.agg(by=["MARKET", "CURRENCY"])
-            .get_field(["BID", "ASK"], best_bid_ask)
-            .as_series()
-            .combine_first(non_etfs["LAST_PRICE"])
-        )
-        self.book_mid.update(non_etfs_mid)
+        self.book_mid.update(mids)
 
     def _refresh_corrected_returns(self) -> None:
         """Ricalcola i rendimenti corretti (adjusted) a partire dai prezzi mid aggiornati."""
@@ -311,7 +293,6 @@ class CreditPriceEngine(BasePriceEngine):
 
     def wait_for_book_initialization(self) -> bool:
         return dt.datetime.today().time() > dt.time(9, 5)
-
 
     # ── Pricing models ────────────────────────────────────────────────────────
 

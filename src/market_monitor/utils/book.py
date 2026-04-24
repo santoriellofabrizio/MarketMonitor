@@ -11,7 +11,7 @@ currency      : ISO currency code — required at registration
 from __future__ import annotations
 
 from collections import defaultdict
-from typing import Callable, Sequence
+from typing import Callable, Sequence, Optional, Literal, Union
 
 import numpy as np
 import pandas as pd
@@ -162,123 +162,72 @@ class BookResult:
 # ── BookQuery ─────────────────────────────────────────────────────────────────
 
 class BookQuery:
-    """
-    Pending query produced by ``CompositeBook.agg(by=[...])``.
-
-    ``by`` lists the dimensions to **collapse** (aggregate out); dimensions
-    NOT listed are kept as extra tuple levels in the result key.
-
-    Execute with ``.get_field(fields, agg_function)`` → :class:`BookResult`.
-    """
-
-    def __init__(self, book: "CompositeBook", by: list[str]) -> None:
-        unknown = set(by) - _DIM_TO_COL.keys()
+    def __init__(
+            self,
+            book: "CompositeBook",
+            fields_to_collapse: list[str],
+            fx_rate: dict[str, float] | pd.Series | None = None
+    ) -> None:
+        unknown = set(fields_to_collapse) - _DIM_TO_COL.keys()
         if unknown:
-            raise ValueError(
-                f"Unknown dimension(s) {unknown}. Valid: {list(_DIM_TO_COL)}"
-            )
-        self._book     = book
-        self._by_keep  = [d for d in _ALL_DIMS if d not in by]
+            raise ValueError(f"Unknown dimension(s) {unknown}. Valid: {list(_DIM_TO_COL)}")
 
-    # ── Core query ────────────────────────────────────────────────────────────
+        self._book = book
+        self._by_keep = [d for d in _ALL_DIMS if d not in fields_to_collapse]
+        # Salviamo l'fx_rate qui
+        self._fx_rate = fx_rate
 
     def get_field(
-        self,
-        fields: str | list[str],
-        agg_function: Callable | str,
-        securities: list[str] | None = None,
-        fx_rate: dict[str, float] | pd.Series | None = None,
-    ) -> BookResult:
-        """
-        Aggregate ``fields`` within each group using ``agg_function``.
+            self,
+            fields: str | list[str],
+            agg_function: Optional[Callable | str] = None,
+            securities: list[str] | None = None,
+            return_as: Literal['series', 'dict', 'snapshot', 'df'] = 'series'
+    ) -> Union[pd.DataFrame, dict, pd.Series, BookSnapshot, None]:
 
-        Parameters
-        ----------
-        fields :
-            A single column name (``str``) or a list of column names.
-            The clean book exposes at least ``BID``, ``ASK`` and any extra
-            fields from the raw market-data snapshot.
-        agg_function :
-            How to reduce each group to a scalar.
+        agg_function = agg_function or (lambda x: x)
+        book_df = self._book._clean_book
 
-            * **Single field** — called as ``Series.agg(agg_function)``:
-              pass ``"max"``, ``"min"``, ``np.mean``, or any callable that
-              takes a ``pd.Series`` and returns a scalar.
-
-            * **Multiple fields** — called via ``DataFrame.groupby.apply``:
-              pass a callable ``f(df: pd.DataFrame) -> float`` that receives
-              one row per subscription in the group.
-              Module-level presets: :func:`best_bid_ask`, :func:`mean_bid_ask`,
-              :func:`mean_mids`.
-
-        securities :
-            Optional list of instrument_ids to restrict the result.
-        fx_rate :
-            ``{currency: rate}`` mapping applied to BID/ASK **after** filters
-            and **before** aggregation (converts prices to a common currency).
-            e.g. ``{"EUR": 1.0, "USD": 0.92, "GBP": 1.16}``
-
-        Returns
-        -------
-        BookResult
-            Indexed by ``(instr_id,)`` when all dims are collapsed, or by
-            ``(instr_id, kept_dim, …)`` otherwise.
-
-        Examples
-        --------
-        >>> # best composite mid, collapse everything → flat Series
-        >>> result = book.agg(by=["MARKET","CURRENCY"]).get_field(
-        ...     ["BID","ASK"], best_bid_ask
-        ... )
-        >>> result.as_series()   # index = instr_id
-
-        >>> # max bid per (ISIN, market)
-        >>> result = book.agg(by=["CURRENCY"]).get_field("BID", "max")
-
-        >>> # custom lambda: VWAP-style mid
-        >>> result = book.agg(by=["MARKET","CURRENCY"]).get_field(
-        ...     ["BID","ASK"], lambda df: (df["BID"] + df["ASK"]).mean() / 2
-        ... )
-
-        >>> # fallback to LAST_PRICE
-        >>> mid = (
-        ...     book.agg(by=["MARKET","CURRENCY"])
-        ...         .get_field(["BID","ASK"], best_bid_ask)
-        ...         .as_series()
-        ...         .combine_first(last_book["LAST_PRICE"])
-        ... )
-        """
-        book = self._book._clean_book
-        if book is None or book.empty:
-            return BookResult(pd.Series(dtype=float), self._by_keep)
+        if book_df is None or book_df.empty:
+            return None
 
         if securities is not None:
-            book = book[book[_COL_INSTR].isin(securities)]
-        if book.empty:
-            return BookResult(pd.Series(dtype=float), self._by_keep)
+            book_df = book_df[book_df[_COL_INSTR].isin(securities)]
 
-        # FX conversion to a common currency (after filters, before aggregation)
-        if fx_rate is not None:
-            bid_ask = [c for c in ("BID", "ASK") if c in book.columns]
+        if book_df.empty:
+            return None
+
+        # --- LOGICA FX SPOSTATA QUI ---
+        # Applichiamo il cambio prima dell'aggregazione se fornito in .agg()
+        if self._fx_rate is not None:
+            bid_ask = [c for c in ("BID", "ASK") if c in book_df.columns]
             if bid_ask:
-                fx   = fx_rate if isinstance(fx_rate, dict) else fx_rate.to_dict()
-                rates = book[_COL_CCY].map(fx).fillna(1.0)
-                book  = book.copy()
-                book[bid_ask] = book[bid_ask].multiply(rates, axis=0)
+                fx = self._fx_rate if isinstance(self._fx_rate, dict) else self._fx_rate.to_dict()
+                rates = book_df[_COL_CCY].map(fx).fillna(1.0)
+                book_df = book_df.copy()
+                book_df[bid_ask] = book_df[bid_ask].multiply(rates, axis=0)
+        # ------------------------------
 
-        # Build the groupby key — tuple of (instr_id [, kept_dim …])
-        key_cols  = [_COL_INSTR] + [_DIM_TO_COL[d] for d in self._by_keep]
-        by_series = book[key_cols].apply(tuple, axis=1)
+        key_cols = [_COL_INSTR] + [_DIM_TO_COL[d] for d in self._by_keep]
+        by_series = book_df[key_cols].apply(tuple, axis=1)
 
         try:
             if isinstance(fields, str):
-                result = book[fields].groupby(by_series).agg(agg_function)
+                result = book_df[fields].groupby(by_series).agg(agg_function)
             else:
-                result = book[fields].groupby(by_series).apply(agg_function)
+                result = book_df[fields].groupby(by_series).apply(agg_function)
         except (KeyError, TypeError):
             result = pd.Series(dtype=float)
 
-        return BookResult(result, self._by_keep)
+        # Gestione del ritorno (BookResult rimane lo stesso)
+        res_obj = BookResult(result, self._by_keep)
+        mapping = {
+            'series': res_obj.as_series,
+            'df': res_obj.as_df,
+            'snapshot': res_obj.as_snapshot,
+            'dict': res_obj.as_dict
+        }
+        return mapping[return_as]()
 
 
 # ── CompositeBook ─────────────────────────────────────────────────────────────
@@ -386,8 +335,8 @@ class CompositeBook:
         self,
         sub_id: str,
         instr_id: str,
-        market: str = "GenericMarket",
-        currency: str = "GenericMarket",
+        market: str = "dummy",
+        currency: str = "dummy",
     ) -> "CompositeBook":
         """Register one subscription. All four arguments are required."""
         self._sub_to_instr[sub_id]  = instr_id
@@ -471,7 +420,7 @@ class CompositeBook:
 
     # ── Query interface ───────────────────────────────────────────────────────
 
-    def agg(self, by: list[str]) -> BookQuery:
+    def agg(self, by: list[str], fx_rate: dict[str, float] | pd.Series | None = None) -> BookQuery:
         """
         Specify which dimensions to **collapse** and return a :class:`BookQuery`.
 
@@ -482,7 +431,10 @@ class CompositeBook:
         ``["CURRENCY"]``          → collapse currency → key ``(instr_id, market)``
         ``["MARKET","CURRENCY"]`` → fully collapsed  → key ``(instr_id,)``
         """
-        return BookQuery(self, [d.upper() for d in by])
+        if fx_rate is None and "CURRENCY" in by:
+                raise ValueError("aggregation by currency requires fx rate")
+        fields_to_collapse = [field for field in {"MARKET", "CURRENCY"} if field not in by]
+        return BookQuery(self, [d.upper() for d in fields_to_collapse], fx_rate=fx_rate)
 
     # ── Accessors ─────────────────────────────────────────────────────────────
 
