@@ -147,28 +147,8 @@ class CreditPriceEngine(BasePriceEngine):
                 "MAPPING_INSTRUMENT_ID"].to_dict()
 
     def _setup_live_book(self) -> None:
-
-        # ETF book: sub_id is "{mkt}:{isin}", instrument_id is isin
-        self.live_book_etf = CompositeBook(default_method="best_bid_ask")
-        for mkt, etfs in self.etfs_by_market.items():
-            for isin in etfs:
-                self.live_book_etf.register(
-                    sub_id=f"{mkt}:{isin}",
-                    instr_id=isin,
-                    market=mkt,
-                    currency=self.currency_per_isin_market.get((isin, mkt), "EUR"),
-                )
-        self.live_book_etf.add_filter(self.book_filter)
-
-        # Non-ETF book: 1-to-1 sub_id == instrument_id
-        non_etf_instruments = {
-            i.id: i for i in self.factored_instruments
-            if i.id not in self.all_etf_isin
-        }
-        self.live_book = (
-            CompositeBook()
-            .register_from_instruments(non_etf_instruments)
-        )
+        self.live_book_etf = CompositeBook(default_method="best_bid_ask").add_filter(self.book_filter)
+        self.live_book = CompositeBook()
 
     def _load_fx_override(self):
         with (sqlite3.connect(self.db_path) as conn):
@@ -185,54 +165,73 @@ class CreditPriceEngine(BasePriceEngine):
         self._subscribe_fx()
         self._subscribe_stale()
 
-    def _subscribe_etfs(self, price_source: Literal['kafka', 'bloomberg']):
+    def _subscribe_bloomberg(self, sub_id: str, security: str, fields: list[str],
+                             live_book=None, instr_id: str | None = None,
+                             market: str | None = None, currency: str | None = None,
+                             options: dict | None = None) -> None:
+        """Subscribe via Bloomberg and (optionally) register with a CompositeBook.
 
+        When ``options`` is ``None`` the underlying call is made without the
+        options argument, preserving the subscription's default behaviour.
+        """
+        if options is None:
+            self.global_subscription_service.subscribe_bloomberg(sub_id, security, fields)
+        else:
+            self.global_subscription_service.subscribe_bloomberg(sub_id, security, fields, options)
+        if live_book is not None:
+            live_book.register(sub_id=sub_id, instr_id=instr_id,
+                               market=market, currency=currency)
+
+    def _subscribe_kafka_etf(self, sub_id: str, isin: str, mkt: str, currency: str) -> None:
+        """Subscribe an ETF via Kafka and register with the ETF CompositeBook."""
+        self.global_subscription_service.subscribe_kafka(
+            id=isin, symbol_filter=isin,
+            topic=f"COALESCENT_DUMA.{_KAFKA_MAPPING[mkt]}.BookBest",
+            fields_mapping={"BID": "bidBestLevel.price", "ASK": "askBestLevel.price"},
+        )
+        self.live_book_etf.register(sub_id=sub_id, instr_id=isin, market=mkt, currency=currency)
+
+    def _subscribe_etfs(self, price_source: Literal['kafka', 'bloomberg']):
         for mkt, etfs in self.etfs_by_market.items():
             for isin in etfs:
+                sub_id = f"{mkt}:{isin}"
+                currency = self.currency_per_isin_market.get((isin, mkt), "EUR")
                 if price_source == 'bloomberg':
-                    self.global_subscription_service.subscribe_bloomberg(f"{mkt}:{isin}",
-                                                                         f"{isin} {mkt} EQUITY",
-                                                                         ["BID", "ASK"],
-                                                                         {"interval": 1})
-                    self.market_data.set_currency_for_id(f"{mkt}:{isin}", "EUR")  #TODO aggiugni currency bloomberg
+                    self._subscribe_bloomberg(
+                        sub_id, f"{isin} {mkt} EQUITY", ["BID", "ASK"],
+                        live_book=self.live_book_etf,
+                        instr_id=isin, market=mkt, currency=currency,
+                        options={"interval": 1},
+                    )
+                    self.market_data.set_currency_for_id(sub_id, "EUR")  # TODO aggiungi currency bloomberg
                 else:
-                    self.global_subscription_service.subscribe_kafka(id=isin,
-                                                                     symbol_filter=isin,
-                                                                     topic=f"COALESCENT_DUMA.{_KAFKA_MAPPING[mkt]}.BookBest",
-                                                                     fields_mapping={
-                                                                         "BID": "bidBestLevel.price",
-                                                                         "ASK": "askBestLevel.price"})
+                    self._subscribe_kafka_etf(sub_id, isin, mkt, currency)
 
     def _subscribe_futures(self, price_source: Literal['kafka', 'bloomberg']):
         for inst in self.instruments_by_type[InstrumentType.FUTURE]:
-            if price_source == 'bloomberg':
-                self.global_subscription_service.subscribe_bloomberg(inst.id,
-                                                                     f"{inst.root}A {inst.suffix}",
-                                                                     ["BID", "ASK"],
-                                                                     {"interval": 1})
-            else:
-                # self.global_subscription_service.subscribe_kafka(id=inst.id,
-                #                                                  symbol_filter=isin,
-                #                                                  topic="COALESCENT_DUMA.XEUR.BookBest",
-                #                                                  fields_mapping={
-                #                                                      "BID": "bidBestLevel.price",
-                #                                                      "ASK": "askBestLevel.price"})
+            if price_source != 'bloomberg':
                 raise NotImplementedError
+            self._subscribe_bloomberg(
+                inst.id, f"{inst.root}A {inst.suffix}", ["BID", "ASK"],
+                live_book=self.live_book,
+                instr_id=inst.id, market=inst.market, currency=inst.currency,
+                options={"interval": 1},
+            )
 
     def _subscribe_fx(self):
         for fx in self.fx_list:
-            self.global_subscription_service.subscribe_bloomberg(fx,
-                                                                 f"{fx} Curncy",
-                                                                 ["BID", "ASK"],
-                                                                 {"interval": 1})
+            self._subscribe_bloomberg(fx, f"{fx} Curncy", ["BID", "ASK"],
+                                      options={"interval": 1})
 
     def _subscribe_stale(self):
         bbg_subscription = BloombergSubscriptionBuilder.build_subscription
         last_price_sub_class = [InstrumentType.SWAP, InstrumentType.INDEX, InstrumentType.CDXINDEX]
         for sec in [instr for instr in self.factored_instruments if instr.type in last_price_sub_class]:
-            self.global_subscription_service.subscribe_bloomberg(sec.id,
-                                                                 bbg_subscription(sec),
-                                                                 ["LAST_PRICE"])
+            self._subscribe_bloomberg(
+                sec.id, bbg_subscription(sec), ["LAST_PRICE"],
+                live_book=self.live_book,
+                instr_id=sec.id, market=sec.market, currency=sec.currency,
+            )
 
     # ── Historical data ───────────────────────────────────────────────────────
 
@@ -345,7 +344,7 @@ class CreditPriceEngine(BasePriceEngine):
     # ── helpers ───────────────────────────────────────────────────────────────────
 
     def _update_etf_mids(self) -> None:
-        """Aggiorna book_mid per gli ETF aggregando bid/ask per ISIN via LiveBook."""
+        """Aggiorna book_mid per gli ETF aggregando bid/ask per ISIN via CompositeBook."""
         raw_book = self.market_data.get_data_field(field=["BID", "ASK"])
         etf_sub_ids = [f"{mkt}:{isin}"
                        for mkt, etfs in self.etfs_by_market.items()
