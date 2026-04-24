@@ -23,7 +23,7 @@ from sfm_data_provider.core.holidays.holiday_manager import HolidayManager
 from sfm_data_provider.core.instruments.instruments import Instrument
 
 from sfm_data_provider.interface.bshdata import BshData
-from market_monitor.utils.book import CompositeBook
+from market_monitor.utils.book import CompositeBook, best_bid_ask
 
 from market_monitor.utils.book_utils import SpreadEWMA
 from user_strategy.strategy_templates.BasePriceEngine import BasePriceEngine
@@ -66,7 +66,7 @@ class CreditPriceEngine(BasePriceEngine):
         self.API = BshData(r"C:\AFMachineLearning\Libraries\MarketMonitor\etc\config\bshdata_config.yaml")
         self.db_path = kwargs["sql_db_fi_file"]
         self.book_filter = SpreadEWMA(**kwargs.pop("book_filter_params", {}))
-        self.live_book = CompositeBook(default_method="best_bid_ask").add_filter(self.book_filter)
+        self.live_book = CompositeBook().add_filter(self.book_filter)
 
         super().__init__(*args, **kwargs)
 
@@ -133,7 +133,7 @@ class CreditPriceEngine(BasePriceEngine):
                 "MAPPING_INSTRUMENT_ID"].to_dict()
 
     def _setup_live_book(self) -> None:
-        self.live_book_etf = CompositeBook(default_method="best_bid_ask").add_filter(self.book_filter)
+        self.live_book_etf = CompositeBook().add_filter(self.book_filter)
         self.live_book = CompositeBook()
 
     def _load_fx_override(self):
@@ -286,15 +286,23 @@ class CreditPriceEngine(BasePriceEngine):
                        for mkt, etfs in self.etfs_by_market.items()
                        for isin in etfs]
         self.live_book_etf.update(raw_book.reindex(etf_sub_ids))
-        self.book_mid.update(self.live_book_etf.agg(by=["MARKET", "CURRENCY"]).get_data().as_series())
+        self.book_mid.update(
+            self.live_book_etf.agg(by=["MARKET", "CURRENCY"])
+                              .get_field(["BID", "ASK"], best_bid_ask)
+                              .as_series()
+        )
 
     def _update_non_etf_mids(self) -> None:
         """Aggiorna book_mid per i non-ETF usando mid oppure LAST_PRICE come fallback."""
         last_book = self.market_data.get_data_field(field=["BID", "ASK", "LAST_PRICE"])
-        non_etfs = last_book.loc[~last_book.index.isin(self.all_etf_isin)]
+        non_etfs  = last_book.loc[~last_book.index.isin(self.all_etf_isin)]
         self.live_book.update(non_etfs[["BID", "ASK"]])
-        non_etfs_mid = self.live_book.agg(by=["MARKET", "CURRENCY"]).get_data().as_series().combine_first(
-            non_etfs["LAST_PRICE"])
+        non_etfs_mid = (
+            self.live_book.agg(by=["MARKET", "CURRENCY"])
+                          .get_field(["BID", "ASK"], best_bid_ask)
+                          .as_series()
+                          .combine_first(non_etfs["LAST_PRICE"])
+        )
         self.book_mid.update(non_etfs_mid)
 
     def _refresh_corrected_returns(self) -> None:
