@@ -472,8 +472,8 @@ class CompositeBook:
         self,
         sub_id: str,
         instr_id: str,
-        market: str,
-        currency: str,
+        market: str = "GenericMarket",
+        currency: str = "GenericMarket",
     ) -> "CompositeBook":
         """Register one subscription. All four arguments are required."""
         self._sub_to_instr[sub_id] = instr_id
@@ -487,12 +487,7 @@ class CompositeBook:
         instr_obj must expose .id, .market and .currency attributes.
         """
         for sub_id, instr in instruments.items():
-            self.register(
-                sub_id=sub_id,
-                instr_id=instr.id,
-                market=instr.market,
-                currency=instr.currency,
-            )
+            self.register(sub_id=sub_id, instr_id=instr.id, market=instr.market, currency=instr.currency)
         return self
 
     # ── Configuration ─────────────────────────────────────────────────────────

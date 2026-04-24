@@ -1,110 +1,123 @@
-from time import sleep as sleep_time
-from typing import Literal
+from typing import List, Optional, Union, Literal, TypeVar, Dict, Any
 
+from PyQt5.QtQml import kwargs
+from _pytest._code import source
 from sfm_data_provider.core.enums.instrument_types import InstrumentType
 from sfm_data_provider.core.instruments.instruments import Instrument
 from sfm_data_provider.core.requests.subscriptions import BloombergSubscriptionBuilder
+from sfm_data_provider.interface.bshdata import BshData
 
-from user_strategy.utils.EtfUniverse import EtfUniverse
+from InstrumentsApp.models import Instruments
+from market_monitor.live_data_hub.subscription_service import SubscriptionService
+from market_monitor.utils.book import CompositeBook
 
-_RETRY_MARKETS    = ("NA", "FP")
-_KAFKA_MAPPING    = {"IM": "ETFP", "NA": "XAMS", "FP": "XPAR"}
-_STALE_TYPES      = {InstrumentType.SWAP, InstrumentType.INDEX, InstrumentType.CDXINDEX}
-_MAX_FAILED_RATIO = 1 / 100
+_SOURCES = {'kafka', 'bloomberg', 'redis'}
+
+_DEFAULT_TYPE_MARKET_SOURCES = {
+    InstrumentType.ETP: {"ETFP": 'kafka', "XAMS": "kafka", "XPAR": "kafka"},
+    InstrumentType.FUTURE: {"XEUR": 'kafka', 'XCBT': 'kafka'}
+}
+
+_KAFKA_MARKET_TOPICS = {
+    InstrumentType.ETP: {"ETFP": 'BookBest', "XAMS": "BookBest", "XPAR": "BookBest"},
+    InstrumentType.FUTURE: {"XEUR": 'BookBest', 'XCBT': 'BookBest'}
+}
+
+available_sources = TypeVar[Literal['kafka', 'bloomberg', 'redis']]
 
 
-class SubscriptionManager:
-    """
-    Manages all Bloomberg/Kafka subscriptions for the fixed-income strategy.
+class SubscriptionHelper:
 
-    Responsibilities:
-      - subscribe_all()         : dispatches the right subscription per instrument type
-      - wait_for_initialization(): blocks until BBG subscriptions are ready, retries failures
-    """
+    def __init__(self, api: BshData, subscription_service: SubscriptionService, composite_book: CompositeBook) -> None:
+        self.api = api
+        self.subscription_service = subscription_service
+        self._rules = _DEFAULT_TYPE_MARKET_SOURCES
+        self._composite_book = composite_book
+        self._bbg_builder = BloombergSubscriptionBuilder.build_subscription
 
-    def __init__(self, universe: EtfUniverse,
-                 global_subscription_service, market_data,
-                 live_book, live_book_etf) -> None:
-        self.universe  = universe
-        self.svc       = global_subscription_service
-        self.mkt_data  = market_data
-        self.live_book     = live_book
-        self.live_book_etf = live_book_etf
+    def subscribe_by_market(self, market: str,
+                            instruments: List[Instruments],
+                            fields: Union[List[str], Dict[str, str]],
+                            preferable_source: Optional[available_sources] = 'kafka',
+                            **kwargs) -> None:
 
-    # ── Public API ────────────────────────────────────────────────────────────
-
-    def subscribe_all(self, price_source: Literal['kafka', 'bloomberg'] = 'bloomberg') -> None:
-        """Dispatches subscription for every instrument type by iterating instruments_by_type."""
-        for instr_type, instruments in self.universe.instruments_by_type.items():
-            for inst in instruments:
-                match instr_type:
-                    case InstrumentType.ETP:         self._subscribe_single_etf(inst, price_source)
-                    case InstrumentType.FUTURE:       self._subscribe_single_future(inst, price_source)
-                    case InstrumentType.CURRENCYPAIR: self._subscribe_single_fx(inst)
-                    case t if t in _STALE_TYPES:      self._subscribe_single_stale(inst)
-
-    def wait_for_initialization(self, instruments_list: list) -> bool:
-        """Blocks until BBG subscriptions settle; returns False if too many BAD_SEC failures."""
-        while self.mkt_data.get_pending_subscriptions("bloomberg"):
-            sleep_time(1)
-        self._retry_failed_subscriptions()
-        bad = [s.get("id") for s in self.svc.get_failed_subscriptions()
-               if s.get("last_error") == "BAD_SEC"]
-        return bool(instruments_list) and len(bad) / len(instruments_list) < _MAX_FAILED_RATIO
-
-    # ── Single-instrument subscription ───────────────────────────────────────
-
-    def _subscribe_single_etf(self, inst: Instrument, price_source: Literal['kafka', 'bloomberg']) -> None:
-        for mkt in self.universe.markets_by_isin.get(inst.id, []):
-            sub_id   = f"{mkt}:{inst.id}"
-            currency = self.universe.currency_per_isin_market.get((inst.id, mkt), "EUR")
-            if price_source == 'bloomberg':
-                self._subscribe_bloomberg(sub_id, f"{inst.id} {mkt} EQUITY", ["BID", "ASK"],
-                                          live_book=self.live_book_etf, instr_id=inst.id,
-                                          market=mkt, currency=currency, options={"interval": 1})
+        for instrument in instruments:
+            if preferable_source == 'kafka':
+                if _KAFKA_MARKET_TOPICS.get(instrument.type, {}).get(market):
+                    fields = kwargs.pop('fields', fields) or {"BID": "bidBestLevel.price", "ASK": "askBestLevel.price"}
+                    self.subscription_service.subscribe_kafka(id=f"{market}:{instrument.id}",
+                                                              symbol_filter=kwargs.get(
+                                                                  'symbol_filter') or instrument.isin,
+                                                              topic=f"COALESCENT_DUMA.{market}.{kwargs.get('topic') or 'BookBest'}",
+                                                              fields_mapping=fields)
             else:
-                self.svc.subscribe_kafka(
-                    id=inst.id, symbol_filter=inst.id,
-                    topic=f"COALESCENT_DUMA.{_KAFKA_MAPPING[mkt]}.BookBest",
-                    fields_mapping={"BID": "bidBestLevel.price", "ASK": "askBestLevel.price"},
-                )
-                self.live_book_etf.register(sub_id=sub_id, instr_id=inst.id, market=mkt, currency=currency)
+                inst = instrument
+                inst.market = market
+                self.subscription_service.subscribe_bloomberg(id=f"{market}:{instrument.id}",
+                                                              subscription_string=self._bbg_builder(inst),
+                                                              fields=fields,
+                                                              params=kwargs.get('params', {}))
 
-    def _subscribe_single_future(self, inst: Instrument, price_source: Literal['kafka', 'bloomberg']) -> None:
-        if price_source != 'bloomberg': raise NotImplementedError
-        self._subscribe_bloomberg(inst.id, f"{inst.root}A {inst.suffix}", ["BID", "ASK"],
-                                  live_book=self.live_book, instr_id=inst.id,
-                                  market=inst.market, currency=inst.currency, options={"interval": 1})
+    def subscribe_by_isin(self, isin: str, fields: List[str], markets: Optional[list[str]], **kwargs) -> None:
+        pass
 
-    def _subscribe_single_fx(self, inst: Instrument) -> None:
-        self._subscribe_bloomberg(inst.id, f"{inst.id} Curncy", ["BID", "ASK"], options={"interval": 1})
+    def set_rule(self, instrument_type: Union[InstrumentType, str],
+                 market: str,
+                 source: available_sources) -> None:
+        self._rules[instrument_type][market] = source
 
-    def _subscribe_single_stale(self, inst: Instrument) -> None:
-        self._subscribe_bloomberg(inst.id, BloombergSubscriptionBuilder.build_subscription(inst), ["LAST_PRICE"],
-                                  live_book=self.live_book, instr_id=inst.id,
-                                  market=inst.market, currency=inst.currency)
+    def subscribe_kafka(
+            self,
+            id: str,
+            topic: str,
+            symbol_filter: Optional[str] = None,
+            symbol_field: str = "instrument.isin",
+            store: str = "market",
+            fields_mapping: Optional[Dict[str, str]] = None,
+            group: Optional[str] = None,
+    ):
 
-    # ── Bloomberg wrapper ─────────────────────────────────────────────────────
+        self.subscription_service.subscribe_kafka(id=id,
+                                                  topic=topic,
+                                                  symbol_filter=symbol_filter,
+                                                  symbol_field=symbol_field,
+                                                  store=store,
+                                                  fields_mapping=fields_mapping,
+                                                  group=group)
 
-    def _subscribe_bloomberg(self, sub_id: str, security: str, fields: list[str],
-                             live_book=None, instr_id: str | None = None,
-                             market: str | None = None, currency: str | None = None,
-                             options: dict | None = None) -> None:
-        if options is None:
-            self.svc.subscribe_bloomberg(sub_id, security, fields)
-        else:
-            self.svc.subscribe_bloomberg(sub_id, security, fields, options)
-        if live_book is not None:
-            live_book.register(sub_id=sub_id, instr_id=instr_id, market=market, currency=currency)
+    def subscribe_instrument(
+            self,
+            instrument: Instrument,
+            source: available_sources,
+            fields: Optional[List[str]] = None,
+            params: Optional[Dict[str, Any]] = None,
+            subscription_string: Optional[str] = None,
+            market: str = 'GenericMarket',
+            currency: str = 'GenericCurrency',
+    ) -> str:
 
-    # ── Retry logic ───────────────────────────────────────────────────────────
+        market = market or instrument.market
+        currency = currency or instrument.currency
 
-    def _retry_failed_subscriptions(self) -> None:
-        failed = {s.get("id") for s in self.svc.get_failed_subscriptions()
-                  if s.get("id") in self.universe.all_etf_isin}
-        for isin in failed:
-            self.svc.unsubscribe(isin, 'bloomberg')
-        for mkt in _RETRY_MARKETS:
-            for isin in failed:
-                self.svc.subscribe_bloomberg(isin, f"{isin} {mkt} EQUITY", ["BID", "ASK"])
-            sleep_time(5)
+        instrument.currency = currency
+        instrument.market = market
+
+        id_sub = f"{market}:{instrument.id}:{currency}"
+        if source == "bloomberg":
+            subscription_string = subscription_string or BloombergSubscriptionBuilder.build_subscription(instrument)
+            self.subscription_service.subscribe_bloomberg(id=id_sub,
+                                                          subscription_string=subscription_string,
+                                                          fields=fields,
+                                                          params=params)
+        elif source == "kafka":
+            topic = f"COALESCENT_DUMA.{instrument.market}.BookBest"
+            self.subscription_service.subscribe_kafka(id=id_sub,
+                                                      topic=topic,
+                                                      symbol_filter=kwargs.get('symbol_filter') or instrument.isin,
+                                                      symbol_field=kwargs.get('symbol_field') or "instrument.isin",
+                                                      fields_mapping=kwargs.get('fields_mapping')
+                                                                     or {"BID": "bidBestLevel.price",
+                                                                         "ASK": "askBestLevel.price"})
+
+        self._composite_book.register(id_sub, instrument.id, market, currency)
+        return id_sub

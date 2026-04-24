@@ -93,7 +93,7 @@ class EtfEquityLiveAnalysis(TradeAnalysisBase):
             isin = sub.get("id")
             if isin in self.all_isins:
                 ticker = self.isin_to_ticker.get(isin)
-                self.global_subscription_service.subscribe_bloomberg(isin, f"{ticker} IM EQUITY", ["BID", "ASK"])
+                self.global_subscription_service.subscribe_instrument(isin, f"{ticker} IM EQUITY", ["BID", "ASK"])
 
         return True
 
@@ -101,7 +101,7 @@ class EtfEquityLiveAnalysis(TradeAnalysisBase):
 
         for isin in self.all_isins:
             if self.price_source == "bloomberg":
-                self.global_subscription_service.subscribe_bloomberg(isin, f"{isin} IM EQUITY", ["BID", "ASK"])
+                self.global_subscription_service.subscribe_instrument(isin, f"{isin} IM EQUITY", ["BID", "ASK"])
             else:
                 self.global_subscription_service.subscribe_kafka(id=isin,
                                                                  symbol_filter=isin,
@@ -123,8 +123,7 @@ class EtfEquityLiveAnalysis(TradeAnalysisBase):
         if self.price_source == 'kafka':
             for isin in self.all_isins:
                 self.global_subscription_service.unsubscribe(isin, 'bloomberg')
-                self.global_subscription_service.subscribe_bloomberg(isin, f"{isin} IM EQUITY",
-                                                                     ["BID", "ASK"])
+                self.global_subscription_service.subscribe_instrument(isin, f"{isin} IM EQUITY", ["BID", "ASK"])
             self.price_source = 'bloomberg'
 
         elif self.price_source == 'bloomberg':

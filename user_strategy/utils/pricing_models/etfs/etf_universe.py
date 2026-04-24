@@ -67,6 +67,6 @@ class EtfUniverse:
         for i, inst in enumerate(raw):
             self.instruments_by_type[inst.type].append(inst)
             self.factored_instruments.append(inst)
-            self.api.market.register(inst)
+            self.api.market.register(inst, )
             print(f"\rBuilding instruments {i}/{total} | {'█' * (i * 20 // total):20} | {i / total:>4.0%}",
                   end="", flush=True)

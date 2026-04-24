@@ -99,10 +99,7 @@ class CreditTradeAnalysis(TradeAnalysisBase):
                     else:
                         sub_string = f"{s} ISIN@{markets_mapping[m]} Corp"
 
-                    self.global_subscription_service.subscribe_bloomberg(
-                        id=f"{m}_{s}",
-                        subscription_string=sub_string,
-                    )
+                    self.global_subscription_service.subscribe_instrument(,
 
     def subscribe_kafka(self):
         fields = {

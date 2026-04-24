@@ -11,6 +11,7 @@ import datetime as dt
 from time import sleep as sleep_time
 
 from questionary import autocomplete
+from setuptools.command.easy_install import current_umask
 from sfm_data_provider.analytics.adjustments import Adjuster, SpecialtyEtfCarryComponent
 from sfm_data_provider.analytics.adjustments.dividend import DividendComponent
 from sfm_data_provider.analytics.adjustments.fx_forward_carry import FxForwardCarryComponent
@@ -37,6 +38,7 @@ from user_strategy.utils.pricing_models.PricingModel import (
 )
 from user_strategy.utils.pricing_models.PricingModelRegistry import PricingModelRegistry
 from user_strategy.utils.pricing_models.IRPManager import IRPManager
+from user_strategy.utils.subscription_helper import SubscriptionHelper
 
 _RETRY_MARKETS = ("NA", "FP")
 _MAX_FAILED_RATIO = 50 / 100
@@ -55,6 +57,7 @@ class CreditPriceEngine(BasePriceEngine):
 
     def __init__(self, *args, **kwargs):
 
+        self.price_source = 'kafka'
         self.book_mid: pd.Series | None = None
         self.calendar: HolidayManager = HolidayManager()
         self.input_params = InputParamsFIQuoting(kwargs)
@@ -65,14 +68,20 @@ class CreditPriceEngine(BasePriceEngine):
         self.API = BshData(r"C:\AFMachineLearning\Libraries\MarketMonitor\etc\config\bshdata_config.yaml")
         self.db_path = kwargs["sql_db_fi_file"]
         self.book_filter = SpreadEWMA(**kwargs.pop("book_filter_params", {}))
+        self.live_book_etf = CompositeBook(default_method="best_bid_ask").add_filter(self.book_filter)
+        self.live_book = CompositeBook()
 
         super().__init__(*args, **kwargs)
 
     def _setup_instrument_universe(self) -> None:
 
-        self._load_etf_universe_from_oracle()
+        self._etf_universe = EtfUniverse(
+            api=self.API,
+            markets=["IM", "FP", "NA"],
+            underlying=["FIXED INCOME", "MONEY MARKET"],
+        )
 
-        self.all_etf_isin  = self._etf_universe.isins
+        self.all_etf_isin = self._etf_universe.isins
         self.etfs_by_market = self._etf_universe.by_market
         self.currency_per_isin_market = self._etf_universe.currency_per_isin_market
         self.isin_ticker = self._etf_universe.get_tickers()
@@ -91,19 +100,9 @@ class CreditPriceEngine(BasePriceEngine):
             self.factored_instruments.append(inst)
             self.instruments_by_type[inst.type].append(inst)
             self.factored_instruments.append(inst)
-            self.API.market.register(inst)
-            print(f"\rBuilding {i}/{total} inst. | {'█' * (i * 20 // total):20} | {i / total:>4.0%}", end="",flush=True)
-
-    def _load_etf_universe_from_oracle(self) -> None:
-        self._etf_universe = EtfUniverse(
-            api=self.API,
-            markets=["IM", "FP", "NA"],
-            underlying=["FIXED INCOME", "MONEY MARKET"],
-        )
-
-    def _set_fx_information(self):
-        for (isin, mkt), currency in self.currency_per_isin_market.items():
-            self.market_data.set_currency_for_id(f"{isin}:{mkt}", currency)
+            self.API.market.register(inst, )
+            print(f"\rBuilding {i}/{total} inst. | {'█' * (i * 20 // total):20} | {i / total:>4.0%}", end="",
+                  flush=True)
 
     def _setup_historical_data(self) -> None:
 
@@ -112,7 +111,6 @@ class CreditPriceEngine(BasePriceEngine):
         self._fetch_market_prices(snapshot_time)
         self._apply_overrides()
         self._build_adjuster()
-        self._setup_live_book()
 
         self.corrected_return = pd.DataFrame(
             index=self.historical_prices.index,
@@ -150,79 +148,30 @@ class CreditPriceEngine(BasePriceEngine):
 
         self.book_mid = pd.Series(index=self.all_instruments, dtype=float)
 
-        self._set_fx_information()
-        self._subscribe_etfs('bloomberg')
-        self._subscribe_futures('bloomberg')
-        self._subscribe_fx()
-        self._subscribe_stale()
+        live_sub = SubscriptionHelper(self.API, self.global_subscription_service, self.live_book_etf)
+        for inst in self.factored_instruments:
+            match inst.type:
+                case InstrumentType.ETP:
+                    for m in ["IM", "FP", "NA"]:
+                        if inst.isin not in self.etfs_by_market[m]: continue
+                        currency = self.etfs_by_market[m].get(inst.isin, "EUR")
+                        id = live_sub.subscribe_instrument(inst,
+                                                           'bloomberg',
+                                                           ['BID', 'ASK'],
+                                                           {"option": 1},
+                                                           currency=currency,
+                                                           market=m)
 
-    def _subscribe_bloomberg(self, sub_id: str, security: str, fields: list[str],
-                             live_book=None, instr_id: str | None = None,
-                             market: str | None = None, currency: str | None = None,
-                             options: dict | None = None) -> None:
-        """Subscribe via Bloomberg and (optionally) register with a CompositeBook.
+                        self.live_book_etf.register(sub_id=id, instr_id=id, market=m, currency=currency)
 
-        When ``options`` is ``None`` the underlying call is made without the
-        options argument, preserving the subscription's default behaviour.
-        """
-        if options is None:
-            self.global_subscription_service.subscribe_bloomberg(sub_id, security, fields)
-        else:
-            self.global_subscription_service.subscribe_bloomberg(sub_id, security, fields, options)
-        if live_book is not None:
-            live_book.register(sub_id=sub_id, instr_id=instr_id,
-                               market=market, currency=currency)
+                case InstrumentType.FUTURE:
+                    live_sub.subscribe_instrument(inst, 'bloomberg', ['BID', 'ASK'], {"option": 1})
 
-    def _subscribe_kafka_etf(self, sub_id: str, isin: str, mkt: str, currency: str) -> None:
-        """Subscribe an ETF via Kafka and register with the ETF CompositeBook."""
-        self.global_subscription_service.subscribe_kafka(
-            id=isin, symbol_filter=isin,
-            topic=f"COALESCENT_DUMA.{_KAFKA_MAPPING[mkt]}.BookBest",
-            fields_mapping={"BID": "bidBestLevel.price", "ASK": "askBestLevel.price"},
-        )
-        self.live_book_etf.register(sub_id=sub_id, instr_id=isin, market=mkt, currency=currency)
+                case InstrumentType.CURRENCY:
+                    live_sub.subscribe_instrument(inst, 'bloomberg', ['BID', 'ASK'], {"option": 1})
 
-    def _subscribe_etfs(self, price_source: Literal['kafka', 'bloomberg']):
-        for mkt, etfs in self.etfs_by_market.items():
-            for isin in etfs:
-                sub_id = f"{mkt}:{isin}"
-                currency = self.currency_per_isin_market.get((isin, mkt), "EUR")
-                if price_source == 'bloomberg':
-                    self._subscribe_bloomberg(
-                        sub_id, f"{isin} {mkt} EQUITY", ["BID", "ASK"],
-                        live_book=self.live_book_etf,
-                        instr_id=isin, market=mkt, currency=currency,
-                        options={"interval": 1},
-                    )
-                    self.market_data.set_currency_for_id(sub_id, "EUR")  # TODO aggiungi currency bloomberg
-                else:
-                    self._subscribe_kafka_etf(sub_id, isin, mkt, currency)
-
-    def _subscribe_futures(self, price_source: Literal['kafka', 'bloomberg']):
-        for inst in self.instruments_by_type[InstrumentType.FUTURE]:
-            if price_source != 'bloomberg':
-                raise NotImplementedError
-            self._subscribe_bloomberg(
-                inst.id, f"{inst.root}A {inst.suffix}", ["BID", "ASK"],
-                live_book=self.live_book,
-                instr_id=inst.id, market=inst.market, currency=inst.currency,
-                options={"interval": 1},
-            )
-
-    def _subscribe_fx(self):
-        for fx in self.fx_list:
-            self._subscribe_bloomberg(fx, f"{fx} Curncy", ["BID", "ASK"],
-                                      options={"interval": 1})
-
-    def _subscribe_stale(self):
-        bbg_subscription = BloombergSubscriptionBuilder.build_subscription
-        last_price_sub_class = [InstrumentType.SWAP, InstrumentType.INDEX, InstrumentType.CDXINDEX]
-        for sec in [instr for instr in self.factored_instruments if instr.type in last_price_sub_class]:
-            self._subscribe_bloomberg(
-                sec.id, bbg_subscription(sec), ["LAST_PRICE"],
-                live_book=self.live_book,
-                instr_id=sec.id, market=sec.market, currency=sec.currency,
-            )
+                case _:
+                    live_sub.subscribe_instrument(inst, 'bloomberg', ['LAST_PRICE'], {"option": 1})
 
     # ── Historical data ───────────────────────────────────────────────────────
 
@@ -348,7 +297,8 @@ class CreditPriceEngine(BasePriceEngine):
         last_book = self.market_data.get_data_field(field=["BID", "ASK", "LAST_PRICE"])
         non_etfs = last_book.loc[~last_book.index.isin(self.all_etf_isin)]
         self.live_book.update(non_etfs[["BID", "ASK"]])
-        non_etfs_mid = self.live_book.agg(by=["MARKET", "CURRENCY"]).get_data().as_series().combine_first(non_etfs["LAST_PRICE"])
+        non_etfs_mid = self.live_book.agg(by=["MARKET", "CURRENCY"]).get_data().as_series().combine_first(
+            non_etfs["LAST_PRICE"])
         self.book_mid.update(non_etfs_mid)
 
     def _refresh_corrected_returns(self) -> None:

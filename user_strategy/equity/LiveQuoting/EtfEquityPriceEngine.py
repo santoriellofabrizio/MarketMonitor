@@ -446,20 +446,10 @@ class EtfEquityPriceEngine(BasePriceEngine):
         self.market_data.currency_information = currency_info
 
         for isin in self.etfs:
-            self.global_subscription_service.subscribe_bloomberg(
-                id=isin,
-                subscription_string=bloomberg_subscriptions.get(isin, isin),
-                fields=["BID", "ASK"],
-                params={"interval": 1}
-            )
+            self.global_subscription_service.subscribe_instrument(,
 
         for ccy in self.currencies:
-            self.global_subscription_service.subscribe_bloomberg(
-                id=ccy,
-                subscription_string=f"{ccy} CURNCY",
-                fields=["BID", "ASK"],
-                params={"interval": 1}
-            )
+            self.global_subscription_service.subscribe_instrument(,
 
     def wait_for_book_initialization(self) -> bool:
         return datetime.today().time() > time(9, 5) and self._initialize_bloomberg_subscriptions()
@@ -487,7 +477,7 @@ class EtfEquityPriceEngine(BasePriceEngine):
             self.global_subscription_service.unsubscribe(sub, 'bloomberg')
         for market in _RETRY_MARKETS:
             for isin in failed:
-                self.global_subscription_service.subscribe_bloomberg(isin, f"{isin} {market} EQUITY", ["BID", "ASK"])
+                self.global_subscription_service.subscribe_instrument(isin, f"{isin} {market} EQUITY", ["BID", "ASK"])
             sleep_time(5)
 
     # =========================================================================
