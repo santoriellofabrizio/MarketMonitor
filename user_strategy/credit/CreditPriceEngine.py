@@ -28,6 +28,7 @@ from market_monitor.utils.book import CompositeBook
 
 from market_monitor.utils.book_utils import SpreadEWMA
 from user_strategy.strategy_templates.BasePriceEngine import BasePriceEngine
+from user_strategy.utils.EtfUniverse import EtfUniverse
 from user_strategy.utils.InputParamsFIQuoting import InputParamsFIQuoting
 from user_strategy.utils.pricing_models.PricingModel import (
     ClusterPricingModel, DriverPricingModel,
@@ -70,8 +71,10 @@ class CreditPriceEngine(BasePriceEngine):
 
         self._load_etf_universe_from_oracle()
 
-        self.all_etf_isin = list(sorted({isin for sublist in self.etfs_by_market.values() for isin in sublist}))
-        self.isin_ticker = self.API.info.get_etp_fields("TICKER", isin=self.all_etf_isin)["TICKER"].to_dict()
+        self.all_etf_isin  = self._etf_universe.isins
+        self.etfs_by_market = self._etf_universe.by_market
+        self.currency_per_isin_market = self._etf_universe.currency_per_isin_market
+        self.isin_ticker = self._etf_universe.get_tickers()
 
         self.all_instruments: set[str] = self._load_instruments_from_db()
 
@@ -90,25 +93,12 @@ class CreditPriceEngine(BasePriceEngine):
             self.API.market.register(inst)
             print(f"\rBuilding {i}/{total} inst. | {'█' * (i * 20 // total):20} | {i / total:>4.0%}", end="",flush=True)
 
-    def _load_etf_universe_from_oracle(self):
-
-        etf_loader = lambda mkt: self.API.general.get(
-            fields=["etp_isins"],
-            segments=[mkt],
-            currency="EUR",
+    def _load_etf_universe_from_oracle(self) -> None:
+        self._etf_universe = EtfUniverse(
+            api=self.API,
+            markets=["IM", "FP", "NA"],
             underlying=["FIXED INCOME", "MONEY MARKET"],
-            extra_fields=["CURRENCY"],
-            source="oracle")["etp_isins"]
-
-        self.etfs_by_market = {mkt: [] for mkt in ["NA", "FP", "IM"]}
-        self.currency_per_isin_market: dict[tuple, str] = {}
-
-        for mkt in ["NA", "FP", "IM"]:
-            for isin, field_dict in etf_loader(mkt).items():
-                for field, value in field_dict.items():
-                    if field == "CURRENCY":
-                        self.currency_per_isin_market[(isin, mkt)] = value
-                self.etfs_by_market[mkt].append(isin)
+        )
 
     def _set_fx_information(self):
         for (isin, mkt), currency in self.currency_per_isin_market.items():
