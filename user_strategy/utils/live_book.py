@@ -1,5 +1,5 @@
 """
-LiveBook: vectorised live book aggregator with pluggable filters and aggregation rules.
+CompositeBook: vectorised live book aggregator with pluggable filters and aggregation rules.
 
 Terminology
 -----------
@@ -11,55 +11,51 @@ currency      : ISO currency code — required at registration
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Callable, Literal, Sequence
+from collections import defaultdict
+from typing import Callable, Sequence
 
 import numpy as np
 import pandas as pd
 
+from market_monitor.strategy.common.trade_manager.book_memory import (
+    FairvaluePrice, BookSnapshot,
+)
 from market_monitor.utils.book_utils import BookFilter
 
-_AggregateBy = Literal["isin", "isin_market", "isin_currency"]
+# Internal column names attached to _clean_book by update()
+_COL_INSTR = "_INSTR_ID"
+_COL_MKT   = "_MARKET"
+_COL_CCY   = "_CURRENCY"
+
+_DIM_TO_COL: dict[str, str] = {"MARKET": _COL_MKT, "CURRENCY": _COL_CCY}
 
 
 # ── Aggregation rules ─────────────────────────────────────────────────────────
 
 class AggregationRule(ABC):
     """
-    Vectorised rule that reduces a (filtered) book DataFrame to one value per group.
+    Vectorised rule that reduces a filtered book DataFrame to one value per group.
 
-    Subclasses receive the sanitised book DataFrame and the pre-built `by` Series
-    (sub_id → group key, where the group key depends on the LiveBook aggregate_by
-    setting: a plain instrument_id string, or "isin:market", or "isin:currency").
+    Receives the sanitised book (index=sub_id, any field columns) and a `by`
+    Series (sub_id → group key tuple), returns a Series indexed by those tuples.
     """
 
     @property
     @abstractmethod
-    def name(self) -> str:
-        """Unique key used in get_mid(method=...) lookups."""
-        ...
+    def name(self) -> str: ...
 
     @abstractmethod
-    def aggregate(self, book: pd.DataFrame, by: pd.Series) -> pd.Series:
-        """
-        Parameters
-        ----------
-        book : sanitised DataFrame (zeros and filter-invalid rows removed);
-               index=sub_id, columns=any market data fields.
-        by   : Series mapping sub_id → group key (instrument_id or composite).
-
-        Returns pd.Series indexed by the group key.
-        """
-        ...
+    def aggregate(self, book: pd.DataFrame, by: pd.Series) -> pd.Series: ...
 
 
 class FieldAgg(AggregationRule):
     """
-    Aggregate a single field with any pandas groupby aggregation.
+    Aggregate a single field with any pandas groupby function.
 
     Examples
     --------
-    FieldAgg("BID", "max")           → max bid per group
-    FieldAgg("LAST_PRICE", "last")   → last price per group
+    FieldAgg("BID", "max")
+    FieldAgg("LAST_PRICE", "last", name="last_price")
     FieldAgg("BID", np.median, name="median_bid")
     """
 
@@ -78,19 +74,13 @@ class FieldAgg(AggregationRule):
 
 class BidAskMidAgg(AggregationRule):
     """
-    Mid price from independent bid-side and ask-side aggregations.
+    Mid from independent bid-side and ask-side aggregations.
 
         result = (agg_bid(bid_field) + agg_ask(ask_field)) / 2
 
-    Parameters
-    ----------
-    bid_agg, ask_agg : pandas groupby aggregation ("max", "min", "mean", …) or callable.
-    bid_field        : column name for bids (default "BID").
-    ask_field        : column name for asks (default "ASK").
-
     Examples
     --------
-    BidAskMidAgg("max", "min")    → best composite book (tightest spread)
+    BidAskMidAgg("max", "min")    → best composite book
     BidAskMidAgg("mean", "mean")  → mean of average bid and average ask
     """
 
@@ -102,13 +92,11 @@ class BidAskMidAgg(AggregationRule):
         ask_field: str = "ASK",
         name: str | None = None,
     ):
-        self._bid_agg = bid_agg
-        self._ask_agg = ask_agg
-        self._bid_field = bid_field
-        self._ask_field = ask_field
-        _ba = bid_agg.__name__ if callable(bid_agg) else bid_agg
-        _aa = ask_agg.__name__ if callable(ask_agg) else ask_agg
-        self._name = name or f"mid({_ba}({bid_field}),{_aa}({ask_field}))"
+        self._bid_agg, self._ask_agg = bid_agg, ask_agg
+        self._bid_field, self._ask_field = bid_field, ask_field
+        ba = bid_agg.__name__ if callable(bid_agg) else bid_agg
+        aa = ask_agg.__name__ if callable(ask_agg) else ask_agg
+        self._name = name or f"mid({ba}({bid_field}),{aa}({ask_field}))"
 
     @property
     def name(self) -> str:
@@ -121,17 +109,11 @@ class BidAskMidAgg(AggregationRule):
 
 
 class MeanMidsAgg(AggregationRule):
-    """
-    Mean of per-subscription (bid + ask) / 2, then averaged per group.
-
-    Differs from BidAskMidAgg("mean","mean") when multiple subscriptions exist:
-    here the averaging is on per-subscription mids, not on pooled bid/ask sides.
-    """
+    """Mean of per-subscription (bid + ask) / 2, then averaged per group."""
 
     def __init__(self, bid_field: str = "BID", ask_field: str = "ASK",
                  name: str = "mean_mids"):
-        self._bid_field = bid_field
-        self._ask_field = ask_field
+        self._bid_field, self._ask_field = bid_field, ask_field
         self._name = name
 
     @property
@@ -139,201 +121,364 @@ class MeanMidsAgg(AggregationRule):
         return self._name
 
     def aggregate(self, book: pd.DataFrame, by: pd.Series) -> pd.Series:
-        per_sub = (book[self._bid_field] + book[self._ask_field]) / 2
-        return per_sub.groupby(by).mean()
+        return ((book[self._bid_field] + book[self._ask_field]) / 2).groupby(by).mean()
 
 
-# ── Ready-made rule instances ─────────────────────────────────────────────────
+# ── Ready-made instances ──────────────────────────────────────────────────────
 
-MAX_BID_MIN_ASK = BidAskMidAgg(bid_agg="max", ask_agg="min", name="best_bid_ask")
-MEAN_BID_ASK    = BidAskMidAgg(bid_agg="mean", ask_agg="mean", name="mean_bid_ask")
+MAX_BID_MIN_ASK = BidAskMidAgg("max", "min", name="best_bid_ask")
+MEAN_BID_ASK    = BidAskMidAgg("mean", "mean", name="mean_bid_ask")
 MEAN_MIDS       = MeanMidsAgg(name="mean_mids")
 
 _DEFAULT_RULES: list[AggregationRule] = [MAX_BID_MIN_ASK, MEAN_BID_ASK, MEAN_MIDS]
 
 
-# ── LiveBook ──────────────────────────────────────────────────────────────────
+# ── BookResult ────────────────────────────────────────────────────────────────
 
-class LiveBook:
+class BookResult:
+    """
+    Immutable result of CompositeBook.agg(by=...).get_data(...).
+
+    Carries aggregated prices and the `by` dimensions used, so it can
+    produce the right output shape and a BookSnapshot compatible with
+    BookStorage / TradeManager.
+
+    Keys are always tuples:
+        by=[]              → ("IE00B",)
+        by=["CURRENCY"]    → ("IE00B", "EUR")
+        by=["MARKET"]      → ("IE00B", "IM")
+        by=["MARKET","CURRENCY"] → ("IE00B", "IM", "EUR")
+    """
+
+    def __init__(self, data: pd.Series, by: list[str]) -> None:
+        # data: Series whose index values are tuples
+        self._data = data
+        self._by = by  # e.g. ["CURRENCY"] or ["MARKET", "CURRENCY"]
+
+    # ── Conversion ────────────────────────────────────────────────────────────
+
+    def as_dict(self) -> dict[tuple, float]:
+        """Raw dict with tuple keys."""
+        return self._data.to_dict()
+
+    def as_series(self) -> pd.Series:
+        """
+        Flat Series (instr_id index) when by=[];
+        MultiIndex Series (instr_id, dim…) otherwise.
+        """
+        if self._data.empty:
+            return pd.Series(dtype=float)
+        if not self._by:
+            return pd.Series(
+                self._data.values,
+                index=[k[0] for k in self._data.index],
+                dtype=float,
+            )
+        idx = pd.MultiIndex.from_tuples(
+            self._data.index, names=["instr_id"] + self._by
+        )
+        return pd.Series(self._data.values, index=idx, dtype=float)
+
+    def as_df(self) -> pd.DataFrame:
+        """
+        Single-column DataFrame when by=[];
+        pivoted DataFrame (instr_id rows × last dim columns) otherwise.
+        """
+        s = self.as_series()
+        if not self._by:
+            return s.to_frame(name="mid")
+        return s.unstack(level=-1)
+
+    def as_snapshot(self) -> BookSnapshot:
+        """
+        Convert to BookSnapshot (dict[instr_id, FairvaluePrice]) for
+        BookStorage.append() and TradeManager.
+
+        Mapping logic:
+          by=[]           → FairvaluePrice.scalar   per instr_id
+          by=["CURRENCY"] → FairvaluePrice.by_currency per instr_id
+          by=["MARKET"]   → FairvaluePrice.by_market   per instr_id
+          other dims      → by_currency if CURRENCY present, else by_market
+        """
+        snapshot: BookSnapshot = {}
+
+        if not self._by:
+            for (instr_id,), price in self._data.items():
+                if not np.isnan(price):
+                    snapshot[instr_id] = FairvaluePrice.scalar(instr_id, price)
+
+        elif self._by == ["CURRENCY"]:
+            grouped: dict[str, dict] = defaultdict(dict)
+            for (instr_id, ccy), price in self._data.items():
+                if not np.isnan(price):
+                    grouped[instr_id][ccy] = price
+            for instr_id, prices in grouped.items():
+                snapshot[instr_id] = FairvaluePrice.by_currency(instr_id, prices)
+
+        elif self._by == ["MARKET"]:
+            grouped = defaultdict(dict)
+            for (instr_id, mkt), price in self._data.items():
+                if not np.isnan(price):
+                    grouped[instr_id][mkt] = price
+            for instr_id, prices in grouped.items():
+                snapshot[instr_id] = FairvaluePrice.by_market(instr_id, prices)
+
+        else:
+            # Multi-dim: prefer by_currency for TradeManager compat
+            if "CURRENCY" in self._by:
+                ccy_pos = self._by.index("CURRENCY") + 1
+                grouped = defaultdict(dict)
+                for key, price in self._data.items():
+                    if not np.isnan(price):
+                        grouped[key[0]][key[ccy_pos]] = price
+                for instr_id, prices in grouped.items():
+                    snapshot[instr_id] = FairvaluePrice.by_currency(instr_id, prices)
+            else:
+                mkt_pos = self._by.index("MARKET") + 1
+                grouped = defaultdict(dict)
+                for key, price in self._data.items():
+                    if not np.isnan(price):
+                        grouped[key[0]][key[mkt_pos]] = price
+                for instr_id, prices in grouped.items():
+                    snapshot[instr_id] = FairvaluePrice.by_market(instr_id, prices)
+
+        return snapshot
+
+
+# ── BookQuery ─────────────────────────────────────────────────────────────────
+
+class BookQuery:
+    """
+    Pending query produced by CompositeBook.agg(by=[...]).
+
+    Call .get_data() to execute and obtain a BookResult.
+    """
+
+    def __init__(self, book: "CompositeBook", by: list[str]) -> None:
+        unknown = set(by) - _DIM_TO_COL.keys()
+        if unknown:
+            raise ValueError(
+                f"Unknown dimension(s) {unknown}. Valid: {list(_DIM_TO_COL)}"
+            )
+        self._book = book
+        self._by = by  # already upper-cased by CompositeBook.agg()
+
+    def get_data(
+        self,
+        securities: list[str] | None = None,
+        fx_rate: dict[str, float] | pd.Series | None = None,
+        method: str | None = None,
+    ) -> BookResult:
+        """
+        Execute the query and return a BookResult.
+
+        Parameters
+        ----------
+        securities : optional list of instrument_ids to restrict the output.
+        fx_rate    : optional currency → EUR rate mapping (dict or pd.Series).
+                     Applied after filters, before aggregation.
+                     e.g. {"EUR": 1.0, "USD": 0.92, "GBP": 1.16}
+        method     : name of the AggregationRule to use (default: book.default_method).
+        """
+        book = self._book._clean_book
+        if book is None or book.empty:
+            return BookResult(pd.Series(dtype=float), self._by)
+
+        if securities is not None:
+            book = book[book[_COL_INSTR].isin(securities)]
+
+        if book.empty:
+            return BookResult(pd.Series(dtype=float), self._by)
+
+        # FX conversion to EUR (applied after filters)
+        if fx_rate is not None:
+            bid_ask = [c for c in ("BID", "ASK") if c in book.columns]
+            if bid_ask:
+                fx = fx_rate if isinstance(fx_rate, dict) else fx_rate.to_dict()
+                rates = book[_COL_CCY].map(fx).fillna(1.0)
+                book = book.copy()
+                book[bid_ask] = book[bid_ask].multiply(rates, axis=0)
+
+        # Build groupby key: tuple of (instr_id, [market], [currency])
+        key_cols = [_COL_INSTR] + [_DIM_TO_COL[d] for d in self._by]
+        by_series = book[key_cols].apply(tuple, axis=1)
+
+        # Select and run aggregation rule
+        rule_name = method or self._book._default_method
+        rule = next((r for r in self._book._agg_rules if r.name == rule_name), None)
+        if rule is None:
+            available = [r.name for r in self._book._agg_rules]
+            raise KeyError(f"No rule {rule_name!r}. Available: {available}")
+
+        try:
+            result = rule.aggregate(book, by_series)
+        except KeyError:
+            result = pd.Series(dtype=float)
+
+        return BookResult(result, self._by)
+
+
+# ── CompositeBook ─────────────────────────────────────────────────────────────
+
+class CompositeBook:
     """
     Aggregates live market data from one or more subscriptions per instrument.
 
     Parameters
     ----------
-    default_method : name of the AggregationRule returned by get_mid() with no argument.
-    rules          : aggregation rules applied on every update().
-                     Defaults to [MAX_BID_MIN_ASK, MEAN_BID_ASK, MEAN_MIDS].
-    aggregate_by   : groupby key used when building per-instrument results.
-                     "isin"          → one row per instrument_id (default)
-                     "isin_market"   → one row per (instrument_id, market) pair
-                     "isin_currency" → one row per (instrument_id, currency) pair
+    default_method : AggregationRule name used when method= is omitted in get_data().
+    rules          : aggregation rules applied in every update(). Defaults to
+                     [MAX_BID_MIN_ASK, MEAN_BID_ASK, MEAN_MIDS].
 
     ---
 
     USAGE GUIDE
     ===========
 
-    1. Registration — instrument_id, market and currency are all mandatory
-    -------------------------------------------------------------------
+    1. Registration — instr_id, market and currency are all mandatory
+    ----------------------------------------------------------------
 
-        lb = LiveBook()
+        book = CompositeBook()
 
         # single subscription
-        lb.register("IM:IE00B4L5Y983",
-                    instrument_id="IE00B4L5Y983", market="IM", currency="EUR")
+        book.register("IM:IE00B4L5Y983",
+                      instr_id="IE00B4L5Y983", market="IM", currency="EUR")
 
-        # same instrument across multiple markets
+        # same instrument across multiple markets / currencies
         for mkt, ccy in [("IM", "EUR"), ("FP", "EUR"), ("NA", "USD")]:
-            lb.register(f"{mkt}:IE00B4L5Y983",
-                        instrument_id="IE00B4L5Y983", market=mkt, currency=ccy)
+            book.register(f"{mkt}:IE00B4L5Y983",
+                          instr_id="IE00B4L5Y983", market=mkt, currency=ccy)
 
         # bulk from instrument objects (.id, .market, .currency must exist)
-        lb.register_from_instruments({inst.id: inst for inst in my_instruments})
+        book.register_from_instruments({inst.id: inst for inst in my_instruments})
 
-        # all methods return self → chainable
-        lb = (
-            LiveBook()
-            .register("ITRAXX.S42.5Y", instrument_id="ITRAXX.S42.5Y",
+        # chainable
+        book = (
+            CompositeBook()
+            .register("ITRAXX.S42.5Y", instr_id="ITRAXX.S42.5Y",
                       market="OTC", currency="EUR")
-            .register("CDXIG.43.5Y",   instrument_id="CDXIG.43.5Y",
+            .register("CDXIG.43.5Y",   instr_id="CDXIG.43.5Y",
                       market="OTC", currency="USD")
         )
 
-    2. Groupby mode
-    ---------------
-    Controls how subscriptions are collapsed into output rows.
-
-        # one mid per ISIN (default) — aggregates across all markets and currencies
-        lb = LiveBook(aggregate_by="isin")
-
-        # one mid per (ISIN, market) — separate rows for IM, FP, NA
-        lb = LiveBook(aggregate_by="isin_market")
-        mid = lb.get_mid()
-        # mid.index → ["IE00B4L5Y983:IM", "IE00B4L5Y983:FP", ...]
-
-        # one mid per (ISIN, currency) — separate rows for EUR, USD
-        lb = LiveBook(aggregate_by="isin_currency")
-        mid = lb.get_mid()
-        # mid.index → ["IE00B4L5Y983:EUR", "IE00B4L5Y983:USD", ...]
-
-    3. FX conversion — normalise to EUR before aggregating
-    -------------------------------------------------------
-    When aggregate_by="isin" and subscriptions have different currencies,
-    pass fx_rate to update() to convert all prices to EUR before the groupby.
-    fx_rate is a dict or pd.Series mapping currency → EUR rate.
-
-        fx = {"EUR": 1.0, "USD": 0.92, "GBP": 1.16}
-
-        lb.update(raw, fx_rate=fx)   # prices converted to EUR before aggregation
-        mid = lb.get_mid()           # result is in EUR
-
-    FX conversion is applied after filters (filters see original-currency prices)
-    and before aggregation rules (rules always operate on converted prices when
-    fx_rate is provided).
-
-    4. Filters
+    2. Filters
     ----------
-    Conform to BookFilter protocol (update + get_valid_book).
-    Applied in registration order before aggregation.
 
         from market_monitor.utils.book_utils import SpreadEWMA, PriceEWMA
 
-        lb.add_filter(SpreadEWMA(tau_seconds=600, max_multiplier=2.0))   # global
-        lb.add_filter(PriceEWMA(tau_seconds=300, max_ret=0.005),
-                      securities=["IM:IE00B4L5Y983"])                    # scoped
+        book.add_filter(SpreadEWMA(tau_seconds=600, max_multiplier=2.0))  # global
+        book.add_filter(PriceEWMA(tau_seconds=300, max_ret=0.005),
+                        securities=["IM:IE00B4L5Y983"])                   # scoped
 
-    5. Aggregation rules
+    3. Aggregation rules
     --------------------
-    Three rules are active by default:
 
-        MAX_BID_MIN_ASK  →  (max(BID) + min(ASK)) / 2   ["best_bid_ask"]
-        MEAN_BID_ASK     →  (mean(BID) + mean(ASK)) / 2 ["mean_bid_ask"]
-        MEAN_MIDS        →  mean((BID+ASK)/2)            ["mean_mids"]
+        book.add_aggregation(FieldAgg("LAST_PRICE", "last", name="last_price"))
+        book.add_aggregation(BidAskMidAgg("mean", "mean", name="vwap_mid"))
 
-    Add custom rules:
+        book.available_methods  # → ["best_bid_ask", "mean_bid_ask", "mean_mids", ...]
 
-        from user_strategy.utils.live_book import FieldAgg, BidAskMidAgg
-
-        lb.add_aggregation(FieldAgg("LAST_PRICE", "last", name="last_price"))
-        lb.add_aggregation(FieldAgg("BID", "median", name="median_bid"))
-        lb.add_aggregation(BidAskMidAgg("mean", "mean", name="vwap_mid"))
-
-        lb.available_methods  # → ["best_bid_ask", "mean_bid_ask", "mean_mids", ...]
-
-        # override default rules entirely
-        lb = LiveBook(rules=[MAX_BID_MIN_ASK])
-
-    6. Hot path — update + get_mid
-    --------------------------------
+    4. Hot path — update
+    ----------------------
 
         raw = market_data.get_data_field(field=["BID", "ASK"])
-        lb.update(raw)                      # no FX conversion
-        lb.update(raw, fx_rate=fx_dict)     # with FX conversion to EUR
+        book.update(raw)
 
-        mid = lb.get_mid()                  # default method
-        mid = lb.get_mid("mean_mids")       # explicit method
-        mid = lb.get_mid("last_price")      # custom rule
+    5. Querying — agg / get_data / BookResult
+    ------------------------------------------
 
-        # LAST_PRICE fallback (outside LiveBook)
-        last = market_data.get_data_field(field="LAST_PRICE")
-        mid  = lb.get_mid().combine_first(last)
+        # aggregate over all markets and currencies → one mid per ISIN
+        result = book.agg(by=[]).get_data()
 
-    7. Per-instrument bid/ask
-    -------------------------
+        # keep currency as separate dimension → one mid per (ISIN, currency)
+        result = book.agg(by=["CURRENCY"]).get_data()
 
-        bid, ask = lb.get_bid_ask("IE00B4L5Y983")
-        # → (float | None, float | None); best bid and best ask across all subs
+        # keep both → one mid per (ISIN, market, currency)
+        result = book.agg(by=["MARKET", "CURRENCY"]).get_data()
+
+        # filter to a subset and convert non-EUR to EUR
+        fx = {"EUR": 1.0, "USD": 0.92, "GBP": 1.16}
+        result = (
+            book.agg(by=[])
+                .get_data(securities=my_isin_list, fx_rate=fx, method="best_bid_ask")
+        )
+
+    6. Consuming BookResult
+    -----------------------
+
+        result.as_series()
+        # by=[]           → pd.Series indexed by instr_id
+        # by=["CURRENCY"] → pd.Series with MultiIndex (instr_id, currency)
+
+        result.as_df()
+        # by=[]           → single-column DataFrame
+        # by=["CURRENCY"] → DataFrame with instr_id rows × currency columns
+
+        result.as_dict()
+        # → {("IE00B", "EUR"): 99.5, ("IE00B", "USD"): 98.2, ...}
+
+        result.as_snapshot()
+        # → BookSnapshot compatible with BookStorage.append() and TradeManager
+        # by=[]           → {instr_id: FairvaluePrice.scalar(...)}
+        # by=["CURRENCY"] → {instr_id: FairvaluePrice.by_currency(...)}
+        # by=["MARKET"]   → {instr_id: FairvaluePrice.by_market(...)}
+
+        # typical usage with BookStorage
+        book_storage.append(result.as_snapshot())
+
+    7. Per-instrument bid / ask
+    ---------------------------
+
+        bid, ask = book.get_bid_ask("IE00B4L5Y983")
+        # → (float | None, float | None) — best bid/ask across all subscriptions
     """
 
     def __init__(
         self,
         default_method: str = "best_bid_ask",
         rules: list[AggregationRule] | None = None,
-        aggregate_by: _AggregateBy = "isin",
     ) -> None:
         self._default_method = default_method
-        self._agg_rules: list[AggregationRule] = list(rules) if rules is not None else list(_DEFAULT_RULES)
-        self._aggregate_by: _AggregateBy = aggregate_by
+        self._agg_rules: list[AggregationRule] = (
+            list(rules) if rules is not None else list(_DEFAULT_RULES)
+        )
 
         self._sub_to_instr: dict[str, str] = {}
         self._sub_metadata: dict[str, tuple[str, str]] = {}  # sub_id → (market, currency)
 
-        # lazily built; invalidated on every register() call
-        self._instr_series: pd.Series | None = None  # sub_id → instrument_id
-        self._by_series: pd.Series | None = None     # sub_id → groupby key
-
         self._filters: list[tuple[BookFilter, frozenset[str] | None]] = []
 
-        self._bid: pd.Series | None = None   # best bid per instrument (for get_bid_ask)
-        self._ask: pd.Series | None = None   # best ask per instrument
-        self._mid_cache: dict[str, pd.Series] = {}
+        # Set by update(); consumed by BookQuery.get_data()
+        self._clean_book: pd.DataFrame | None = None
+
+        # Best bid/ask per instrument_id for get_bid_ask()
+        self._bid: pd.Series | None = None
+        self._ask: pd.Series | None = None
 
     # ── Registration ──────────────────────────────────────────────────────────
 
     def register(
         self,
         sub_id: str,
-        instrument_id: str,
+        instr_id: str,
         market: str,
         currency: str,
-    ) -> "LiveBook":
+    ) -> "CompositeBook":
         """Register one subscription. All four arguments are required."""
-        self._sub_to_instr[sub_id] = instrument_id
+        self._sub_to_instr[sub_id] = instr_id
         self._sub_metadata[sub_id] = (market, currency)
-        self._instr_series = None
-        self._by_series = None
         return self
 
-    def register_from_instruments(self, instruments: dict) -> "LiveBook":
+    def register_from_instruments(self, instruments: dict) -> "CompositeBook":
         """
         Bulk-register from a {sub_id: instr_obj} dict.
 
-        instr_obj must have .id, .market and .currency attributes.
+        instr_obj must expose .id, .market and .currency attributes.
         """
         for sub_id, instr in instruments.items():
             self.register(
                 sub_id=sub_id,
-                instrument_id=instr.id,
+                instr_id=instr.id,
                 market=instr.market,
                 currency=instr.currency,
             )
@@ -345,70 +490,41 @@ class LiveBook:
         self,
         filt: BookFilter,
         securities: Sequence[str] | None = None,
-    ) -> "LiveBook":
+    ) -> "CompositeBook":
         """Attach a BookFilter. securities=None → global; otherwise scoped to those sub_ids."""
-        self._filters.append((filt, frozenset(securities) if securities is not None else None))
+        self._filters.append(
+            (filt, frozenset(securities) if securities is not None else None)
+        )
         return self
 
-    def add_aggregation(self, rule: AggregationRule) -> "LiveBook":
-        """Append a custom AggregationRule, computed on every update()."""
+    def add_aggregation(self, rule: AggregationRule) -> "CompositeBook":
+        """Append a custom AggregationRule, computed on every get_data() call."""
         self._agg_rules.append(rule)
         return self
 
-    # ── Internal builders ─────────────────────────────────────────────────────
-
-    def _build_series(self) -> None:
-        self._instr_series = pd.Series(self._sub_to_instr, dtype="object")
-        if self._aggregate_by == "isin":
-            self._by_series = self._instr_series
-        elif self._aggregate_by == "isin_market":
-            self._by_series = pd.Series(
-                {s: f"{i}:{self._sub_metadata[s][0]}" for s, i in self._sub_to_instr.items()},
-                dtype="object",
-            )
-        else:  # isin_currency
-            self._by_series = pd.Series(
-                {s: f"{i}:{self._sub_metadata[s][1]}" for s, i in self._sub_to_instr.items()},
-                dtype="object",
-            )
-
     # ── Update (hot path) ─────────────────────────────────────────────────────
 
-    def update(
-        self,
-        raw: pd.DataFrame,
-        fx_rate: dict[str, float] | pd.Series | None = None,
-    ) -> None:
+    def update(self, raw: pd.DataFrame) -> None:
         """
-        Ingest a market data snapshot, apply filters, run all aggregation rules.
+        Ingest a market data snapshot and apply filters.
 
         Parameters
         ----------
-        raw     : DataFrame with index=sub_id, any field columns (BID, ASK, LAST_PRICE, …).
-                  Zero values are treated as NaN.
-        fx_rate : optional currency → EUR rate mapping applied after filters and before
-                  aggregation (converts BID/ASK to EUR). Useful when aggregate_by="isin"
-                  and subscriptions trade in different currencies.
-                  e.g. {"EUR": 1.0, "USD": 0.92, "GBP": 1.16}
+        raw : DataFrame with index=sub_id, any field columns (BID, ASK, …).
+              Zero values are treated as NaN.
         """
-        if self._instr_series is None:
-            self._build_series()
-
-        self._mid_cache.clear()
+        self._clean_book = None
+        self._bid = pd.Series(dtype=float)
+        self._ask = pd.Series(dtype=float)
 
         if raw.empty:
-            self._bid = pd.Series(dtype=float)
-            self._ask = pd.Series(dtype=float)
             return
 
         book = raw.replace({0: np.nan}).dropna(how="all")
-
         if book.empty:
-            self._bid = pd.Series(dtype=float)
-            self._ask = pd.Series(dtype=float)
             return
 
-        # --- Apply filter chain (requires BID + ASK) -------------------------
+        # --- Apply filter chain (BID + ASK required per filter) --------------
         for filt, scope in self._filters:
             if not {"BID", "ASK"}.issubset(book.columns):
                 continue
@@ -425,63 +541,46 @@ class LiveBook:
                 book = pd.concat([book.loc[book.index.difference(scope)], valid])
 
         if book.empty:
-            self._bid = pd.Series(dtype=float)
-            self._ask = pd.Series(dtype=float)
             return
 
-        # --- FX conversion to EUR (applied after filters) --------------------
-        if fx_rate is not None:
-            bid_ask = [c for c in ("BID", "ASK") if c in book.columns]
-            if bid_ask:
-                ccy_series = pd.Series(
-                    {s: self._sub_metadata[s][1] for s in book.index if s in self._sub_metadata},
-                    dtype="object",
-                )
-                rates = ccy_series.map(fx_rate if isinstance(fx_rate, dict) else fx_rate.to_dict()).fillna(1.0)
-                book = book.copy()
-                book[bid_ask] = book[bid_ask].multiply(rates, axis=0)
+        # --- Restrict to registered sub_ids and attach metadata --------------
+        known = book.index.intersection(self._sub_to_instr.keys())
+        book = book.reindex(known).copy()
+        book[_COL_INSTR] = pd.Series(self._sub_to_instr).reindex(book.index)
+        book[_COL_MKT]   = pd.Series({s: self._sub_metadata[s][0] for s in book.index})
+        book[_COL_CCY]   = pd.Series({s: self._sub_metadata[s][1] for s in book.index})
+        self._clean_book = book.dropna(subset=[_COL_INSTR])
 
-        # --- Map sub_ids to groupby keys -------------------------------------
-        known_instr = self._instr_series.reindex(book.index).dropna()
-        known_by    = self._by_series.reindex(book.index).dropna()
-        book = book.reindex(known_by.index)
+        # --- Best bid / ask per instr_id (for get_bid_ask) -------------------
+        instr_by = self._clean_book[_COL_INSTR]
+        if "BID" in self._clean_book.columns:
+            self._bid = self._clean_book["BID"].groupby(instr_by).max()
+        if "ASK" in self._clean_book.columns:
+            self._ask = self._clean_book["ASK"].groupby(instr_by).min()
 
-        # --- Best bid / ask per instrument (always by isin, for get_bid_ask) -
-        self._bid = book["BID"].groupby(known_instr.reindex(known_by.index)).max() \
-            if "BID" in book.columns else pd.Series(dtype=float)
-        self._ask = book["ASK"].groupby(known_instr.reindex(known_by.index)).min() \
-            if "ASK" in book.columns else pd.Series(dtype=float)
+    # ── Query interface ───────────────────────────────────────────────────────
 
-        # --- Run all aggregation rules ---------------------------------------
-        for rule in self._agg_rules:
-            try:
-                self._mid_cache[rule.name] = rule.aggregate(book, known_by)
-            except KeyError:
-                pass  # required field absent in this snapshot
-
-    # ── Accessors ─────────────────────────────────────────────────────────────
-
-    def get_mid(self, method: str | None = None) -> pd.Series:
+    def agg(self, by: list[str]) -> BookQuery:
         """
-        Return aggregated prices per group (instrument_id, or composite key).
+        Define groupby dimensions and return a BookQuery.
 
         Parameters
         ----------
-        method : AggregationRule name, or None to use default_method.
+        by : extra dimensions to keep distinct beyond instr_id.
+             Valid values: "MARKET", "CURRENCY" (case-insensitive).
+             []                 → one row per instr_id
+             ["CURRENCY"]       → one row per (instr_id, currency)
+             ["MARKET"]         → one row per (instr_id, market)
+             ["MARKET","CURRENCY"] → one row per (instr_id, market, currency)
         """
-        m = method if method is not None else self._default_method
-        result = self._mid_cache.get(m)
-        if result is None:
-            raise KeyError(
-                f"No result for {m!r}. "
-                f"Available: {list(self._mid_cache)} — did you call update() first?"
-            )
-        return result
+        return BookQuery(self, [d.upper() for d in by])
 
-    def get_bid_ask(self, instrument_id: str) -> tuple[float | None, float | None]:
-        """Return (best_bid, best_ask) for a single instrument across all its subscriptions."""
-        bid = self._bid.get(instrument_id) if self._bid is not None else None
-        ask = self._ask.get(instrument_id) if self._ask is not None else None
+    # ── Accessors ─────────────────────────────────────────────────────────────
+
+    def get_bid_ask(self, instr_id: str) -> tuple[float | None, float | None]:
+        """Return (best_bid, best_ask) for one instrument across all its subscriptions."""
+        bid = self._bid.get(instr_id) if self._bid is not None else None
+        ask = self._ask.get(instr_id) if self._ask is not None else None
         return (
             float(bid) if bid is not None and not np.isnan(bid) else None,
             float(ask) if ask is not None and not np.isnan(ask) else None,
@@ -491,3 +590,7 @@ class LiveBook:
     def available_methods(self) -> list[str]:
         """Names of all registered aggregation rules."""
         return [r.name for r in self._agg_rules]
+
+
+# ── Backward-compat alias ─────────────────────────────────────────────────────
+LiveBook = CompositeBook
