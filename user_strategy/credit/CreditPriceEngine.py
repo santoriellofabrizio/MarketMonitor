@@ -157,9 +157,9 @@ class CreditPriceEngine(BasePriceEngine):
             for isin in etfs:
                 self.live_book_etf.register(
                     sub_id=f"{mkt}:{isin}",
-                    instr_id=isin,
+                    instrument_id=isin,
                     market=mkt,
-                    currency=self.currency_per_isin_market.get((isin, mkt), "EUR"),
+                    currency=self.currency_per_isin_market.get((isin, mkt)),
                 )
         self.live_book_etf.add_filter(self.book_filter)
 
@@ -350,14 +350,14 @@ class CreditPriceEngine(BasePriceEngine):
                        for mkt, etfs in self.etfs_by_market.items()
                        for isin in etfs]
         self.live_book_etf.update(raw_book.reindex(etf_sub_ids))
-        self.book_mid.update(self.live_book_etf.agg(by=[]).get_data().as_series())
+        self.book_mid.update(self.live_book_etf.get_mid())
 
     def _update_non_etf_mids(self) -> None:
         """Aggiorna book_mid per i non-ETF usando mid oppure LAST_PRICE come fallback."""
         last_book = self.market_data.get_data_field(field=["BID", "ASK", "LAST_PRICE"])
         non_etfs = last_book.loc[~last_book.index.isin(self.all_etf_isin)]
         self.live_book.update(non_etfs[["BID", "ASK"]])
-        non_etfs_mid = self.live_book.agg(by=[]).get_data().as_series().combine_first(non_etfs["LAST_PRICE"])
+        non_etfs_mid = self.live_book.get_mid().combine_first(non_etfs["LAST_PRICE"])
         self.book_mid.update(non_etfs_mid)
 
     def _refresh_corrected_returns(self) -> None:
