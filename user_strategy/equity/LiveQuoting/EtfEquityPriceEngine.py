@@ -22,6 +22,7 @@ from sfm_data_provider.interface.bshdata import BshData
 from user_strategy.equity.LiveQuoting.InputParamsQuoting import InputParamsQuoting
 from user_strategy.equity.LiveQuoting.utils import filter_outliers, round_series_to_tick
 from user_strategy.utils.BasePriceEngine import BasePriceEngine
+from user_strategy.utils.EtfUniverse import EtfUniverse
 from user_strategy.utils.pricing_models.AggregationFunctions import EwmaOutlier
 from user_strategy.utils.pricing_models.PricingModel import ClusterPricingModel
 from user_strategy.utils.pricing_models.PricingModelRegistry import PricingModelRegistry
@@ -55,10 +56,11 @@ class EtfEquityPriceEngine(BasePriceEngine):
 
         self.API = BshData(config_path=self.kwargs.get("bshdata_config_path"))
 
-        isins_etf_equity = self.API.general.get(
-            fields=["etp_isins"], segments=["IM"], currency="EUR",
-            underlying="EQUITY", source="oracle",
-        )["etp_isins"]
+        etf_universe = EtfUniverse(
+            api=self.API, markets=["IM"], underlying="EQUITY", extra_fields=(),
+        )
+
+        isins_etf_equity = etf_universe.get()
 
         self.reference_tick_size = self.API.info.get_etp_fields(
             isin=isins_etf_equity, fields=["REFERENCE_TICK_SIZE"], source="bloomberg",

@@ -28,6 +28,7 @@ from market_monitor.utils.book import CompositeBook
 
 from market_monitor.utils.book_utils import SpreadEWMA
 from user_strategy.strategy_templates.BasePriceEngine import BasePriceEngine
+from user_strategy.utils.EtfUniverse import EtfUniverse
 from user_strategy.utils.InputParamsFIQuoting import InputParamsFIQuoting
 from user_strategy.utils.pricing_models.PricingModel import (
     ClusterPricingModel, DriverPricingModel,
@@ -38,7 +39,7 @@ from user_strategy.utils.pricing_models.PricingModelRegistry import PricingModel
 from user_strategy.utils.pricing_models.IRPManager import IRPManager
 
 _RETRY_MARKETS = ("NA", "FP")
-_MAX_FAILED_RATIO = 1 / 100
+_MAX_FAILED_RATIO = 50 / 100
 _KAFKA_MAPPING = {"IM": "ETFP", "NA": "XAMS", "FP": "XPAR"}
 
 
@@ -56,6 +57,7 @@ class CreditPriceEngine(BasePriceEngine):
 
         self.book_mid: pd.Series | None = None
         self.calendar: HolidayManager = HolidayManager()
+        self.input_params = InputParamsFIQuoting(kwargs)
         self.end = self.calendar.previous_business_day(today(), 'ETFP')
         self.start_date = self.calendar.subtract_business_days(today(),
                                                                kwargs.get('number_of_days',
@@ -70,8 +72,10 @@ class CreditPriceEngine(BasePriceEngine):
 
         self._load_etf_universe_from_oracle()
 
-        self.all_etf_isin = list(sorted({isin for sublist in self.etfs_by_market.values() for isin in sublist}))
-        self.isin_ticker = self.API.info.get_etp_fields("TICKER", isin=self.all_etf_isin)["TICKER"].to_dict()
+        self.all_etf_isin  = self._etf_universe.isins
+        self.etfs_by_market = self._etf_universe.by_market
+        self.currency_per_isin_market = self._etf_universe.currency_per_isin_market
+        self.isin_ticker = self._etf_universe.get_tickers()
 
         self.all_instruments: set[str] = self._load_instruments_from_db()
 
@@ -90,25 +94,12 @@ class CreditPriceEngine(BasePriceEngine):
             self.API.market.register(inst)
             print(f"\rBuilding {i}/{total} inst. | {'█' * (i * 20 // total):20} | {i / total:>4.0%}", end="",flush=True)
 
-    def _load_etf_universe_from_oracle(self):
-
-        etf_loader = lambda mkt: self.API.general.get(
-            fields=["etp_isins"],
-            segments=[mkt],
-            currency="EUR",
+    def _load_etf_universe_from_oracle(self) -> None:
+        self._etf_universe = EtfUniverse(
+            api=self.API,
+            markets=["IM", "FP", "NA"],
             underlying=["FIXED INCOME", "MONEY MARKET"],
-            extra_fields=["CURRENCY"],
-            source="oracle")["etp_isins"]
-
-        self.etfs_by_market = {mkt: [] for mkt in ["NA", "FP", "IM"]}
-        self.currency_per_isin_market: dict[tuple, str] = {}
-
-        for mkt in ["NA", "FP", "IM"]:
-            for isin, field_dict in etf_loader(mkt).items():
-                for field, value in field_dict.items():
-                    if field == "CURRENCY":
-                        self.currency_per_isin_market[(isin, mkt)] = value
-                self.etfs_by_market[mkt].append(isin)
+        )
 
     def _set_fx_information(self):
         for (isin, mkt), currency in self.currency_per_isin_market.items():
@@ -262,7 +253,7 @@ class CreditPriceEngine(BasePriceEngine):
                         snapshot_time=snapshot_time,
                         # fallbacks=[{"source": "bloomberg"}]
                     )
-                    hist_prices.append(self.fx_prices)
+                    # hist_prices.append(self.fx_prices)
 
                 case InstrumentType.CDXINDEX:
                     hist_prices.append(self.API.market.get_daily_cdx(self.start_date, self.end, id=ids))
@@ -295,7 +286,7 @@ class CreditPriceEngine(BasePriceEngine):
         self.fx_forward = self.API.info.get_fx_composition(self.all_etf_isin, fx_fxfwrd="fxfwrd")
 
         self.fx_list = set(f"EUR{ccy}" for ccy in self.fx_composition.columns.to_list()
-                           + self.fx_forward.columns.to_list())
+                           + self.fx_forward.columns.to_list() if ccy != 'EUR')
 
         self.fx_forward_prices = self.API.market.get_daily_fx_forward(
             quoted_currency=self.fx_forward.columns.tolist(),
@@ -397,7 +388,7 @@ class CreditPriceEngine(BasePriceEngine):
                 s.get("last_error") == "BAD_SEC"]
 
     def _is_failure_rate_acceptable(self, failed: list[str]) -> bool:
-        return bool(self.instruments_list) and len(failed) / len(self.instruments_list) < _MAX_FAILED_RATIO
+        return bool(self.all_instruments) and len(failed) / len(self.all_instruments) < _MAX_FAILED_RATIO
 
     # ── Pricing models ────────────────────────────────────────────────────────
 
