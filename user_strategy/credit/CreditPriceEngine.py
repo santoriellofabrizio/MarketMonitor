@@ -10,8 +10,6 @@ from dateutil.utils import today
 import datetime as dt
 from time import sleep as sleep_time
 
-from questionary import autocomplete
-from setuptools.command.easy_install import current_umask
 from sfm_data_provider.analytics.adjustments import Adjuster, SpecialtyEtfCarryComponent
 from sfm_data_provider.analytics.adjustments.dividend import DividendComponent
 from sfm_data_provider.analytics.adjustments.fx_forward_carry import FxForwardCarryComponent
@@ -21,9 +19,9 @@ from sfm_data_provider.analytics.adjustments.ter import TerComponent
 from sfm_data_provider.analytics.adjustments.ytm import YtmComponent
 from sfm_data_provider.core.enums.instrument_types import InstrumentType
 from sfm_data_provider.core.holidays.holiday_manager import HolidayManager
-from sfm_data_provider.core.instruments.instrument_factory import InstrumentFactory
+
 from sfm_data_provider.core.instruments.instruments import Instrument
-from sfm_data_provider.core.requests.subscriptions import BloombergSubscriptionBuilder
+
 from sfm_data_provider.interface.bshdata import BshData
 from market_monitor.utils.book import CompositeBook
 
@@ -68,8 +66,7 @@ class CreditPriceEngine(BasePriceEngine):
         self.API = BshData(r"C:\AFMachineLearning\Libraries\MarketMonitor\etc\config\bshdata_config.yaml")
         self.db_path = kwargs["sql_db_fi_file"]
         self.book_filter = SpreadEWMA(**kwargs.pop("book_filter_params", {}))
-        self.live_book_etf = CompositeBook(default_method="best_bid_ask").add_filter(self.book_filter)
-        self.live_book = CompositeBook()
+        self.live_book = CompositeBook(default_method="best_bid_ask").add_filter(self.book_filter)
 
         super().__init__(*args, **kwargs)
 
@@ -148,13 +145,13 @@ class CreditPriceEngine(BasePriceEngine):
 
         self.book_mid = pd.Series(index=self.all_instruments, dtype=float)
 
-        live_sub = SubscriptionHelper(self.API, self.global_subscription_service, self.live_book_etf)
+        live_sub = SubscriptionHelper(self.API, self.global_subscription_service)
         for inst in self.factored_instruments:
             match inst.type:
                 case InstrumentType.ETP:
                     for m in ["IM", "FP", "NA"]:
                         if inst.isin not in self.etfs_by_market[m]: continue
-                        currency = self.etfs_by_market[m].get(inst.isin, "EUR")
+                        currency = self.currency_per_isin_market.get((m, inst.isin), "EUR")
                         id = live_sub.subscribe_instrument(inst,
                                                            'bloomberg',
                                                            ['BID', 'ASK'],
@@ -162,17 +159,16 @@ class CreditPriceEngine(BasePriceEngine):
                                                            currency=currency,
                                                            market=m)
 
-                        self.live_book_etf.register(sub_id=id, instr_id=id, market=m, currency=currency)
-
                 case InstrumentType.FUTURE:
-                    live_sub.subscribe_instrument(inst, 'bloomberg', ['BID', 'ASK'], {"option": 1})
+                    id = live_sub.subscribe_instrument(inst, 'bloomberg', ['BID', 'ASK'], {"option": 1})
 
                 case InstrumentType.CURRENCY:
-                    live_sub.subscribe_instrument(inst, 'bloomberg', ['BID', 'ASK'], {"option": 1})
+                    id = live_sub.subscribe_instrument(inst, 'bloomberg', ['BID', 'ASK'], {"option": 1})
 
                 case _:
-                    live_sub.subscribe_instrument(inst, 'bloomberg', ['LAST_PRICE'], {"option": 1})
+                    id = live_sub.subscribe_instrument(inst, 'bloomberg', ['LAST_PRICE'], {"option": 1})
 
+        self.live_book_etf.register(sub_id=id, instr_id=id, market=m, currency=currency)
     # ── Historical data ───────────────────────────────────────────────────────
 
     def _fetch_market_prices(self, snapshot_time) -> None:

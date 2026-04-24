@@ -1,15 +1,13 @@
 from typing import List, Optional, Union, Literal, TypeVar, Dict, Any
 
-from PyQt5.QtQml import kwargs
-from _pytest._code import source
 from sfm_data_provider.core.enums.instrument_types import InstrumentType
 from sfm_data_provider.core.instruments.instruments import Instrument
 from sfm_data_provider.core.requests.subscriptions import BloombergSubscriptionBuilder
 from sfm_data_provider.interface.bshdata import BshData
+from sfm_return_adjustments_lib import Instruments
 
-from InstrumentsApp.models import Instruments
 from market_monitor.live_data_hub.subscription_service import SubscriptionService
-from market_monitor.utils.book import CompositeBook
+
 
 _SOURCES = {'kafka', 'bloomberg', 'redis'}
 
@@ -23,22 +21,22 @@ _KAFKA_MARKET_TOPICS = {
     InstrumentType.FUTURE: {"XEUR": 'BookBest', 'XCBT': 'BookBest'}
 }
 
-available_sources = TypeVar[Literal['kafka', 'bloomberg', 'redis']]
+AvailableSources = Literal['kafka', 'bloomberg', 'redis']
+T = TypeVar('T', bound=AvailableSources)
 
 
 class SubscriptionHelper:
 
-    def __init__(self, api: BshData, subscription_service: SubscriptionService, composite_book: CompositeBook) -> None:
+    def __init__(self, api: BshData, subscription_service: SubscriptionService) -> None:
         self.api = api
         self.subscription_service = subscription_service
         self._rules = _DEFAULT_TYPE_MARKET_SOURCES
-        self._composite_book = composite_book
         self._bbg_builder = BloombergSubscriptionBuilder.build_subscription
 
     def subscribe_by_market(self, market: str,
                             instruments: List[Instruments],
                             fields: Union[List[str], Dict[str, str]],
-                            preferable_source: Optional[available_sources] = 'kafka',
+                            preferable_source: Optional[T] = 'kafka',
                             **kwargs) -> None:
 
         for instrument in instruments:
@@ -63,7 +61,7 @@ class SubscriptionHelper:
 
     def set_rule(self, instrument_type: Union[InstrumentType, str],
                  market: str,
-                 source: available_sources) -> None:
+                 source: T) -> None:
         self._rules[instrument_type][market] = source
 
     def subscribe_kafka(
@@ -88,12 +86,13 @@ class SubscriptionHelper:
     def subscribe_instrument(
             self,
             instrument: Instrument,
-            source: available_sources,
+            source: AvailableSources,
             fields: Optional[List[str]] = None,
             params: Optional[Dict[str, Any]] = None,
             subscription_string: Optional[str] = None,
             market: str = 'GenericMarket',
             currency: str = 'GenericCurrency',
+            **kwargs
     ) -> str:
 
         market = market or instrument.market
@@ -119,5 +118,4 @@ class SubscriptionHelper:
                                                                      or {"BID": "bidBestLevel.price",
                                                                          "ASK": "askBestLevel.price"})
 
-        self._composite_book.register(id_sub, instrument.id, market, currency)
         return id_sub
