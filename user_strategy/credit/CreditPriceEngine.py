@@ -24,9 +24,10 @@ from sfm_data_provider.core.instruments.instrument_factory import InstrumentFact
 from sfm_data_provider.core.instruments.instruments import Instrument
 from sfm_data_provider.core.requests.subscriptions import BloombergSubscriptionBuilder
 from sfm_data_provider.interface.bshdata import BshData
+from market_monitor.utils.book import CompositeBook
 
 from market_monitor.utils.book_utils import SpreadEWMA
-from user_strategy.utils.BasePriceEngine import BasePriceEngine
+from user_strategy.strategy_templates.BasePriceEngine import BasePriceEngine
 from user_strategy.utils.InputParamsFIQuoting import InputParamsFIQuoting
 from user_strategy.utils.pricing_models.PricingModel import (
     ClusterPricingModel, DriverPricingModel,
@@ -35,7 +36,6 @@ from user_strategy.utils.pricing_models.PricingModel import (
 )
 from user_strategy.utils.pricing_models.PricingModelRegistry import PricingModelRegistry
 from user_strategy.utils.pricing_models.IRPManager import IRPManager
-from user_strategy.utils.enums import TICK_SIZE
 
 _RETRY_MARKETS = ("NA", "FP")
 _MAX_FAILED_RATIO = 1 / 100
@@ -88,9 +88,7 @@ class CreditPriceEngine(BasePriceEngine):
             self.instruments_by_type[inst.type].append(inst)
             self.factored_instruments.append(inst)
             self.API.market.register(inst)
-            print(f"\rBuilding {i}/{total} inst. | {'█' * (i * 20 // total):20} | {i / total:>4.0%}", end="", flush=True)
-
-        a = 0
+            print(f"\rBuilding {i}/{total} inst. | {'█' * (i * 20 // total):20} | {i / total:>4.0%}", end="",flush=True)
 
     def _load_etf_universe_from_oracle(self):
 
@@ -149,10 +147,9 @@ class CreditPriceEngine(BasePriceEngine):
                 "MAPPING_INSTRUMENT_ID"].to_dict()
 
     def _setup_live_book(self) -> None:
-        from user_strategy.utils.live_book import LiveBook
 
         # ETF book: sub_id is "{mkt}:{isin}", instrument_id is isin
-        self.live_book_etf = LiveBook(default_method="best_bid_ask")
+        self.live_book_etf = CompositeBook(default_method="best_bid_ask")
         for mkt, etfs in self.etfs_by_market.items():
             for isin in etfs:
                 self.live_book_etf.register(
@@ -169,7 +166,7 @@ class CreditPriceEngine(BasePriceEngine):
             if i.id not in self.all_etf_isin
         }
         self.live_book = (
-            LiveBook()
+            CompositeBook()
             .register_from_instruments(non_etf_instruments)
         )
 
@@ -197,7 +194,7 @@ class CreditPriceEngine(BasePriceEngine):
                                                                          f"{isin} {mkt} EQUITY",
                                                                          ["BID", "ASK"],
                                                                          {"interval": 1})
-                    self.market_data.set_currency_for_id(f"{mkt}:{isin}", "EUR") #TODO aggiugni currency bloomberg
+                    self.market_data.set_currency_for_id(f"{mkt}:{isin}", "EUR")  #TODO aggiugni currency bloomberg
                 else:
                     self.global_subscription_service.subscribe_kafka(id=isin,
                                                                      symbol_filter=isin,
@@ -265,7 +262,7 @@ class CreditPriceEngine(BasePriceEngine):
                         id=self.fx_list, start=self.start_date, end=self.end,
                         snapshot_time=snapshot_time,
                         # fallbacks=[{"source": "bloomberg"}]
-                        )
+                    )
                     hist_prices.append(self.fx_prices)
 
                 case InstrumentType.CDXINDEX:
@@ -299,12 +296,16 @@ class CreditPriceEngine(BasePriceEngine):
         self.fx_forward = self.API.info.get_fx_composition(self.all_etf_isin, fx_fxfwrd="fxfwrd")
 
         self.fx_list = set(f"EUR{ccy}" for ccy in self.fx_composition.columns.to_list()
-                                                  + self.fx_forward.columns.to_list())
+                           + self.fx_forward.columns.to_list())
 
         self.fx_forward_prices = self.API.market.get_daily_fx_forward(
             quoted_currency=self.fx_forward.columns.tolist(),
             start=self.start_date, end=self.end,
         )
+
+        self.reference_tick_size = self.API.info.get_etp_fields(
+            isin=self.all_etf_isin, fields=["REFERENCE_TICK_SIZE"], source="bloomberg",
+        )["REFERENCE_TICK_SIZE"].to_dict()
 
     def _apply_overrides(self) -> None:
         self.fx_composition = self.API.info.get_fx_composition(self.all_etf_isin, fx_fxfwrd='fx')
@@ -485,7 +486,7 @@ class CreditPriceEngine(BasePriceEngine):
             ("th_live_credit_futures_ir_price", "th live ir credit futures price", False, True),
         ]:
             prices = self.models.get_prices(name)
-            if do_round: prices = round_series_to_tick(prices, TICK_SIZE)
+            if do_round: prices = round_series_to_tick(prices, self.reference_tick_size)
             if dropna:   prices = prices.dropna()
             export(key, prices, skip_if_unchanged=True)
 
