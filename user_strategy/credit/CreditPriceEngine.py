@@ -1,22 +1,15 @@
-import logging
 import sqlite3
-from collections import deque, defaultdict
-from typing import Set, Literal
-from unittest import case
+from collections import defaultdict
+from typing import Set
 
 import pandas as pd
-from PyQt5.uic.Compiler.qtproxies import LiteralProxyClass
+
 from dateutil.utils import today
 import datetime as dt
 from time import sleep as sleep_time
 
-from sfm_data_provider.analytics.adjustments import Adjuster, SpecialtyEtfCarryComponent
-from sfm_data_provider.analytics.adjustments.dividend import DividendComponent
-from sfm_data_provider.analytics.adjustments.fx_forward_carry import FxForwardCarryComponent
-from sfm_data_provider.analytics.adjustments.fx_spot import FxSpotComponent
-from sfm_data_provider.analytics.adjustments.repo import RepoComponent
-from sfm_data_provider.analytics.adjustments.ter import TerComponent
-from sfm_data_provider.analytics.adjustments.ytm import YtmComponent
+from sfm_data_provider.analytics.adjustments import Adjuster, TerComponent, FxSpotComponent, FxForwardCarryComponent, \
+    DividendComponent, YtmComponent, RepoComponent
 from sfm_data_provider.core.enums.instrument_types import InstrumentType
 from sfm_data_provider.core.holidays.holiday_manager import HolidayManager
 
@@ -97,7 +90,6 @@ class CreditPriceEngine(BasePriceEngine):
             self.factored_instruments.append(inst)
             self.instruments_by_type[inst.type].append(inst)
             self.factored_instruments.append(inst)
-            self.API.market.register(inst, )
             print(f"\rBuilding {i}/{total} inst. | {'█' * (i * 20 // total):20} | {i / total:>4.0%}", end="",
                   flush=True)
 
@@ -144,7 +136,6 @@ class CreditPriceEngine(BasePriceEngine):
     def on_market_data_setting(self) -> None:
 
         self.book_mid = pd.Series(index=self.all_instruments, dtype=float)
-
         live_sub = SubscriptionHelper(self.API, self.global_subscription_service)
         for inst in self.factored_instruments:
             match inst.type:
@@ -158,17 +149,20 @@ class CreditPriceEngine(BasePriceEngine):
                                                            {"option": 1},
                                                            currency=currency,
                                                            market=m)
+                        self.live_book.register(sub_id=id, instr_id=inst.id, currency=inst.currency, market=m)
 
                 case InstrumentType.FUTURE:
                     id = live_sub.subscribe_instrument(inst, 'bloomberg', ['BID', 'ASK'], {"option": 1})
+                    self.live_book.register(sub_id=id, instr_id=inst.id, currency=inst.currency)
 
                 case InstrumentType.CURRENCY:
                     id = live_sub.subscribe_instrument(inst, 'bloomberg', ['BID', 'ASK'], {"option": 1})
+                    self.live_book.register(sub_id=id, instr_id=inst.id)
 
                 case _:
                     id = live_sub.subscribe_instrument(inst, 'bloomberg', ['LAST_PRICE'], {"option": 1})
+                    self.live_book.register(sub_id=id, instr_id=inst.id)
 
-        self.live_book_etf.register(sub_id=id, instr_id=id, market=m, currency=currency)
     # ── Historical data ───────────────────────────────────────────────────────
 
     def _fetch_market_prices(self, snapshot_time) -> None:
@@ -288,20 +282,20 @@ class CreditPriceEngine(BasePriceEngine):
         self.live_book_etf.update(raw_book.reindex(etf_sub_ids))
         self.book_mid.update(
             self.live_book_etf.agg(by=["MARKET", "CURRENCY"])
-                              .get_field(["BID", "ASK"], best_bid_ask)
-                              .as_series()
+            .get_field(["BID", "ASK"], best_bid_ask)
+            .as_series()
         )
 
     def _update_non_etf_mids(self) -> None:
         """Aggiorna book_mid per i non-ETF usando mid oppure LAST_PRICE come fallback."""
         last_book = self.market_data.get_data_field(field=["BID", "ASK", "LAST_PRICE"])
-        non_etfs  = last_book.loc[~last_book.index.isin(self.all_etf_isin)]
+        non_etfs = last_book.loc[~last_book.index.isin(self.all_etf_isin)]
         self.live_book.update(non_etfs[["BID", "ASK"]])
         non_etfs_mid = (
             self.live_book.agg(by=["MARKET", "CURRENCY"])
-                          .get_field(["BID", "ASK"], best_bid_ask)
-                          .as_series()
-                          .combine_first(non_etfs["LAST_PRICE"])
+            .get_field(["BID", "ASK"], best_bid_ask)
+            .as_series()
+            .combine_first(non_etfs["LAST_PRICE"])
         )
         self.book_mid.update(non_etfs_mid)
 
@@ -316,33 +310,8 @@ class CreditPriceEngine(BasePriceEngine):
             self.models.set_returns_source(name, self.corrected_returns)
 
     def wait_for_book_initialization(self) -> bool:
-        return dt.datetime.today().time() > dt.time(9, 5) and self._initialize_bloomberg_subscriptions()
+        return dt.datetime.today().time() > dt.time(9, 5)
 
-    def _initialize_bloomberg_subscriptions(self) -> bool:
-        self._wait_pending_subscriptions()
-        self._retry_failed_subscriptions()
-        return self._is_failure_rate_acceptable(self._collect_bad_sec_isins())
-
-    def _wait_pending_subscriptions(self) -> None:
-        while self.market_data.get_pending_subscriptions("bloomberg"):
-            sleep_time(1)
-
-    def _retry_failed_subscriptions(self) -> None:
-        failed = {s.get("id") for s in self.global_subscription_service.get_failed_subscriptions() if
-                  s.get("id") in self.all_etf_isin}
-        for sub in failed:
-            self.global_subscription_service.unsubscribe(sub, 'bloomberg')
-        for market in _RETRY_MARKETS:
-            for isin in failed:
-                self.global_subscription_service.subscribe_bloomberg(isin, f"{isin} {market} EQUITY", ["BID", "ASK"])
-            sleep_time(5)
-
-    def _collect_bad_sec_isins(self) -> list[str]:
-        return [s.get("id") for s in self.global_subscription_service.get_failed_subscriptions() if
-                s.get("last_error") == "BAD_SEC"]
-
-    def _is_failure_rate_acceptable(self, failed: list[str]) -> bool:
-        return bool(self.all_instruments) and len(failed) / len(self.all_instruments) < _MAX_FAILED_RATIO
 
     # ── Pricing models ────────────────────────────────────────────────────────
 

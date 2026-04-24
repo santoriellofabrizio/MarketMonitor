@@ -1,5 +1,7 @@
 from typing import List, Optional, Union, Literal, TypeVar, Dict, Any
 
+from attr.validators import is_callable
+from dateutil.utils import today
 from sfm_data_provider.core.enums.instrument_types import InstrumentType
 from sfm_data_provider.core.instruments.instruments import Instrument
 from sfm_data_provider.core.requests.subscriptions import BloombergSubscriptionBuilder
@@ -104,6 +106,8 @@ class SubscriptionHelper:
         id_sub = f"{market}:{instrument.id}:{currency}"
         if source == "bloomberg":
             subscription_string = subscription_string or BloombergSubscriptionBuilder.build_subscription(instrument)
+            if callable(subscription_string):
+                subscription_string = subscription_string(current_date=today())
             self.subscription_service.subscribe_bloomberg(id=id_sub,
                                                           subscription_string=subscription_string,
                                                           fields=fields,
