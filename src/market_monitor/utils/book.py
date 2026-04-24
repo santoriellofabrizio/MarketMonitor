@@ -28,6 +28,7 @@ _COL_MKT   = "_MARKET"
 _COL_CCY   = "_CURRENCY"
 
 _DIM_TO_COL: dict[str, str] = {"MARKET": _COL_MKT, "CURRENCY": _COL_CCY}
+_ALL_DIMS: list[str] = list(_DIM_TO_COL.keys())  # canonical order kept by _by_keep
 
 
 # ── Aggregation rules ─────────────────────────────────────────────────────────
@@ -139,21 +140,20 @@ class BookResult:
     """
     Immutable result of CompositeBook.agg(by=...).get_data(...).
 
-    Carries aggregated prices and the `by` dimensions used, so it can
-    produce the right output shape and a BookSnapshot compatible with
-    BookStorage / TradeManager.
+    ``_by`` holds the dimensions that were KEPT (not collapsed), which determines
+    the tuple key structure of the result.
 
     Keys are always tuples:
-        by=[]              → ("IE00B",)
-        by=["CURRENCY"]    → ("IE00B", "EUR")
-        by=["MARKET"]      → ("IE00B", "IM")
-        by=["MARKET","CURRENCY"] → ("IE00B", "IM", "EUR")
+        agg(by=["MARKET","CURRENCY"]) → ("IE00B",)               — fully aggregated
+        agg(by=["MARKET"])            → ("IE00B", "EUR")          — currency kept
+        agg(by=["CURRENCY"])          → ("IE00B", "IM")           — market kept
+        agg(by=[])                    → ("IE00B", "IM", "EUR")    — no aggregation
     """
 
-    def __init__(self, data: pd.Series, by: list[str]) -> None:
+    def __init__(self, data: pd.Series, by_keep: list[str]) -> None:
         # data: Series whose index values are tuples
         self._data = data
-        self._by = by  # e.g. ["CURRENCY"] or ["MARKET", "CURRENCY"]
+        self._by = by_keep  # dimensions KEPT: e.g. [] or ["CURRENCY"] or ["MARKET", "CURRENCY"]
 
     # ── Conversion ────────────────────────────────────────────────────────────
 
@@ -251,6 +251,9 @@ class BookQuery:
     """
     Pending query produced by CompositeBook.agg(by=[...]).
 
+    ``by`` lists the dimensions to **collapse** (aggregate out).
+    Dimensions NOT listed are kept as extra tuple levels in the result key.
+
     Call .get_data() to execute and obtain a BookResult.
     """
 
@@ -261,7 +264,8 @@ class BookQuery:
                 f"Unknown dimension(s) {unknown}. Valid: {list(_DIM_TO_COL)}"
             )
         self._book = book
-        self._by = by  # already upper-cased by CompositeBook.agg()
+        self._by_collapse = by  # dimensions to aggregate out (upper-cased by agg())
+        self._by_keep = [d for d in _ALL_DIMS if d not in by]  # dims that stay in the key
 
     def get_data(
         self,
@@ -282,13 +286,13 @@ class BookQuery:
         """
         book = self._book._clean_book
         if book is None or book.empty:
-            return BookResult(pd.Series(dtype=float), self._by)
+            return BookResult(pd.Series(dtype=float), self._by_keep)
 
         if securities is not None:
             book = book[book[_COL_INSTR].isin(securities)]
 
         if book.empty:
-            return BookResult(pd.Series(dtype=float), self._by)
+            return BookResult(pd.Series(dtype=float), self._by_keep)
 
         # FX conversion to EUR (applied after filters)
         if fx_rate is not None:
@@ -299,8 +303,8 @@ class BookQuery:
                 book = book.copy()
                 book[bid_ask] = book[bid_ask].multiply(rates, axis=0)
 
-        # Build groupby key: tuple of (instr_id, [market], [currency])
-        key_cols = [_COL_INSTR] + [_DIM_TO_COL[d] for d in self._by]
+        # Build groupby key: (instr_id, [kept dims])
+        key_cols = [_COL_INSTR] + [_DIM_TO_COL[d] for d in self._by_keep]
         by_series = book[key_cols].apply(tuple, axis=1)
 
         # Select and run aggregation rule
@@ -315,7 +319,7 @@ class BookQuery:
         except KeyError:
             result = pd.Series(dtype=float)
 
-        return BookResult(result, self._by)
+        return BookResult(result, self._by_keep)
 
 
 # ── CompositeBook ─────────────────────────────────────────────────────────────
@@ -387,19 +391,24 @@ class CompositeBook:
     5. Querying — agg / get_data / BookResult
     ------------------------------------------
 
-        # aggregate over all markets and currencies → one mid per ISIN
+        ``by`` lists dimensions to COLLAPSE.  Dims NOT listed are kept in the key.
+
+        # no aggregation → key (ISIN, market, currency) per subscription group
         result = book.agg(by=[]).get_data()
 
-        # keep currency as separate dimension → one mid per (ISIN, currency)
+        # collapse market → key (ISIN, currency)
+        result = book.agg(by=["MARKET"]).get_data()
+
+        # collapse currency → key (ISIN, market)
         result = book.agg(by=["CURRENCY"]).get_data()
 
-        # keep both → one mid per (ISIN, market, currency)
+        # fully aggregate → one mid per ISIN (scalar)
         result = book.agg(by=["MARKET", "CURRENCY"]).get_data()
 
-        # filter to a subset and convert non-EUR to EUR
+        # filter to a subset and convert non-EUR to EUR before aggregating
         fx = {"EUR": 1.0, "USD": 0.92, "GBP": 1.16}
         result = (
-            book.agg(by=[])
+            book.agg(by=["MARKET", "CURRENCY"])
                 .get_data(securities=my_isin_list, fx_rate=fx, method="best_bid_ask")
         )
 
@@ -407,21 +416,23 @@ class CompositeBook:
     -----------------------
 
         result.as_series()
-        # by=[]           → pd.Series indexed by instr_id
-        # by=["CURRENCY"] → pd.Series with MultiIndex (instr_id, currency)
+        # agg(by=["MARKET","CURRENCY"]) → pd.Series indexed by instr_id
+        # agg(by=["MARKET"])            → MultiIndex (instr_id, currency)
+        # agg(by=[])                    → MultiIndex (instr_id, market, currency)
 
         result.as_df()
-        # by=[]           → single-column DataFrame
-        # by=["CURRENCY"] → DataFrame with instr_id rows × currency columns
+        # agg(by=["MARKET","CURRENCY"]) → single-column DataFrame
+        # agg(by=["MARKET"])            → instr_id rows × currency columns
 
         result.as_dict()
         # → {("IE00B", "EUR"): 99.5, ("IE00B", "USD"): 98.2, ...}
 
         result.as_snapshot()
         # → BookSnapshot compatible with BookStorage.append() and TradeManager
-        # by=[]           → {instr_id: FairvaluePrice.scalar(...)}
-        # by=["CURRENCY"] → {instr_id: FairvaluePrice.by_currency(...)}
-        # by=["MARKET"]   → {instr_id: FairvaluePrice.by_market(...)}
+        # agg(by=["MARKET","CURRENCY"]) → {instr_id: FairvaluePrice.scalar(...)}
+        # agg(by=["MARKET"])            → {instr_id: FairvaluePrice.by_currency(...)}
+        # agg(by=["CURRENCY"])          → {instr_id: FairvaluePrice.by_market(...)}
+        # agg(by=[])                    → {instr_id: FairvaluePrice.by_currency(...)}
 
         # typical usage with BookStorage
         book_storage.append(result.as_snapshot())
@@ -562,16 +573,15 @@ class CompositeBook:
 
     def agg(self, by: list[str]) -> BookQuery:
         """
-        Define groupby dimensions and return a BookQuery.
+        Define which dimensions to collapse and return a BookQuery.
 
         Parameters
         ----------
-        by : extra dimensions to keep distinct beyond instr_id.
-             Valid values: "MARKET", "CURRENCY" (case-insensitive).
-             []                 → one row per instr_id
-             ["CURRENCY"]       → one row per (instr_id, currency)
-             ["MARKET"]         → one row per (instr_id, market)
-             ["MARKET","CURRENCY"] → one row per (instr_id, market, currency)
+        by : dimensions to aggregate out.  Valid: "MARKET", "CURRENCY" (case-insensitive).
+             []                    → no aggregation → key (instr_id, market, currency)
+             ["MARKET"]            → collapse market → key (instr_id, currency)
+             ["CURRENCY"]          → collapse currency → key (instr_id, market)
+             ["MARKET","CURRENCY"] → fully aggregate → key (instr_id,)
         """
         return BookQuery(self, [d.upper() for d in by])
 
