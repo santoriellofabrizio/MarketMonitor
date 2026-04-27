@@ -365,6 +365,8 @@ class CreditPriceEngine(BasePriceEngine):
         for failed_sub in self.global_subscription_service.get_failed_subscriptions():
             if failed_sub['source'] == 'bloomberg':
                 id = failed_sub["id"]
+                if failed_sub["last_error"] in ["CANCELLED"]:
+                    continue
                 try:
                     market, isin, currency = id.split(":")
                 except Exception:
@@ -375,7 +377,6 @@ class CreditPriceEngine(BasePriceEngine):
                                                                      subscription_string=f"{ticker} {market} EQUITY",
                                                                      fields=["BID", "ASK"],
                                                                      params={"interval": 1})
-
         while not dt.datetime.today().time() > _BOOK_READY_TIME:
             return False
 
