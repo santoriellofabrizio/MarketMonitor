@@ -48,10 +48,24 @@ class LinearPricingModel(PricingModel, ABC):
                  *args, **kwargs):
         super().__init__(returns, *args, **kwargs)
         self.beta = beta
-        self.beta_sparse = csr_matrix(
-            self.beta)
+        self.beta_sparse = csr_matrix(self.beta)
         self.target_variables = beta.index.tolist()
         self.regressor = beta.columns.tolist()
+
+    def set_beta(self, beta: pd.DataFrame) -> None:
+        self.beta = beta
+        self.beta_sparse = csr_matrix(beta)
+        self.target_variables = beta.index.tolist()
+        self.regressor = beta.columns.tolist()
+        if hasattr(self, "theoretical_price"):
+            new_idx = beta.index.difference(self.theoretical_price.index)
+            if not new_idx.empty:
+                self.theoretical_price = pd.concat(
+                    [self.theoretical_price, pd.Series(dtype=float, index=new_idx)]
+                )
+
+    def set_cluster_correction(self, correction: pd.Series) -> None:
+        pass
 
     def declare_instruments(self) -> set:
         return set(self.target_variables + self.regressor)
@@ -76,28 +90,37 @@ class MultiPeriodLinearPricingModel(LinearPricingModel, ABC):
         self.forecast_aggregator = forecast_aggregator or EwmaOutlier(5, 3)
 
     def make_matrix_mult(self, returns: pd.DataFrame, *args, **kwargs) -> pd.DataFrame:
+        available_regressors = [r for r in self.regressor if r in returns.columns]
+        missing_regressors   = [r for r in self.regressor if r not in returns.columns]
 
-        missing_regressors = set(self.regressor) - set(returns.columns)
+        # Drop only targets whose prediction *actually* depends on a missing regressor.
+        # Targets whose beta is zero for every missing column are still fully computable.
+        active_targets = list(self.target_variables)
         if missing_regressors:
-            logging.warning(f"missing regressor: {missing_regressors}")
+            blocked = self.beta[missing_regressors].ne(0).any(axis=1)
+            blocked_targets = blocked[blocked].index.tolist()
+            if blocked_targets:
+                logging.warning(
+                    f"{len(blocked_targets)} targets partially unavailable "
+                    f"(non-zero beta on missing regressors {missing_regressors}): {blocked_targets}"
+                )
+            active_targets = [t for t in active_targets if t not in blocked_targets]
 
         missing_dates = set(self.timestamps) - set(returns.index)
         if missing_dates:
             logging.warning(f"missing dates: {missing_dates}")
 
-        missing_etfs = set(self.target_variables) - set(returns.columns)
-        if missing_etfs:
-            logging.warning(f"missing etfs: {missing_etfs}")
-            for m in missing_etfs:
-                self.target_variables.remove(m)
-                self.beta.drop(m, inplace=True)
+        if not active_targets or not available_regressors:
+            return pd.DataFrame(index=self.timestamps, columns=[], dtype=float)
 
-        returns = returns.loc[self.timestamps, self.regressor].T
-        self.beta_sparse = csr_matrix(self.beta[self.regressor])
-        predictions = pd.DataFrame(
-            self.beta_sparse.dot(returns.values.astype(float)),
+        beta_active   = self.beta.loc[active_targets, available_regressors]
+        returns_slice = returns.reindex(index=self.timestamps, columns=available_regressors).T
+        beta_sparse   = csr_matrix(beta_active.values.astype(float))
+        predictions   = pd.DataFrame(
+            beta_sparse.dot(returns_slice.values.astype(float)),
             columns=self.timestamps,
-            index=self.beta.index
+            index=active_targets,
+            dtype=float,
         )
         return predictions.T
 
@@ -149,6 +172,9 @@ class ClusterPricingModel(MultiPeriodLinearPricingModel):
         self.cluster_correction = cluster_correction
         self.theoretical_price.name = name
 
+    def set_cluster_correction(self, correction: pd.Series) -> None:
+        self.cluster_correction = correction
+
     def predict_prices(self,
                        prices: pd.DataFrame,
                        all_returns: pd.DataFrame | None = None,
@@ -158,9 +184,14 @@ class ClusterPricingModel(MultiPeriodLinearPricingModel):
 
         theoretical_live_return = self.predict_returns(all_returns)
 
-        misalignment = (theoretical_live_return - all_returns[theoretical_live_return.columns]) * correction
+        # Use only the targets that make_matrix_mult was able to compute.
+        # Further restrict to those whose actual return is available in all_returns
+        # (needed for the misalignment formula).
+        active = theoretical_live_return.columns.intersection(all_returns.columns)
+        theoretical_live_return = theoretical_live_return[active]
+        misalignment = (theoretical_live_return - all_returns[active]) * correction
         self.last_misalignment_cluster = misalignment.iloc[-1]
-        all_predictions = (1 + misalignment) * prices[self.target_variables]
+        all_predictions = (1 + misalignment) * prices.reindex(active)
 
         return all_predictions
 
@@ -182,8 +213,9 @@ class DriverPricingModel(MultiPeriodLinearPricingModel):
                        all_returns: pd.DataFrame | None = None, *args) -> pd.DataFrame:
         all_returns = self.returns if all_returns is None else all_returns
         theoretical_live_return = self.predict_returns(all_returns)
-        misalignment = (theoretical_live_return - all_returns[self.target_variables])
-        all_predictions = (1 + misalignment) * book[self.target_variables]
+        active = theoretical_live_return.columns
+        misalignment = (theoretical_live_return - all_returns.reindex(columns=active))
+        all_predictions = (1 + misalignment) * book.reindex(active)
         return all_predictions
 
 

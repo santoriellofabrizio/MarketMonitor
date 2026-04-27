@@ -59,28 +59,20 @@ class BookResult:
     ``_by`` holds the dimensions that were **kept** (not collapsed), which
     determines the tuple-key structure of the result.
 
-    Key shapes:
-        agg(by=["MARKET","CURRENCY"]) → ("IE00B",)            — fully collapsed
-        agg(by=["MARKET"])            → ("IE00B", "EUR")       — currency kept
-        agg(by=["CURRENCY"])          → ("IE00B", "IM")        — market kept
-        agg(by=[])                    → ("IE00B", "IM", "EUR") — nothing collapsed
+    Key shapes (``by`` = dims to keep):
+        agg(by=[])                    → ("IE00B",)            — fully collapsed
+        agg(by=["MARKET"])            → ("IE00B", "IM")       — market kept
+        agg(by=["CURRENCY"])          → ("IE00B", "EUR")      — currency kept
+        agg(by=["MARKET","CURRENCY"]) → ("IE00B", "IM","EUR") — nothing collapsed
     """
 
     def __init__(self, data: pd.Series, by_keep: list[str]) -> None:
         self._data   = data
         self._by     = by_keep  # e.g. [] or ["CURRENCY"] or ["MARKET", "CURRENCY"]
 
-    # ── Conversion ────────────────────────────────────────────────────────────
+    # ── Conversion (use get_field(return_as=...) instead) ────────────────────
 
-    def as_dict(self) -> dict[tuple, float]:
-        """Raw ``{tuple_key: price}`` dict."""
-        return self._data.to_dict()
-
-    def as_series(self) -> pd.Series:
-        """
-        Flat ``pd.Series`` (instr_id index) when no dims are kept;
-        ``MultiIndex`` Series (instr_id, kept_dim, …) otherwise.
-        """
+    def _as_series(self) -> pd.Series:
         if self._data.empty:
             return pd.Series(dtype=float)
         if not self._by:
@@ -99,7 +91,7 @@ class BookResult:
         Single-column DataFrame when no dims are kept;
         pivoted ``(instr_id rows × last-dim columns)`` otherwise.
         """
-        s = self.as_series()
+        s = self._as_series()
         if not self._by:
             return s.to_frame(name="mid")
         return s.unstack(level=-1)
@@ -159,6 +151,18 @@ class BookResult:
         return snapshot
 
 
+def _dispatch(res_obj: "BookResult", return_as: str):
+    if return_as == "series":
+        return res_obj._as_series()
+    if return_as == "dict":
+        return res_obj._data.to_dict()
+    if return_as == "df":
+        return res_obj.as_df()
+    if return_as == "snapshot":
+        return res_obj.as_snapshot()
+    raise ValueError(f"Unknown return_as={return_as!r}. Valid: 'series', 'dict', 'df', 'snapshot'.")
+
+
 # ── BookQuery ─────────────────────────────────────────────────────────────────
 
 class BookQuery:
@@ -188,17 +192,16 @@ class BookQuery:
         agg_function = agg_function or (lambda x: x)
         book_df = self._book._clean_book
 
+        _empty = BookResult(pd.Series(dtype=float), self._by_keep)
         if book_df is None or book_df.empty:
-            return None
+            return _dispatch(_empty, return_as)
 
         if securities is not None:
             book_df = book_df[book_df[_COL_INSTR].isin(securities)]
 
         if book_df.empty:
-            return None
+            return _dispatch(_empty, return_as)
 
-        # --- LOGICA FX SPOSTATA QUI ---
-        # Applichiamo il cambio prima dell'aggregazione se fornito in .agg()
         if self._fx_rate is not None:
             bid_ask = [c for c in ("BID", "ASK") if c in book_df.columns]
             if bid_ask:
@@ -206,7 +209,6 @@ class BookQuery:
                 rates = book_df[_COL_CCY].map(fx).fillna(1.0)
                 book_df = book_df.copy()
                 book_df[bid_ask] = book_df[bid_ask].multiply(rates, axis=0)
-        # ------------------------------
 
         key_cols = [_COL_INSTR] + [_DIM_TO_COL[d] for d in self._by_keep]
         by_series = book_df[key_cols].apply(tuple, axis=1)
@@ -219,15 +221,7 @@ class BookQuery:
         except (KeyError, TypeError):
             result = pd.Series(dtype=float)
 
-        # Gestione del ritorno (BookResult rimane lo stesso)
-        res_obj = BookResult(result, self._by_keep)
-        mapping = {
-            'series': res_obj.as_series,
-            'df': res_obj.as_df,
-            'snapshot': res_obj.as_snapshot,
-            'dict': res_obj.as_dict
-        }
-        return mapping[return_as]()
+        return _dispatch(BookResult(result, self._by_keep), return_as)
 
 
 # ── CompositeBook ─────────────────────────────────────────────────────────────
@@ -270,48 +264,37 @@ class CompositeBook:
         raw = market_data.get_data_field(field=["BID", "ASK"])
         book.update(raw)
 
-    4. Querying — agg / get_field / BookResult
-    -------------------------------------------
+    4. Querying — agg / get_field
+    ------------------------------
 
-        ``by`` = dimensions to COLLAPSE (aggregate out).
+        ``by`` = dimensions to KEEP (not collapsed).  fx_rate required when
+        CURRENCY is collapsed (i.e. not in by).
 
-        # fully aggregate → flat Series indexed by instr_id
+        fx = {"EUR": 1.0, "USD": 0.92, "GBP": 1.16}
+
+        # by=[] → fully collapsed → flat Series indexed by instr_id
+        mid_series = book.agg(by=[], fx_rate=fx).get_field(
+            ["BID","ASK"], best_bid_ask
+        )
+
+        # keep market → (instr_id, market) MultiIndex; no fx needed
+        result = book.agg(by=["MARKET"]).get_field(["BID","ASK"], best_bid_ask)
+
+        # no collapse → (instr_id, market, currency) MultiIndex; no fx needed
         result = book.agg(by=["MARKET","CURRENCY"]).get_field(
             ["BID","ASK"], best_bid_ask
         )
 
-        # collapse only market → (instr_id, currency) MultiIndex
-        result = book.agg(by=["MARKET"]).get_field(["BID","ASK"], best_bid_ask)
-
-        # no collapse → (instr_id, market, currency) MultiIndex
-        result = book.agg(by=[]).get_field(["BID","ASK"], best_bid_ask)
-
-        # single field
-        result = book.agg(by=["MARKET","CURRENCY"]).get_field("BID", "max")
-
-        # custom lambda + FX conversion
-        fx = {"EUR": 1.0, "USD": 0.92}
-        result = (
-            book.agg(by=["MARKET","CURRENCY"])
-                .get_field(["BID","ASK"], best_bid_ask,
-                           securities=my_isins, fx_rate=fx)
+        # return as dict or snapshot
+        result = book.agg(by=[], fx_rate=fx).get_field(
+            ["BID","ASK"], best_bid_ask, return_as="snapshot"
         )
+        book_storage.append(result)
 
-    5. Consuming BookResult
-    -----------------------
-
-        result.as_series()          # flat or MultiIndex pd.Series
-        result.as_df()              # DataFrame (pivoted when dims are kept)
-        result.as_dict()            # {tuple_key: price}
-        result.as_snapshot()        # BookSnapshot for BookStorage / TradeManager
-
-        book_storage.append(result.as_snapshot())
-
-        # combine with LAST_PRICE fallback
+        # combine with LAST_PRICE fallback (fully collapsed, fx required)
         mid = (
-            book.agg(by=["MARKET","CURRENCY"])
+            book.agg(by=[], fx_rate=fx)
                 .get_field(["BID","ASK"], best_bid_ask)
-                .as_series()
                 .combine_first(last_book["LAST_PRICE"])
         )
 
@@ -426,12 +409,19 @@ class CompositeBook:
         ``by`` values: ``"MARKET"``, ``"CURRENCY"`` (case-insensitive).
 
         ``[]``                    → fully collapsed  → key ``(instr_id,)``
-        ``["MARKET"]``            → collapse currency → key ``(instr_id, market) ``
-        ``["CURRENCY"]``          → collapse market  → key ``(instr_id, currency) ``
+        ``["MARKET"]``            → keep market      → key ``(instr_id, market)``
+        ``["CURRENCY"]``          → keep currency    → key ``(instr_id, currency)``
         ``["MARKET","CURRENCY"]`` → nothing collapsed → key ``(instr_id, market, currency)``
+
+        *fx_rate* is required when CURRENCY is being collapsed (not in *by*),
+        because averaging prices across currencies without conversion is meaningless.
+        Pass e.g. ``fx_rate={"EUR": 1.0, "USD": 0.92}``.
         """
-        if fx_rate is None and "CURRENCY" in by:
-            raise ValueError("aggregation by currency requires fx rate")
+        if fx_rate is None and "CURRENCY" not in [d.upper() for d in by]:
+            raise ValueError(
+                "fx_rate is required when CURRENCY is collapsed (not in by). "
+                "Pass e.g. fx_rate={'EUR': 1.0, 'USD': 0.92}."
+            )
         fields_to_collapse = [field for field in {"MARKET", "CURRENCY"} if field not in by]
         return BookQuery(self, [d.upper() for d in fields_to_collapse], fx_rate=fx_rate)
 
