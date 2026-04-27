@@ -10,7 +10,7 @@ from sfm_data_provider.interface.bshdata import BshData
 
 from market_monitor.strategy.common.trade_manager.book_memory import FairvaluePrice
 from market_monitor.strategy.common.trade_manager.flow_detector import FlowDetector
-from user_strategy.utils.TradeAnalysisBase import TradeAnalysisBase
+from user_strategy.strategy_templates.TradeAnalysisBase import TradeAnalysisBase
 
 
 class EtfEquityLiveAnalysis(TradeAnalysisBase):
@@ -21,11 +21,11 @@ class EtfEquityLiveAnalysis(TradeAnalysisBase):
         self.quoting_instances = []
 
         self.API = BshData(config_path=r"C:\AFMachineLearning\Libraries\MarketMonitor\etc\config\bshdata_config.yaml")
-        self.all_isins = self.API.general.get(fields=["etp_isins"],
+        self.all_isins = list(set(self.API.general.get(fields=["etp_isins"],
                                               segments=["IM", "FP", "NA"],
                                               currency="EUR",
                                               underlying="EQUITY",
-                                              source="oracle")["etp_isins"]
+                                              source="oracle")["etp_isins"]))
 
         leverage = self.API.info.get_etp_fields(isin=self.all_isins, source='bloomberg',
                                                 fields="FUND_LEVERAGE")["FUND_LEVERAGE"].to_dict()

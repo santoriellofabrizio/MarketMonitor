@@ -96,7 +96,7 @@ class SubscriptionHelper:
             market: str = 'dummy',
             currency: str = 'dummy',
             **kwargs
-    ) -> str:
+    ):
 
         market = market or instrument.market
         currency = currency or instrument.currency
@@ -104,7 +104,7 @@ class SubscriptionHelper:
         instrument.currency = currency
         instrument.market = market
 
-        id_sub = book_id or f"{market}:{instrument.id}:{currency}"
+        id_sub = book_id
         if source == "bloomberg":
             subscription_string = subscription_string or BloombergSubscriptionBuilder.build_subscription(instrument)
             if callable(subscription_string):
@@ -122,5 +122,3 @@ class SubscriptionHelper:
                                                       fields_mapping=kwargs.get('fields_mapping')
                                                                      or {"BID": "bidBestLevel.price",
                                                                          "ASK": "askBestLevel.price"})
-
-        return id_sub

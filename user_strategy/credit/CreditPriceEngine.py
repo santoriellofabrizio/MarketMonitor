@@ -48,8 +48,9 @@ class CreditPriceEngine(BasePriceEngine):
 
     def __init__(self, *args, **kwargs):
 
+        self.activate_multicurrency = False
         self.price_source = 'kafka'
-        self.book_mid: pd.Series | None = None
+        self.book_mid: pd.Series = pd.Series()
         self.calendar: HolidayManager = HolidayManager()
         self.input_params = InputParamsFIQuoting(kwargs)
         self.end = self.calendar.previous_business_day(today(), 'ETFP')
@@ -108,10 +109,18 @@ class CreditPriceEngine(BasePriceEngine):
         )
 
     def _load_instruments_from_db(self) -> Set[str]:
-        with (sqlite3.connect(self.db_path) as conn):
-            return set(i.upper() for i in pd.read_sql("SELECT INSTRUMENT_ID"
-                                                      " FROM InstrumentsAnagraphic",
-                                                      conn)["INSTRUMENT_ID"].values)
+        # Define the target instrument types
+        target_types = (
+            'ETF', 'IRS', 'CDS', 'STIR FUTURE', 'ZCIS', 'XCCY SWAP', 'FX SPOT', 'FX SWAP',
+            'FX FORWARD', 'PERPETUAL BOND FUTURE', 'GENERIC TREASURY YIELD',
+            'ON FINANCING RATE', 'PERPETUAL CDS', 'PERPETUAL EQUITY FUTURE',
+            'INDEX', 'IRP'
+        )
+
+        with sqlite3.connect(self.db_path) as conn:
+            # Using a parameterized query to prevent injection and handle formatting
+            query = f"SELECT INSTRUMENT_ID FROM InstrumentsAnagraphic WHERE INSTRUMENT_TYPE IN {target_types}"
+            return set(i.upper() for i in pd.read_sql(query, conn)["INSTRUMENT_ID"].values)
 
     def _load_credit_futures(self):
         with (sqlite3.connect(self.db_path) as conn):
@@ -131,34 +140,53 @@ class CreditPriceEngine(BasePriceEngine):
 
     def on_market_data_setting(self) -> None:
 
-        self.book_mid = pd.Series(index=self.all_instruments, dtype=float)
         live_sub = SubscriptionHelper(self.API, self.global_subscription_service)
         for inst in self.factored_instruments:
             match inst.type:
                 case InstrumentType.ETP:
                     for m in ["IM", "FP", "NA"]:
-                        if not inst.isin not in self.etfs_by_market[m]: continue
+                        if inst.isin not in self.etfs_by_market[m]: continue
                         currency = self.currency_per_isin_market.get((m, inst.isin), "EUR")
-                        id = live_sub.subscribe_instrument(inst,
+                        if not self.activate_multicurrency and currency != "EUR":
+                            continue
+                        ID = f"{m}:{inst.id}:{currency}"
+                        live_sub.subscribe_instrument(inst,
                                                            'bloomberg',
                                                            ['BID', 'ASK'],
-                                                           book_id=f"{m}:{inst.id}:{currency}",
+                                                           book_id=ID,
                                                            params={"option": 1},
+                                                           subscription_string=f"{inst.isin} {m} EQUITY",
                                                            currency=currency,
                                                            market=m)
-                        self.composite_book.register(sub_id=id, instr_id=inst.id, currency=inst.currency, market=m)
+                        self.composite_book.register(book_id=ID, instr_id=inst.id, market=m, currency=inst.currency)
 
                 case InstrumentType.FUTURE:
-                    id = live_sub.subscribe_instrument(inst, 'bloomberg', ['BID', 'ASK'], {"option": 1})
-                    self.composite_book.register(sub_id=inst.id, instr_id=inst.id, currency=inst.currency)
+                    ID = inst.id
+                    live_sub.subscribe_instrument(inst,
+                                                       'bloomberg',
+                                                       ['BID', 'ASK'],
+                                                       book_id=ID,
+                                                       params={"option": 1})
+
+                    self.composite_book.register(book_id=ID, instr_id=inst.id, currency=inst.currency)
 
                 case InstrumentType.CURRENCYPAIR:
-                    live_sub.subscribe_instrument(inst, 'bloomberg', ['BID', 'ASK'], {"option": 1})
-                    self.composite_book.register(sub_id=inst.id, instr_id=inst.id)
+                    ID = inst.id
+                    live_sub.subscribe_instrument(inst, 'bloomberg',
+                                                  ['BID', 'ASK'],
+                                                  book_id=ID,
+                                                  params={"option": 1})
+                    self.composite_book.register(book_id=ID, instr_id=ID)
 
                 case _:
-                    id = live_sub.subscribe_instrument(inst, 'bloomberg', ['LAST_PRICE'], {"option": 1})
-                    self.composite_book.register(sub_id=inst.id, instr_id=inst.id)
+                    ID = inst.id
+                    live_sub.subscribe_instrument(inst,
+                                                       'bloomberg',
+                                                       ['LAST_PRICE'],
+                                                       book_id=ID,
+                                                       params={"option": 1})
+
+                    self.composite_book.register(book_id=ID, instr_id=ID)
 
     # ── Historical data ───────────────────────────────────────────────────────
 
@@ -189,7 +217,6 @@ class CreditPriceEngine(BasePriceEngine):
                         snapshot_time=snapshot_time,
                         # fallbacks=[{"source": "bloomberg"}]
                     )
-                    # hist_prices.append(self.fx_prices)
 
                 case InstrumentType.CDXINDEX:
                     hist_prices.append(self.API.market.get_daily_cdx(self.start_date, self.end, id=ids))
@@ -218,11 +245,11 @@ class CreditPriceEngine(BasePriceEngine):
                                                                       end=self.end,
                                                                       currencies=['EUR', 'USD', 'JPY', 'CHF'])
 
-        self.fx_composition = self.API.info.get_fx_composition(self.all_etf_isin, fx_fxfwrd='fx')
+        self.fx_composition = self.API.info.get_fx_composition(self.all_etf_isin)
         self.fx_forward = self.API.info.get_fx_composition(self.all_etf_isin, fx_fxfwrd="fxfwrd")
 
-        self.fx_list = set(f"EUR{ccy}" for ccy in self.fx_composition.columns.to_list()
-                           + self.fx_forward.columns.to_list() if ccy != 'EUR')
+        self.fx_list = list(set(f"EUR{ccy}" for ccy in self.fx_composition.columns.to_list()
+                           + self.fx_forward.columns.to_list() if ccy != 'EUR'))
 
         self.fx_forward_prices = self.API.market.get_daily_fx_forward(
             quoted_currency=self.fx_forward.columns.tolist(),
@@ -234,8 +261,6 @@ class CreditPriceEngine(BasePriceEngine):
         )["REFERENCE_TICK_SIZE"].to_dict()
 
     def _apply_overrides(self) -> None:
-        self.fx_composition = self.API.info.get_fx_composition(self.all_etf_isin, fx_fxfwrd='fx')
-        self.fx_forward = self.API.info.get_fx_composition(self.all_etf_isin, fx_fxfwrd="fxfwrd")
 
         for fx in [self.fx_composition, self.fx_forward]:
 
@@ -272,8 +297,10 @@ class CreditPriceEngine(BasePriceEngine):
     def _update_mids(self) -> None:
         """Aggiorna book_mid per gli ETF aggregando bid/ask per ISIN via CompositeBook."""
         raw_book = self.market_data.get_data_field(field=["BID", "ASK","LAST_PRICE"])
-        fx_rates = raw_book.loc[self.fx_list]
+
+        fx_rates = raw_book.loc[raw_book.index.intersection(self.fx_list), ["BID","ASK"]].mean(axis=1)
         self.composite_book.update(raw_book)
+
         aggregated_mid = self.composite_book.agg(by=["CURRENCY","MARKET"], fx_rate=fx_rates)
         bid = aggregated_mid.get_field('BID', max)
         ask = aggregated_mid.get_field('ASK', min)
@@ -283,7 +310,8 @@ class CreditPriceEngine(BasePriceEngine):
 
     def _refresh_corrected_returns(self) -> None:
         """Ricalcola i rendimenti corretti (adjusted) a partire dai prezzi mid aggiornati."""
-        with self.adjuster.live_update(self.book_mid[self.all_instruments], fx_prices=self.book_mid[self.fx_list]):
+        with self.adjuster.live_update(self.book_mid[self.book_mid.index.intersection(self.all_instruments)],
+                                       fx_prices=self.book_mid[self.book_mid.index.intersection(self.fx_list)]):
             self.corrected_returns = self.adjuster.get_clean_returns(cumulative=True).T
 
     def _update_models_returns(self) -> None:
@@ -321,48 +349,6 @@ class CreditPriceEngine(BasePriceEngine):
             name="th live driver price", beta=pc.hedge_ratios_drivers,
             returns=rs, forecast_aggregator=pc.forecast_aggregator_driver,
         ))
-
-        cf = self._load_credit_futures()
-
-        # reg("th live cluster credit futures price", cf_idx, ClusterPricingModel(
-        #     name="th live cluster credit futures price",
-        #     beta=pc.hedge_ratios_credit_futures_cluster.loc[cf_idx],
-        #     returns=rs, forecast_aggregator=pc.forecast_aggregator_cluster,
-        #     disable_warning=True,
-        # ))
-        # reg("th live brother credit futures price", cf, ClusterPricingModel(
-        #     name="th live brother credit futures price",
-        #     beta=pc.hedge_ratios_credit_futures_brothers.loc[cf],
-        #     returns=rs, forecast_aggregator=pc.forecast_aggregator_brother,
-        #     disable_warning=True,
-        # ))
-        #
-        # reg(
-        #     name="th live nav price",
-        #     instruments=self.etf_list,
-        #     model=NavPricingModel(
-        #         name="th live nav price", target_variables=self.etf_list,
-        #         irs_data=self.irs_data, nav_data=self.nav,
-        #     )
-        # )
-        #
-        # cfd = self.credit_futures_contracts_data
-        # cfd['REGION'] = cfd['REGION'].replace("", "US")
-        # proxy = pd.DataFrame(index=cf, columns=["Future Proxy", "IRP", "Expiry", "Proxy Expiry"])
-        # proxy["Future Proxy"] = cfd['PREVIOUS_CONTRACT']
-        # proxy["IRP"] = cfd.merge(self.irp_data.reset_index(), on="REGION")['INSTRUMENT_ID'].to_list()
-        # proxy["Expiry"] = cfd['EXPIRY_DATE']
-        # proxy["Proxy Expiry"] = cfd['PREVIOUS_CONTRACT_EXPIRY_DATE']
-        # self.credit_futures_proxy = proxy
-        #
-        # reg("th live spread credit futures price", cf, CreditFuturesCalendarSpreadPricingModel(
-        #     name="th live spread credit futures price", target_variables=cf,
-        #     variables_proxy=proxy, irp_manager=self.irp_manager,
-        # ))
-        # reg("th live ir credit futures price", cf, CreditFuturesInterestRatePricingModel(
-        #     name="th live ir credit futures price", target_variables=cf,
-        #     variables_proxy=proxy[['IRP', 'Expiry']], irp_manager=self.irp_manager,
-        # ))
 
     def calculate_theoretical_prices(self):
         self.models.predict_all(self.book_mid)

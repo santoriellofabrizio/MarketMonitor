@@ -333,14 +333,14 @@ class CompositeBook:
 
     def register(
         self,
-        sub_id: str,
+        book_id: str,
         instr_id: str,
         market: str = "dummy",
         currency: str = "dummy",
     ) -> "CompositeBook":
         """Register one subscription. All four arguments are required."""
-        self._sub_to_instr[sub_id]  = instr_id
-        self._sub_metadata[sub_id]  = (market, currency)
+        self._sub_to_instr[book_id]  = instr_id
+        self._sub_metadata[book_id]  = (market, currency)
         return self
 
     def register_from_instruments(self, instruments: dict) -> "CompositeBook":
@@ -350,8 +350,7 @@ class CompositeBook:
         ``instr_obj`` must expose ``.id``, ``.market`` and ``.currency``.
         """
         for sub_id, instr in instruments.items():
-            self.register(sub_id=sub_id, instr_id=instr.id,
-                          market=instr.market, currency=instr.currency)
+            self.register(book_id=sub_id, instr_id=instr.id, market=instr.market, currency=instr.currency)
         return self
 
     # ── Configuration ─────────────────────────────────────────────────────────
@@ -432,7 +431,7 @@ class CompositeBook:
         ``["MARKET","CURRENCY"]`` → fully collapsed  → key ``(instr_id,)``
         """
         if fx_rate is None and "CURRENCY" in by:
-                raise ValueError("aggregation by currency requires fx rate")
+            raise ValueError("aggregation by currency requires fx rate")
         fields_to_collapse = [field for field in {"MARKET", "CURRENCY"} if field not in by]
         return BookQuery(self, [d.upper() for d in fields_to_collapse], fx_rate=fx_rate)
 

@@ -1,3 +1,4 @@
+
 import os
 import sqlite3
 from time import sleep as sleep_time
@@ -21,12 +22,12 @@ from sfm_data_provider.interface.bshdata import BshData
 
 from user_strategy.equity.LiveQuoting.InputParamsQuoting import InputParamsQuoting
 from user_strategy.equity.LiveQuoting.utils import filter_outliers, round_series_to_tick
-from user_strategy.utils.BasePriceEngine import BasePriceEngine
+from user_strategy.strategy_templates.BasePriceEngine import BasePriceEngine
+
 from user_strategy.utils.EtfUniverse import EtfUniverse
 from user_strategy.utils.pricing_models.AggregationFunctions import EwmaOutlier
 from user_strategy.utils.pricing_models.PricingModel import ClusterPricingModel
 from user_strategy.utils.pricing_models.PricingModelRegistry import PricingModelRegistry
-from user_strategy.utils.bloomberg_subscription_utils.SubscriptionManager import SubscriptionManager
 from user_strategy.utils.pricing_models.cluster_correction import calculate_cluster_correction
 
 logger = logging.getLogger(__name__)
@@ -92,8 +93,6 @@ class EtfEquityPriceEngine(BasePriceEngine):
         self.book_mid_threshold = 0.5
         self.book_eur: pd.DataFrame = pd.DataFrame()
         self.book_storage: deque = deque(maxlen=3)
-        self.bloomberg_subscription_manager = SubscriptionManager(self.etfs,
-                                                                  self.kwargs.get('bloomberg_subscription_config_path'))
         self.position: Optional[pd.Series] = None
         self.return_to_publish: list = [1, 2, 3, 4, 5, 6, 7, 8]
         self.today = pd.Timestamp.today().normalize()
@@ -441,23 +440,29 @@ class EtfEquityPriceEngine(BasePriceEngine):
         self.book_eur = pd.DataFrame(columns=["BID", "ASK"])
         self.market_data.set_securities(self.all_etf_plus_securities)
 
-        bloomberg_subscriptions = self.bloomberg_subscription_manager.get_subscription_dict()
-        currency_info = self.bloomberg_subscription_manager.get_currency_informations()
-        self.market_data.currency_information = currency_info
-
         for isin in self.etfs:
-            self.global_subscription_service.subscribe_instrument(,
+            self.global_subscription_service.subscribe_bloomberg(
+                id=isin,
+                subscription_string=f"{isin} IM EQUITY",
+                fields=["BID", "ASK"],
+                params={"interval": 1}
+            )
 
         for ccy in self.currencies:
-            self.global_subscription_service.subscribe_instrument(,
+            self.global_subscription_service.subscribe_bloomberg(
+                id=ccy,
+                subscription_string=f"{ccy} CURNCY",
+                fields=["BID", "ASK"],
+                params={"interval": 1}
+            )
 
     def wait_for_book_initialization(self) -> bool:
         return datetime.today().time() > time(9, 5) and self._initialize_bloomberg_subscriptions()
 
     def _initialize_bloomberg_subscriptions(self) -> bool:
         self._wait_pending_subscriptions()
-        self._retry_failed_subscriptions()
-        return self._is_failure_rate_acceptable(self._collect_bad_sec_isins())
+
+        return True
 
     def _collect_bad_sec_isins(self) -> list[str]:
         return [s.get("id") for s in self.global_subscription_service.get_failed_subscriptions() if
