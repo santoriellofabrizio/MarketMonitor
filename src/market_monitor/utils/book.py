@@ -425,10 +425,10 @@ class CompositeBook:
 
         ``by`` values: ``"MARKET"``, ``"CURRENCY"`` (case-insensitive).
 
-        ``[]``                    → nothing collapsed → key ``(instr_id, market, currency)``
-        ``["MARKET"]``            → collapse market  → key ``(instr_id, currency)``
-        ``["CURRENCY"]``          → collapse currency → key ``(instr_id, market)``
-        ``["MARKET","CURRENCY"]`` → fully collapsed  → key ``(instr_id,)``
+        ``[]``                    → fully collapsed  → key ``(instr_id,)``
+        ``["MARKET"]``            → collapse currency → key ``(instr_id, market) ``
+        ``["CURRENCY"]``          → collapse market  → key ``(instr_id, currency) ``
+        ``["MARKET","CURRENCY"]`` → nothing collapsed → key ``(instr_id, market, currency)``
         """
         if fx_rate is None and "CURRENCY" in by:
             raise ValueError("aggregation by currency requires fx rate")
