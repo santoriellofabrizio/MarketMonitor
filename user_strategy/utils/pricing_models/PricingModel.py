@@ -51,18 +51,29 @@ class LinearPricingModel(PricingModel, ABC):
         self.beta_sparse = csr_matrix(self.beta)
         self.target_variables = beta.index.tolist()
         self.regressor = beta.columns.tolist()
+        self._regressor_set: frozenset = frozenset(self.regressor)
+        self._layout_cache_key: tuple | None = None
+        self._layout_cache: dict | None = None
 
     def set_beta(self, beta: pd.DataFrame) -> None:
         self.beta = beta
         self.beta_sparse = csr_matrix(beta)
         self.target_variables = beta.index.tolist()
         self.regressor = beta.columns.tolist()
+        self._regressor_set = frozenset(self.regressor)
+        self._invalidate_layout_cache()
         if hasattr(self, "theoretical_price"):
             new_idx = beta.index.difference(self.theoretical_price.index)
             if not new_idx.empty:
                 self.theoretical_price = pd.concat(
                     [self.theoretical_price, pd.Series(dtype=float, index=new_idx)]
                 )
+
+    def _invalidate_layout_cache(self) -> None:
+        # `set_beta` is the only supported entry point for changing `self.beta`;
+        # mutating it in place silently bypasses this and leaves the cache stale.
+        self._layout_cache_key = None
+        self._layout_cache = None
 
     def set_cluster_correction(self, correction: pd.Series) -> None:
         pass
@@ -90,8 +101,47 @@ class MultiPeriodLinearPricingModel(LinearPricingModel, ABC):
         self.forecast_aggregator = forecast_aggregator or EwmaOutlier(5, 3)
 
     def make_matrix_mult(self, returns: pd.DataFrame, *args, **kwargs) -> pd.DataFrame:
-        available_regressors = [r for r in self.regressor if r in returns.columns]
-        missing_regressors   = [r for r in self.regressor if r not in returns.columns]
+        returns_columns = returns.columns
+        ts = self.timestamps
+        # Lightweight fingerprint: columns identity + (len, first, last) of timestamps.
+        # Returns columns are an `Index` object — using its `id` is cheap and accurate
+        # because the engines reuse the same DataFrame across ticks. `timestamps` is
+        # rebuilt as a list each call (see `MultiPeriodLinearPricingModel.get_price_prediction`)
+        # so we hash it by length + endpoints (monotonic in market data).
+        ts_fp = (len(ts), ts[0], ts[-1]) if len(ts) else (0,)
+        layout_key = (id(returns_columns), ts_fp)
+
+        cached = self._layout_cache
+        if layout_key != self._layout_cache_key or cached is None:
+            cached = self._build_layout_cache(returns_columns)
+            self._layout_cache = cached
+            self._layout_cache_key = layout_key
+            logging.debug("LinearPricingModel layout cache MISS")
+
+        active_targets = cached["active_targets"]
+        available_regressors = cached["available_regressors"]
+        beta_active_sparse = cached["beta_active_sparse"]
+
+        missing_dates = set(ts) - set(returns.index)
+        if missing_dates:
+            logging.warning(f"missing dates: {missing_dates}")
+
+        if not active_targets or not available_regressors:
+            return pd.DataFrame(index=ts, columns=[], dtype=float)
+
+        returns_slice = returns.reindex(index=ts, columns=available_regressors).T
+        predictions = pd.DataFrame(
+            beta_active_sparse.dot(returns_slice.values.astype(float)),
+            columns=ts,
+            index=active_targets,
+            dtype=float,
+        )
+        return predictions.T
+
+    def _build_layout_cache(self, returns_columns: pd.Index) -> dict:
+        returns_set = set(returns_columns)
+        available_regressors = [r for r in self.regressor if r in returns_set]
+        missing_regressors = [r for r in self.regressor if r not in returns_set]
 
         # Drop only targets whose prediction *actually* depends on a missing regressor.
         # Targets whose beta is zero for every missing column are still fully computable.
@@ -106,23 +156,20 @@ class MultiPeriodLinearPricingModel(LinearPricingModel, ABC):
                 )
             active_targets = [t for t in active_targets if t not in blocked_targets]
 
-        missing_dates = set(self.timestamps) - set(returns.index)
-        if missing_dates:
-            logging.warning(f"missing dates: {missing_dates}")
-
         if not active_targets or not available_regressors:
-            return pd.DataFrame(index=self.timestamps, columns=[], dtype=float)
+            return {
+                "available_regressors": available_regressors,
+                "active_targets": active_targets,
+                "beta_active_sparse": None,
+            }
 
-        beta_active   = self.beta.loc[active_targets, available_regressors]
-        returns_slice = returns.reindex(index=self.timestamps, columns=available_regressors).T
-        beta_sparse   = csr_matrix(beta_active.values.astype(float))
-        predictions   = pd.DataFrame(
-            beta_sparse.dot(returns_slice.values.astype(float)),
-            columns=self.timestamps,
-            index=active_targets,
-            dtype=float,
-        )
-        return predictions.T
+        beta_active = self.beta.loc[active_targets, available_regressors]
+        beta_active_sparse = csr_matrix(beta_active.values.astype(float))
+        return {
+            "available_regressors": available_regressors,
+            "active_targets": active_targets,
+            "beta_active_sparse": beta_active_sparse,
+        }
 
     def predict_returns(self, all_returns: pd.DataFrame) -> pd.DataFrame:
 
@@ -171,6 +218,13 @@ class ClusterPricingModel(MultiPeriodLinearPricingModel):
 
         self.cluster_correction = cluster_correction
         self.theoretical_price.name = name
+        self._active_cache_key: tuple | None = None
+        self._active_cache: pd.Index | None = None
+
+    def _invalidate_layout_cache(self) -> None:
+        super()._invalidate_layout_cache()
+        self._active_cache_key = None
+        self._active_cache = None
 
     def set_cluster_correction(self, correction: pd.Series) -> None:
         self.cluster_correction = correction
@@ -187,7 +241,20 @@ class ClusterPricingModel(MultiPeriodLinearPricingModel):
         # Use only the targets that make_matrix_mult was able to compute.
         # Further restrict to those whose actual return is available in all_returns
         # (needed for the misalignment formula).
-        active = theoretical_live_return.columns.intersection(all_returns.columns)
+        th_cols = theoretical_live_return.columns
+        ar_cols = all_returns.columns
+        # Both Index objects are rebuilt per tick (`th_cols` from the layout cache,
+        # `ar_cols` from the engine's returns frame), so we fingerprint their content.
+        active_key = (
+            (len(th_cols), th_cols[0] if len(th_cols) else None, th_cols[-1] if len(th_cols) else None),
+            (len(ar_cols), ar_cols[0] if len(ar_cols) else None, ar_cols[-1] if len(ar_cols) else None),
+        )
+        if active_key != self._active_cache_key or self._active_cache is None:
+            self._active_cache = th_cols.intersection(ar_cols)
+            self._active_cache_key = active_key
+            logging.debug("ClusterPricingModel active cache MISS")
+        active = self._active_cache
+
         theoretical_live_return = theoretical_live_return[active]
         misalignment = (theoretical_live_return - all_returns[active]) * correction
         self.last_misalignment_cluster = misalignment.iloc[-1]
