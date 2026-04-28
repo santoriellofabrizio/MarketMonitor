@@ -1,205 +1,396 @@
 import logging
 from collections import deque
+from typing import Optional, Tuple, Union
 
 import numpy as np
 import pandas as pd
 from dateutil.utils import today
 import datetime as dt
 
-from sfm_data_provider.analytics.adjustments import Adjuster
-from sfm_data_provider.analytics.adjustments.dividend import DividendComponent
-from sfm_data_provider.analytics.adjustments.fx_forward_carry import FxForwardCarryComponent
-from sfm_data_provider.analytics.adjustments.fx_spot import FxSpotComponent
-from sfm_data_provider.analytics.adjustments.ter import TerComponent
-from sfm_data_provider.analytics.adjustments.ytm import YtmComponent
-from sfm_data_provider.core.holidays.holiday_manager import HolidayManager
-from sfm_data_provider.interface.bshdata import BshData
-
 from market_monitor.publishers.redis_publisher import RedisMessaging
 from market_monitor.strategy.strategy_ui.StrategyUI import StrategyUI
-
+from user_strategy.utils import CustomBDay
+from sfm_data_provider.core.holidays.holiday_manager import HolidayManager
+from user_strategy.utils.pricing_models.DataFetching.PricesProviderFI import PricesProviderFI
 from user_strategy.utils.InputParamsFIQuoting import InputParamsFIQuoting
-from user_strategy.utils.pricing_models.PricingModel import (
-    ClusterPricingModel, DriverPricingModel,
+from user_strategy.utils.pricing_models.NAVBasisCalculator import NAVBasisCalculator
+from user_strategy.utils.pricing_models.PricingModel import ClusterPricingModel, DriverPricingModel, \
     CreditFuturesCalendarSpreadPricingModel, CreditFuturesInterestRatePricingModel, NavPricingModel
-)
-from user_strategy.utils.pricing_models.PricingModelRegistry import PricingModelRegistry
+from user_strategy.utils.pricing_models.TheoreticalPriceManager import TheoreticalPriceManager
 from user_strategy.utils.pricing_models.IRPManager import IRPManager
+from user_strategy.utils.bloomberg_subscription_utils.SubscriptionManager import SubscriptionManager
 from user_strategy.utils.enums import TICK_SIZE
 
 
 class EtfFiPriceEngine(StrategyUI):
     """
-    Fixed income market monitor. Responsibilities:
-    - Instrument subscription: _setup_instrument_universe, _build_subscription_dict, on_market_data_setting
-    - Book management: get_mid and helpers
-    - Price propagation: _setup_pricing_models, calculate_theoretical_prices, _publish_prices, update_HF
-    """
+    A class for monitoring fixed income markets, inheriting functionality from MarketMonitorFixedIncomeUI.
+
+    Attributes:
+        yesterday_misalignment_cluster (pd.Series): Stores the misalignment of theoretical prices for each ISIN from the
+         previous trading day.
+        last_export_time (float): Records the last time the trade data was exported,
+         measured in seconds since the epoch.
+        book_storage (deque): A double-ended queue that holds a fixed number of historical book entries
+         (up to `book_storage_size`), used to maintain a short-term record of book prices.
+         market data and imputing missing values based on historical prices.
+        nav_basis_calculator (NAVBasisCalculator): An instance of the `NAVBasisCalculator` class, used to calculate the
+         NAV NAVs.
+         using historical prices and adjustments for cluster corrections.
+        return_adjustment (float): A cumulative adjustment value based on the results from the data preprocessor.
+        market_data: Varies (specific to `EtfFiStrategyInitialized`): Contains market data related to _securities,
+         including methods for updating and accessing this data.
+        new trades and is used for analysis and reporting.
+     """
 
     def __init__(self, *args, **kwargs):
+        """
+        Initialize the fixed_income class, set up theoretical live prices, and start monitoring.
+
+        Args:
+            *args: Additional arguments passed to the superclass.
+            **kwargs: Additional keyword arguments passed to the superclass.
+        """
         super().__init__(*args, **kwargs)
-        self.corrected_returns = pd.DataFrame()
-        self.end = today().date()
-        self.holidays = HolidayManager()
-        self.start_date = self.holidays.subtract_business_days(today(), kwargs.get('number_of_days', 10))
-        self.book_mid: pd.Series | None = None
+
+        self.subscription_manager: None | SubscriptionManager = None
+        self.corrected_returns: pd.DataFrame = pd.DataFrame()
+        self.today: dt.date = today().date()
+        self.yesterday: dt.date = (today() - CustomBDay).date()
+        self.book_mid: pd.DataFrame(dtype=float) | None = None
         self.input_params = InputParamsFIQuoting(kwargs)
-        self._cumulative_returns = True
-        self.book_storage = deque(maxlen=20)
-        self.gui_redis = RedisMessaging()
-        self._setup_instrument_universe()
-        self.API = BshData(r"C:\AFMachineLearning\Libraries\MarketMonitor\etc\config\bshdata_config.yaml")
-        self._setup_historical_data()
-        self._setup_pricing_models()
+        self._cumulative_returns: bool = True
+        self.bloomberg_subscription_config_path = kwargs.get("bloomberg_subscription_config_path", None)
 
-    # ── Subscription ──────────────────────────────────────────────────────────
-
-    def _setup_instrument_universe(self) -> None:
-        dc = self.input_params.data_config
-        self.etf_isins = dc.etf_list
-        self.drivers_data = dc.drivers
+        # Load the anagraphic data from an Excel file
+        self.yesterday_misalignment_cluster: pd.Series = pd.Series(dtype=float)
+        self.last_export_time = 0
+        self.book_storage: deque = deque(maxlen=self.input_params.book_storage_size)
+        self.etf_isins = self.input_params.etf_isins
+        self.drivers_data = self.input_params.drivers
         self.drivers_list = self.drivers_data.index.to_list()
-        self.credit_futures_contracts_data = dc.credit_futures_data
-        self.credit_futures_contracts = self.credit_futures_contracts_data.index.tolist()
-        self.index_drivers = dc.index_data.index.to_list()
 
-        self.irs_data = dc.irs_data
+        self.credit_futures_contracts_data = self.input_params.credit_futures_data
+        self.credit_futures = self.credit_futures_contracts_data['INSTRUMENT'].unique().tolist()
+        self.credit_futures_contracts = self.credit_futures_contracts_data.index.tolist()
+        self.index_drivers = self.input_params.index_data.index.to_list()
+        cutoff_date = max(self.credit_futures_contracts_data['EXPIRY_DATE']) + dt.timedelta(days=97)    # 3 months and 1 week
+
+        self.irs_data = self.input_params.irs_data
         self.irs_contracts_list = self.irs_data.index.to_list()
-        self.irp_data = dc.irp_data
-        cutoff_date = max(self.credit_futures_contracts_data['EXPIRY_DATE']) + dt.timedelta(days=97)
-        self.irp_manager = IRPManager(
-            cutoff_date, self.irp_data,
-            self.irs_data.loc[~self.irs_data.index.isin(["ESTR3M", "SOFR3M"])]
-        )
+        self.irp_data = self.input_params.irp_data
+        self.irp_manager = IRPManager(cutoff_date, self.irp_data, self.irs_data.loc[~self.irs_data.index.isin(["ESTR3M", "SOFR3M"])])
         self.irp_contracts_data = self.irp_manager.get_contracts_list_data()
         self.irp_contracts_list = self.irp_contracts_data.index.to_list()
 
-        self.trading_currency = dc.trading_currency
-        self.fx_list = dc.currency_exposure.columns.tolist()
-        self._all_securities = (self.etf_isins + self.fx_list + self.drivers_list +
-                                self.credit_futures_contracts + self.irp_contracts_list)
-        self._subscription_dict = self._build_subscription_dict()
+        self.currency_exposure: pd.DataFrame = self.input_params.currency_exposure
+        self.trading_currency: pd.DataFrame = self.input_params.trading_currency
+        self.fx_list = self.currency_exposure.columns.tolist()
+        self._all_securities = (self.etf_isins + self.fx_list + self.drivers_list + self.credit_futures_contracts +
+                                self.irp_contracts_list)
+        self.subscription_manager = SubscriptionManager(self._all_securities,
+                                                        self.bloomberg_subscription_config_path)
 
-    def _build_subscription_dict(self) -> dict[str, str]:
-        sub = {isin: f"{isin} IM Equity" for isin in self.etf_isins}
-        for df in [self.drivers_data, self.credit_futures_contracts_data,
-                   self.irp_contracts_data, self.irs_data]:
-            if 'BLOOMBERG_CODE' in df.columns:
-                sub.update(df['BLOOMBERG_CODE'].dropna().to_dict())
-        return sub
+        self.cluster_correction: pd.Series = self._calculate_cluster_correction(self.input_params.hedge_ratios_cluster)
+        self.brothers_correction: pd.Series = self._calculate_cluster_correction(self.input_params.hedge_ratios_brothers)
+
+        # Initialize the theoretical live price object
+        self.theoretical_price_manager = TheoreticalPriceManager()
+        self.theoretical_price_manager.add_pricing(dtype=float,
+                                                   name="th live cluster price",
+                                                   instruments=self.etf_isins,
+                                                   model=ClusterPricingModel(name="th live cluster price",
+                                                                             beta=self.input_params.hedge_ratios_cluster,
+                                                                             returns=self.corrected_returns,
+                                                                             forecast_aggregator=self.input_params.forecast_aggregator_cluster,
+                                                                             cluster_correction=self.cluster_correction
+                                                                             )
+                                                   )
+        self.theoretical_price_manager.add_pricing(dtype=float,
+                                                   name="th live brother price",
+                                                   instruments=self.etf_isins,
+                                                   model=ClusterPricingModel(name="th live brother price",
+                                                                             beta=self.input_params.hedge_ratios_brothers,
+                                                                             returns=self.corrected_returns,
+                                                                             forecast_aggregator=self.input_params.forecast_aggregator_brother,
+                                                                             cluster_correction=self.brothers_correction
+                                                                             ),
+                                                   )
+        self.theoretical_price_manager.add_pricing(dtype=float,
+                                                   name="th live driver price",
+                                                   instruments=self.etf_isins,
+                                                   model=DriverPricingModel(name="th live driver price",
+                                                                            beta=self.input_params.hedge_ratios_drivers,
+                                                                            returns=self.corrected_returns,
+                                                                            forecast_aggregator=self.input_params.forecast_aggregator_driver
+                                                                            ),
+                                                   )
+        self.theoretical_price_manager.add_pricing(dtype=float,
+                                                   name="th live cluster credit futures price",
+                                                   instruments=self.credit_futures_contracts + self.index_drivers,
+                                                   model=ClusterPricingModel(name="th live cluster credit futures price",
+                                                                             beta=self.input_params.hedge_ratios_credit_futures_cluster.loc[self.credit_futures_contracts + self.index_drivers],
+                                                                             returns=self.corrected_returns,
+                                                                             forecast_aggregator=self.input_params.forecast_aggregator_cluster,
+                                                                             disable_warning=True),
+                                                   )
+        self.theoretical_price_manager.add_pricing(dtype=float,
+                                                   name="th live brother credit futures price",
+                                                   instruments=self.credit_futures_contracts,
+                                                   model=ClusterPricingModel(name="th live brother credit futures price",
+                                                                             beta=self.input_params.hedge_ratios_credit_futures_brothers.loc[self.credit_futures_contracts],
+                                                                             returns=self.corrected_returns,
+                                                                             forecast_aggregator=self.input_params.forecast_aggregator_brother,
+                                                                             disable_warning=True),
+                                                   )
+        self.credit_futures_proxy = pd.DataFrame(index=self.credit_futures_contracts, columns=["Future Proxy", "IRP"])
+        self.credit_futures_proxy["Future Proxy"] = self.credit_futures_contracts_data['PREVIOUS_CONTRACT']
+        self.credit_futures_contracts_data['REGION'] = self.credit_futures_contracts_data['REGION'].replace("", "US")
+        self.credit_futures_proxy["IRP"] = self.credit_futures_contracts_data.merge(self.irp_data.reset_index(), left_on="REGION", right_on="REGION")['INSTRUMENT_ID'].to_list()
+        self.credit_futures_proxy['Expiry'] = self.credit_futures_contracts_data['EXPIRY_DATE']
+        self.credit_futures_proxy['Proxy Expiry'] = self.credit_futures_contracts_data['PREVIOUS_CONTRACT_EXPIRY_DATE']
+
+        self.theoretical_price_manager.add_pricing(dtype=float,
+                                                   name="th live spread credit futures price",
+                                                   instruments=self.credit_futures_contracts,
+                                                   model=CreditFuturesCalendarSpreadPricingModel(name="th live spread credit futures price",
+                                                                                         target_variables=self.credit_futures_contracts,
+                                                                                         variables_proxy=self.credit_futures_proxy,
+                                                                                         irp_manager=self.irp_manager
+                                                                                        )
+                                                   )
+        self.theoretical_price_manager.add_pricing(dtype=float,
+                                                   name="th live ir credit futures price",
+                                                   instruments=self.credit_futures_contracts,
+                                                   model=CreditFuturesInterestRatePricingModel(name="th live ir credit futures price",
+                                                                                               target_variables=self.credit_futures_contracts,
+                                                                                               variables_proxy=self.credit_futures_proxy[['IRP', 'Expiry']],
+                                                                                               irp_manager=self.irp_manager
+                                                                                               )
+                                                   )
+        self.gui_redis = RedisMessaging()
+
+        self.holidays = HolidayManager()
+
+
+        self.on_start_strategy()
 
     def on_market_data_setting(self) -> None:
+        """
+        Set the market data to include _securities and currency pairs.
+        """
+        self.market_data.set_securities(self._all_securities, "market")
         self.book_mid = pd.Series(index=self._all_securities, dtype=float)
-        mgr = self.global_subscription_service
+        self.market_data.currency_information = self.subscription_manager.get_currency_informations()
+        subscription_manager = self.market_data.get_subscription_manager()
+        for id, subscription_string in self.subscription_manager.get_subscription_dict().items():
+            if id in self.irp_contracts_list + self.irs_contracts_list:
+                fields = ["LAST_PRICE"]
+            else:
+                fields = ["BID", "ASK"]
 
-        for isin in self.etf_isins:
-            mgr.subscribe_bloomberg(isin, self._subscription_dict[isin], ["BID", "ASK"], {"interval": 1})
-        for iid in self.drivers_list:
-            mgr.subscribe_bloomberg(iid, self._subscription_dict[iid], ["BID", "ASK"], {"interval": 1})
-        for iid in self.credit_futures_contracts:
-            mgr.subscribe_bloomberg(iid, self._subscription_dict[iid], ["BID", "ASK"], {"interval": 1})
-        for iid in self.irp_contracts_list + self.irs_contracts_list:
-            mgr.subscribe_bloomberg(iid, self._subscription_dict[iid], ["LAST_PRICE"], {"interval": 1})
-        for ccy in self.fx_list:
-            mgr.subscribe_bloomberg(ccy, f"{ccy} Curncy", ["BID", "ASK"], {"interval": 1})
+            subscription_manager.subscribe_bloomberg(
+                id=id,
+                subscription_string=subscription_string,
+                fields=fields,
+                params={"interval": 1}
+            )
+        for currency in self.fx_list:
+            subscription_manager.subscribe_bloomberg(
+                id=currency,
+                subscription_string=f"{currency} Curncy",
+                fields=["BID", "ASK"],
+                params={"interval": 1}
+            )
 
-        self._seed_initial_prices()
-
-    def _seed_initial_prices(self) -> None:
-        yesterday_price = pd.concat([
-            self.etf_prices.iloc[-1],
-            self.fx_prices.iloc[-1]
-        ])
+        yesterday_price = pd.concat([self.historical_prices.loc[self.yesterday],
+                                     self.historical_fx.loc[self.yesterday]])
         for isin, price in yesterday_price.items():
             if isin in self._all_securities:
-                self.market_data.update(isin, {f: price for f in self.market_data.mid_key})
+                self.market_data.update(isin, {field: price for field in self.market_data.mid_key})
 
-    # ── Historical data ───────────────────────────────────────────────────────
+    def on_start_strategy(self) -> None:
+        """
+        Start monitoring by fetching historical prices, impute missing values, and set up data preprocessing.
+        """
+        relevant_columns = ['BLOOMBERG_CODE', 'PRICE_SOURCE_MARKET', 'MARKET_CODE']
+        additional_contracts = pd.concat([self.credit_futures_contracts_data[relevant_columns], self.irp_contracts_data[relevant_columns]])
+        self.prices_provider = PricesProviderFI(etfs=self.etf_isins,
+                                                input_params=self.input_params,
+                                                subscription_manager=self.subscription_manager,
+                                                instruments_to_download_eod=self.index_drivers + self.irs_contracts_list + self.irp_contracts_list,
+                                                additional_contracts=additional_contracts,
+                                                trading_currency=self.trading_currency)
 
-    def _setup_historical_data(self) -> None:
+        self.historical_prices: pd.DataFrame = self.prices_provider.get_hist_prices()
+        self.historical_fx: pd.DataFrame = self.prices_provider.get_hist_fx_prices()
 
-        days = self.holidays.get_business_days(start=self.start_date, end=self.end)
-        snapshot_time = dt.time(16, 45)
+        self.irp_manager.save_historical_prices(self.historical_prices)
+        self.nav_data: pd.DataFrame = self.prices_provider.get_nav_data()
+        self.theoretical_price_manager.add_pricing(dtype=float,
+                                                   name="th live nav price",
+                                                   instruments=self.etf_isins,
+                                                   model=NavPricingModel(name="th live nav price",
+                                                                         target_variables=self.etf_isins,
+                                                                         irs_data=self.irs_data,
+                                                                         nav_data=self.nav_data,
+                                                                         )
+                                                   )
 
-        fx_composition = self.API.info.get_fx_composition(
-            self.etf_isins, fx_fxfwrd='fx', reference_date=dt.date(2026, 4, 2))
+        # Set up the NAV NAVs calculator
+        # self.nav_basis_calculator: NAVBasisCalculator = NAVBasisCalculator(
+        #     OracleConnection(),
+        #     self.historical_prices,
+        #     self.historical_fx,
+        #     self.input_params
+        # )
 
-        fx_forward = self.API.info.get_fx_composition(
-            self.etf_isins, fx_fxfwrd="fxfwrd", reference_date=dt.date(2026, 4, 2))
+        # Calculate theoretical relative return NAV
+        # self.theoretical_misalignment_basis: pd.Series(dtype=float) = self.nav_basis_calculator.get_basis_misalignment()
+        # self.NAVs: pd.DataFrame = self.nav_basis_calculator.get_NAVs()
 
-        for fx in [fx_composition, fx_forward]:
-            for isin, hard_coding_currency in self.input_params.fx_hard_coding.items():
-                fx[isin] = hard_coding_currency
+        self.return_adjustments = self.prices_provider.get_adjustments(cumulative=self._cumulative_returns)
 
-            for isin, isin_proxy in self.input_params.fx_mapping.items():
-                fx.loc[isin] = fx.loc[isin_proxy]
+    def update_HF(self, *args, **kwargs) -> Union[dict, Tuple]:
+        """
+        Update prices over time. Time interval is set from config. Whatever is returned is displayed in the gui.
 
-        ytm = self.API.info.get_etp_fields('ytm',
-                                           isin=self.etf_isins,
-                                           source="timescale",
-                                           start=self.start_date,
-                                           end=self.end)
+        Returns:
+            Optional[tuple]: A tuple containing the theoretical live price, output_NAV cell, and sheet names.
+        """
+        self.get_mid()
+        self.calculate_theoretical_prices()
 
-        for isin, mapping in self.input_params.get_ytm_mapping().items():
-            ytm[isin] = ytm[mapping]
+        pm = self.theoretical_price_manager
+        rtt = self.round_series_to_tick
+        now = dt.datetime.now().isoformat()
 
-        self.fx_prices = self.API.market.get_daily_currency(
-            id=self.fx_list, start=self.start_date, end=self.end, snapshot_time=snapshot_time,
-            fallbacks=[{"source": "bloomberg"}],
-        ).reindex(days)
-
-        self.etf_prices = self.API.market.get_daily_etf(
-            id=self.etf_isins, start=self.start_date, end=self.end, snapshot_time=snapshot_time, timeout=10,
-            fallbacks=[{"source": "bloomberg", "market": mkt} for mkt in ["IM", "FP", "NA"]],
-        ).reindex(days)
-
-        self.etf_prices = self.etf_prices
-
-        fx_forward_prices = self.API.market.get_daily_fx_forward(
-            quoted_currency=fx_forward.columns.tolist(), start=self.start_date, end=self.end)
-
-        dividends = self.API.info.get_dividends(id=self.etf_isins, start=self.start_date)
-        ter = self.API.info.get_ter(id=self.etf_isins) / 100
-
-        self.adjuster = (
-            Adjuster(self.etf_prices)
-            .add(TerComponent(ter))
-            .add(FxSpotComponent(fx_composition, self.fx_prices))
-            .add(FxForwardCarryComponent(fx_forward, fx_forward_prices, "1M", self.fx_prices))
-            .add(DividendComponent(dividends, self.etf_prices, fx_prices=self.fx_prices))
-            .add(YtmComponent(ytm))
+        self.gui_redis.export_message(
+            "th_live_cluster_price",
+            rtt(pm.get_theoretical_prices("th live cluster price"), TICK_SIZE),
+            skip_if_unchanged=True
         )
 
-        self.corrected_return = pd.DataFrame(
-            index=self.etf_prices.index, columns=self.etf_prices.columns, dtype=float)
+        self.gui_redis.export_message(
+            "th_live_driver_price",
+            rtt(pm.get_theoretical_prices("th live driver price"), TICK_SIZE),
+            skip_if_unchanged=True
+        )
 
-        self.nav_data = self.API.info.get_nav(start=self.start_date,
-                                              isin=self.etf_isins,
-                                              source="oracle")
+        self.gui_redis.export_message(
+            "th_live_brother_price",
+            rtt(pm.get_theoretical_prices("th live brother price"), TICK_SIZE),
+            skip_if_unchanged=True
+        )
 
-    # ── Book management ───────────────────────────────────────────────────────
+        self.gui_redis.export_message(
+            "th_live_credit_futures_cluster_price",
+            pm.get_theoretical_prices("th live cluster credit futures price"),
+            skip_if_unchanged=True
+        )
+
+        self.gui_redis.export_message(
+            "th_live_credit_futures_brother_price",
+            pm.get_theoretical_prices("th live brother credit futures price"),
+            skip_if_unchanged=True
+        )
+
+        self.gui_redis.export_message(
+            "th_live_credit_futures_spread_price",
+            pm.get_theoretical_prices("th live spread credit futures price").dropna(),
+            skip_if_unchanged=True
+        )
+
+        self.gui_redis.export_message(
+            "th_live_credit_futures_ir_price",
+            pm.get_theoretical_prices("th live ir credit futures price").dropna(),
+            skip_if_unchanged=True
+        )
+
+        self.gui_redis.export_message("mid", self.book_mid, skip_if_unchanged=True)
+        self.gui_redis.export_message("time_now", now)
+
+    def calculate_theoretical_prices(self):
+        self.theoretical_price_manager.calculate_theorical_prices(self.book_mid, self.corrected_returns)
+
+    def get_live_fx_return_correction(self) -> pd.DataFrame:
+        """
+        Calculate FX live return correction.
+        Returns:
+            pd.Series: FX live correction series.
+        """
+        fx_book: pd.Series = self.book_mid[self.input_params.currencies_EUR_ccy]
+        fx_live_correction: pd.DataFrame = self.prices_provider.get_fx_correction(fx_book, cumulative=self._cumulative_returns)
+        return fx_live_correction
+
+    def get_live_returns(self) -> pd.Series(dtype=float):
+        """
+        Get live ETF and drivers returns by comparing current prices with historical prices.
+
+        Returns:
+            pd.Series: ETF live returns.
+        """
+        all_returns: pd.Series(dtype=float) = self.book_mid / self.historical_prices - 1
+        return all_returns.T
+
+
+    def stop(self):
+        pass
+
+    @staticmethod
+    def _calculate_cluster_correction(cluster_betas: pd.DataFrame, threshold: float = 0.5) -> pd.Series:
+        """
+        Calculate the cluster correction factor for each subcluster.
+
+        Returns:
+            pd.Series: Series with correction factors for each ISIN.
+        """
+        # this first line is used for the brothers matrix, in order to make it comparable with the clusters matrix
+        cluster_betas = cluster_betas.sort_index(axis=1)
+        cluster_betas = cluster_betas.sort_index(axis=0)
+        for label in cluster_betas.index:
+            cluster_betas.loc[label, label] = 0
+        # with the first series we define which is the threshold for a betas to be considered
+        cluster_threshold: pd.Series = threshold/(cluster_betas!=0).sum(axis=1)
+        # here we count only the beta which are above the threshold
+        cluster_sizes = cluster_betas.gt(cluster_threshold, axis=0).sum(axis=1)+1
+        # the correction is than calculated as the number of elements which truly influence our calculations
+        correction = cluster_sizes.where(cluster_sizes == 1, (cluster_sizes-1) / cluster_sizes)
+        return correction
 
     def get_mid(self) -> pd.Series:
+        """
+        Get the mid-price of book.
+        Store corrected returns and a copy of last book
+
+        Returns:
+            pd.Series: Series of mid-prices for ETFs, Drivers, and FX.
+        """
+
         if self.book_mid is not None:
-            ir_secs = self.irp_contracts_list + self.irs_contracts_list
-            non_ir = [s for s in self._all_securities if s not in ir_secs]
-            last_book = self.market_data.get_data_field(field=["BID", "ASK"], securities=non_ir)
-            last_price_ir = self.market_data.get_data_field(field=["LAST_PRICE"], securities=ir_secs)
+            last_book = self.market_data.get_data_field(field = ["BID", "ASK"], securities=[sec for sec in self._all_securities if sec not in self.irp_contracts_list + self.irs_contracts_list])
+            last_price_ir = self.market_data.get_data_field(field = ["LAST_PRICE"], securities=self.irp_contracts_list + self.irs_contracts_list)
+            last_bid = last_book["BID"].replace({0: np.nan})
+            last_ask = last_book["ASK"].replace({0: np.nan})
+            spread = last_ask / last_bid - 1
+            if len(missing_book := spread[spread.isna()].index):
+                logging.warning(f"bid is zero for {', '.join(missing_book)}")
 
-            bid = last_book["BID"].replace({0: np.nan})
-            ask = last_book["ASK"].replace({0: np.nan})
-            spread = ask / bid - 1
-            if missing := spread[spread.isna()].index.tolist():
-                logging.warning(f"bid is zero for {', '.join(missing)}")
-            is_outlier = (bid.isna() | ask.isna() | (spread > 0.015)) & last_book.index.isin(self.etf_isins)
-
-            self.book_mid.update(last_book[~is_outlier].mean(axis=1))
+            is_outlier = (last_bid.isna() | last_ask.isna() | (spread > 0.015)) & (last_book.index.isin(self.etf_isins))
+            last_valid_book = last_book[~is_outlier]
+            self.book_mid.update(last_valid_book.mean(axis=1))
             self.book_mid.update(last_price_ir)
         else:
             self.book_mid = self.market_data.get_mid()
 
-        with self.adjuster.live_update(self.book_mid[self._all_securities], fx_prices=self.book_mid[self.fx_list]):
-            self.corrected_returns = self.adjuster.get_clean_returns(cumulative=True).T
+        rets = self.get_live_returns().loc[['IE00BNH72088', 'IE00BDT6FP91']].T
+        fx_corr = self.get_live_fx_return_correction().T.loc[['IE00BNH72088', 'IE00BDT6FP91']].T
+        ret_corr = self.return_adjustments.T.loc[['IE00BNH72088', 'IE00BDT6FP91']].T
+
+        self.corrected_returns = (self.get_live_returns().
+                                  add(self.get_live_fx_return_correction().T, fill_value=0).
+                                  add(self.return_adjustments.T, fill_value=0))
+
         self.book_storage.append(self.book_mid)
         return self.book_mid
 
@@ -207,118 +398,10 @@ class EtfFiPriceEngine(StrategyUI):
         logging.info("Checking all subscription started")
         return True
 
-    # ── Pricing models ────────────────────────────────────────────────────────
-
-    def _setup_pricing_models(self) -> None:
-        pc = self.input_params.pricing_config
-        self.cluster_correction = self._calculate_cluster_correction(pc.hedge_ratios_cluster)
-        self.brothers_correction = self._calculate_cluster_correction(pc.hedge_ratios_brothers)
-        self.pricing_model_registry = PricingModelRegistry()
-
-        def reg(name, instruments, model):
-            self.pricing_model_registry.register(name=name, instruments=instruments, model=model)
-
-        reg("th live cluster price", self.etf_isins, ClusterPricingModel(
-            name="th live cluster price", beta=pc.hedge_ratios_cluster,
-            returns=self.corrected_returns, forecast_aggregator=pc.forecast_aggregator_cluster,
-            cluster_correction=self.cluster_correction,
-        ))
-        reg("th live brother price", self.etf_isins, ClusterPricingModel(
-            name="th live brother price", beta=pc.hedge_ratios_brothers,
-            returns=self.corrected_returns, forecast_aggregator=pc.forecast_aggregator_brother,
-            cluster_correction=self.brothers_correction,
-        ))
-        reg("th live driver price", self.etf_isins, DriverPricingModel(
-            name="th live driver price", beta=pc.hedge_ratios_drivers,
-            returns=self.corrected_returns, forecast_aggregator=pc.forecast_aggregator_driver,
-        ))
-
-        cf = self.credit_futures_contracts
-        cf_idx = cf + self.index_drivers
-        reg("th live cluster credit futures price", cf_idx, ClusterPricingModel(
-            name="th live cluster credit futures price",
-            beta=pc.hedge_ratios_credit_futures_cluster.loc[cf_idx],
-            returns=self.corrected_returns, forecast_aggregator=pc.forecast_aggregator_cluster,
-            disable_warning=True,
-        ))
-        reg("th live brother credit futures price", cf, ClusterPricingModel(
-            name="th live brother credit futures price",
-            beta=pc.hedge_ratios_credit_futures_brothers.loc[cf],
-            returns=self.corrected_returns, forecast_aggregator=pc.forecast_aggregator_brother,
-            disable_warning=True,
-        ))
-
-        reg(
-            name="th live nav price",
-            instruments=self.etf_isins,
-            model=NavPricingModel(
-                name="th live nav price", target_variables=self.etf_isins,
-                irs_data=self.irs_data, nav_data=self.nav_data,
-            )
-        )
-
-        cfd = self.credit_futures_contracts_data
-        cfd['REGION'] = cfd['REGION'].replace("", "US")
-        proxy = pd.DataFrame(index=cf, columns=["Future Proxy", "IRP", "Expiry", "Proxy Expiry"])
-        proxy["Future Proxy"] = cfd['PREVIOUS_CONTRACT']
-        proxy["IRP"] = cfd.merge(self.irp_data.reset_index(), on="REGION")['INSTRUMENT_ID'].to_list()
-        proxy["Expiry"] = cfd['EXPIRY_DATE']
-        proxy["Proxy Expiry"] = cfd['PREVIOUS_CONTRACT_EXPIRY_DATE']
-        self.credit_futures_proxy = proxy
-
-        reg("th live spread credit futures price", cf, CreditFuturesCalendarSpreadPricingModel(
-            name="th live spread credit futures price", target_variables=cf,
-            variables_proxy=proxy, irp_manager=self.irp_manager,
-        ))
-        reg("th live ir credit futures price", cf, CreditFuturesInterestRatePricingModel(
-            name="th live ir credit futures price", target_variables=cf,
-            variables_proxy=proxy[['IRP', 'Expiry']], irp_manager=self.irp_manager,
-        ))
-
-    def calculate_theoretical_prices(self):
-        self.pricing_model_registry.calculate_theoretical_prices(self.book_mid, self.corrected_returns)
-
-    def _publish_prices(self) -> None:
-        pm = self.pricing_model_registry
-        rtt = self.round_series_to_tick
-        export = self.gui_redis.export_message
-
-        for key, name, do_round, dropna in [
-            ("th_live_cluster_price", "th live cluster price", False, False),  # ← usa get_prices
-            ("th_live_driver_price", "th live driver price", True, False),
-            ("th_live_brother_price", "th live brother price", True, False),
-            ("th_live_credit_futures_cluster_price", "th live cluster credit futures price", False, False),
-            ("th_live_credit_futures_brother_price", "th live brother credit futures price", False, False),
-            ("th_live_credit_futures_spread_price", "th live spread credit futures price", False, True),
-            ("th_live_credit_futures_ir_price", "th live ir credit futures price", False, True),
-        ]:
-            prices = pm.get_prices(name)
-            if do_round: prices = rtt(prices, TICK_SIZE)
-            if dropna:   prices = prices.dropna()
-            export(key, prices, skip_if_unchanged=True)
-
-
-    def update_HF(self):
-        self.get_mid()
-        self.calculate_theoretical_prices()
-        self._publish_prices()
-
-    # ── Utility ───────────────────────────────────────────────────────────────
-
-    @staticmethod
-    def _calculate_cluster_correction(cluster_betas: pd.DataFrame, threshold: float = 0.5) -> pd.Series:
-        cluster_betas = cluster_betas.sort_index(axis=1).sort_index(axis=0).copy()
-        for label in cluster_betas.index:
-            cluster_betas.loc[label, label] = 0
-        cluster_threshold = threshold / (cluster_betas != 0).sum(axis=1)
-        cluster_sizes = cluster_betas.gt(cluster_threshold, axis=0).sum(axis=1) + 1
-        return cluster_sizes.where(cluster_sizes == 1, (cluster_sizes - 1) / cluster_sizes)
-
     @staticmethod
     def round_series_to_tick(series, tick_dict, default_tick=0.001):
+        """ Arrotonda una Series ai tick specificati per ciascun strumento e normalizza i float. """
         ticks = np.array([tick_dict.get(idx, default_tick) for idx in series.index])
         values = series.fillna(0).values.astype(float)
-        return pd.Series(np.round(np.round(values / ticks) * ticks, 10), index=series.index).fillna(0)
-
-    def stop(self):
-        pass
+        rounded_values = np.round(np.round(values / ticks) * ticks, 10)
+        return pd.Series(rounded_values, index=series.index).fillna(0)

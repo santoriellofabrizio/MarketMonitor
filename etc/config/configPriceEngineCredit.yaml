@@ -96,7 +96,7 @@ bloomberg_data_distributor:
 logging:
   log_level: DEBUG
   log_level_console: WARNING
-  log_name: FIPriceEngine.log
+  log_name: CreditPriceEngine.log
 
 oracle_connection:
   environment: PROD

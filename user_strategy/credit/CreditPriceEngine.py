@@ -318,12 +318,8 @@ class CreditPriceEngine(BasePriceEngine):
             .add(FxSpotComponent(self.fx_composition, self.fx_prices))
             .add(FxForwardCarryComponent(self.fx_forward, self.fx_forward_prices, "1M", self.fx_prices))
             .add(DividendComponent(self.dividends, self.etf_prices, fx_prices=self.fx_prices))
-            .add(
-                YtmComponent(self.ytm).add(
-                    RepoComponent(self.repo_per_currency, "currency", future_currencies)
-                )
-            )
-        )
+            .add(YtmComponent(self.ytm)
+            .add(RepoComponent(self.repo_per_currency, "currency", future_currencies))))
 
     # ── Database helpers ──────────────────────────────────────────────────────
 
